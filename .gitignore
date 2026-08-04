@@ -1,0 +1,27 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Go
+server/bin/
+server/tmp/
+server/*.test
+
+# Python
+ai/.venv/
+ai/__pycache__/
+ai/.pytest_cache/
+**/__pycache__/
+*.py[cod]
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.env.local
+
+# Tooling / OS
+.DS_Store
+Thumbs.db
+*.log
