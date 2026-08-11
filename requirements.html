@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>ĐỒ ÁN CUỐI KỲ – Crypto Strategy Lab</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="ĐỒ ÁN CUỐI KỲ – Crypto Strategy Lab" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="ĐỒ ÁN CUỐI KỲ – Crypto Strategy Lab" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","headline":"ĐỒ ÁN CUỐI KỲ – Crypto Strategy Lab"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/software-design-docs/assets/css/style.css?v=a40f33951371284c677ee31e2bd05f555bd86ef2">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:400,400i,700,700i&display=swap">
+    <style>
+      /* Standalone fallback of the jekyll-theme-cayman look, so the file renders
+         correctly khi mở trực tiếp (không qua GitHub Pages). */
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 0;
+        color: #606c71;
+        background-color: #fff;
+        font-family: "Open Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: #1e6bb8; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      #skip-to-content {
+        height: 1px; width: 1px; position: absolute;
+        overflow: hidden; top: -10px;
+      }
+      #skip-to-content:focus {
+        height: auto; width: auto; position: static; overflow: visible;
+      }
+
+      /* Header */
+      .page-header {
+        color: #fff;
+        text-align: center;
+        background-color: #159957;
+        background-image: linear-gradient(120deg, #155799, #159957);
+        padding: 5rem 6rem;
+      }
+      .project-name {
+        margin-top: 0;
+        margin-bottom: 0.1rem;
+        font-size: 3.25rem;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+      .project-tagline {
+        margin-bottom: 2rem;
+        font-size: 1.25rem;
+        font-weight: 400;
+        opacity: 0.7;
+      }
+      .btn {
+        display: inline-block;
+        margin-bottom: 1rem;
+        color: rgba(255, 255, 255, 0.8);
+        background-color: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 0.3rem;
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+        transition: color 0.2s, background-color 0.2s, border-color 0.2s;
+      }
+      .btn:hover {
+        color: #fff;
+        text-decoration: none;
+        background-color: rgba(255, 255, 255, 0.2);
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+      /* Content */
+      .main-content {
+        max-width: 64rem;
+        padding: 2rem 6rem;
+        margin: 0 auto;
+        font-size: 1.1rem;
+        word-wrap: break-word;
+      }
+      .main-content :first-child { margin-top: 0; }
+      .main-content h1,
+      .main-content h2,
+      .main-content h3 {
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+        font-weight: 700;
+        color: #159957;
+        scroll-margin-top: 1rem;
+      }
+      .main-content h1 {
+        font-size: 2rem;
+        color: #155799;
+        padding-bottom: 0.4rem;
+        border-bottom: 2px solid #eff0f1;
+      }
+      .main-content h2 { font-size: 1.5rem; }
+      .main-content h3 { font-size: 1.25rem; }
+      .main-content p { margin-bottom: 1em; }
+      .main-content ul,
+      .main-content ol { margin-top: 0; padding-left: 1.6rem; }
+      .main-content li { margin-bottom: 0.35em; }
+      .main-content li > ul { margin-top: 0.35em; }
+      .main-content blockquote {
+        margin: 1.4rem 0;
+        padding: 0.6rem 1.2rem;
+        color: #445055;
+        background-color: #f6fbf8;
+        border-left: 0.3rem solid #159957;
+        border-radius: 0 0.3rem 0.3rem 0;
+        font-size: 1.05rem;
+      }
+      .main-content blockquote > :last-child { margin-bottom: 0; }
+      .main-content hr {
+        height: 2px;
+        padding: 0;
+        margin: 2rem 0;
+        background-color: #eff0f1;
+        border: 0;
+      }
+      /* Code */
+      .main-content code {
+        padding: 2px 4px;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.9rem;
+        color: #383e41;
+        background-color: #f3f6fa;
+        border-radius: 0.3rem;
+      }
+      .main-content pre {
+        padding: 0.8rem;
+        margin: 0 0 1.2rem;
+        font: 0.9rem/1.45 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        color: #567482;
+        background-color: #f3f6fa;
+        border: solid 1px #dce6f0;
+        border-radius: 0.3rem;
+        overflow: auto;
+      }
+      .main-content pre > code {
+        padding: 0;
+        margin: 0;
+        font-size: 0.9rem;
+        color: #567482;
+        background-color: transparent;
+        border: 0;
+        white-space: pre;
+      }
+      .main-content .highlight { margin-bottom: 1.2rem; }
+      .main-content .highlight pre { margin-bottom: 0; word-break: normal; }
+      /* rouge tokens dùng trong các code block markdown của template */
+      .main-content .highlight .gh { color: #155799; font-weight: 700; }
+      .main-content .highlight .gu { color: #159957; font-weight: 700; }
+      .main-content .highlight .c { color: #969896; font-style: italic; }
+
+      /* Tables */
+      .main-content table {
+        display: block;
+        width: 100%;
+        overflow: auto;
+        word-break: normal;
+        margin-bottom: 1.4rem;
+        border-collapse: collapse;
+      }
+      .main-content th,
+      .main-content td {
+        padding: 0.5rem 1rem;
+        border: 1px solid #e9ebec;
+        text-align: left;
+      }
+      .main-content th { font-weight: 700; background-color: #f3f6fa; color: #383e41; }
+      .main-content tbody tr:nth-child(even) { background-color: #fbfcfd; }
+
+      /* Footer */
+      .site-footer {
+        padding-top: 2rem;
+        margin-top: 2rem;
+        border-top: solid 1px #eff0f1;
+        font-size: 0.9rem;
+        color: #819198;
+      }
+      .site-footer-owner { display: block; font-weight: 700; }
+
+      @media screen and (max-width: 64em) {
+        .page-header { padding: 3.5rem 4rem; }
+        .project-name { font-size: 2.5rem; }
+        .main-content { padding: 2rem 4rem; font-size: 1.05rem; }
+        .main-content h1 { font-size: 1.75rem; }
+      }
+      @media screen and (max-width: 42em) {
+        .page-header { padding: 2rem 1rem; }
+        .project-name { font-size: 1.75rem; }
+        .project-tagline { font-size: 1rem; }
+        .main-content { padding: 2rem 1rem; font-size: 1rem; }
+        .main-content h1 { font-size: 1.5rem; }
+        .main-content h2 { font-size: 1.25rem; }
+        .main-content h3 { font-size: 1.1rem; }
+        .main-content pre,
+        .main-content pre > code { font-size: 0.8rem; }
+      }
+      @media print {
+        .page-header {
+          color: #155799;
+          background: none;
+          padding: 1rem 0;
+          text-align: left;
+          border-bottom: 2px solid #159957;
+        }
+        .project-tagline { opacity: 1; }
+        .btn { display: none; }
+        .main-content { max-width: none; padding: 1rem 0; font-size: 10.5pt; }
+        .main-content h1,
+        .main-content h2,
+        .main-content h3 { page-break-after: avoid; }
+        .main-content pre,
+        .main-content table,
+        .main-content blockquote { page-break-inside: avoid; }
+      }
+    </style>
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/software-design-docs/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">ĐỒ ÁN CUỐI KỲ – Crypto Strategy Lab</h1>
+      <h2 class="project-tagline">Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch Crypto</h2>
+
+
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="đồ-án-cuối-kỳ--crypto-strategy-lab">ĐỒ ÁN CUỐI KỲ – Crypto Strategy Lab</h1>
+
+<h2 id="bối-cảnh">Bối cảnh</h2>
+
+<p>Thị trường cryptocurrency (Bitcoin, Ethereum…) hoạt động liên tục <strong>24/7</strong>. Giá tài sản thay đổi theo thời gian và thường được biểu diễn bằng biểu đồ nến — <strong>Candlestick Chart</strong>. Với cặp giao dịch BTC/USDT, một cây nến 5 phút chứa <code class="language-plaintext highlighter-rouge">Open</code> (giá đầu kỳ), <code class="language-plaintext highlighter-rouge">High</code> (giá cao nhất), <code class="language-plaintext highlighter-rouge">Low</code> (giá thấp nhất), <code class="language-plaintext highlighter-rouge">Close</code> (giá cuối kỳ) và <code class="language-plaintext highlighter-rouge">Volume</code> (khối lượng giao dịch).</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>BTCUSDT – khung 5 phút
+09:00
+Open   = 118,000
+High   = 118,200
+Low    = 117,900
+Close  = 118,150
+Volume = 125 BTC
+</code></pre></div></div>
+
+<p>Trader dùng nhiều phương pháp phân tích kỹ thuật — Moving Average (MA), RSI, Bollinger Bands, Support/Resistance, Smart Money Concepts (SMC), Wyckoff… — để tìm thời điểm <strong>Buy</strong>, <strong>Sell</strong> hoặc không giao dịch. Tuy nhiên <strong>một strategy đơn lẻ thường không hoạt động tốt trong mọi điều kiện thị trường</strong>: MA tốt khi thị trường có xu hướng nhưng kém khi đi ngang; RSI hữu ích khi phát hiện quá mua/quá bán nhưng tạo nhiều tín hiệu sai khi trend mạnh; Support/Resistance tìm được vùng giá quan trọng nhưng phụ thuộc vào thuật toán xác định vùng.</p>
+
+<p>Câu hỏi chính của đồ án:</p>
+
+<blockquote>
+  <p>Có thể xây dựng một hệ thống cho phép bổ sung nhiều strategy khác nhau, tự động kết hợp chúng thành các strategy phức hợp, đánh giá hiệu quả và liên tục tìm ra những tổ hợp strategy tốt nhất hay không?</p>
+</blockquote>
+
+<p>Nhóm cần xây dựng nền tảng <strong>Crypto Strategy Lab</strong>: nhận dữ liệu thị trường từ Binance, hiển thị biểu đồ realtime trên tối đa 4 khung thời gian, cho phép bổ sung và kết hợp strategy, backtest trên dữ liệu lịch sử, xếp hạng theo hiệu quả giao dịch, tự động tìm kiếm combination tốt hơn, visualize tín hiệu/giao dịch lên chart, thu thập tin tức liên quan đến coin và phân tích sentiment bằng mô hình Machine Learning.</p>
+
+<p><strong>Trọng tâm của đồ án là Kiến trúc phần mềm, không phải tìm ra strategy đầu tư tốt nhất.</strong> Hệ thống phải mở rộng được trong tương lai mà không phải sửa đổi toàn bộ.</p>
+
+<hr />
+
+<h2 id="người-dùng">Người dùng</h2>
+
+<p>Đề bài không quy định cụ thể các nhóm người dùng. Bảng dưới đây là <strong>phân vai gợi ý</strong> suy ra từ các chức năng mà đề bài yêu cầu, nhóm có thể điều chỉnh:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Nhóm</th>
+      <th>Mô tả</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Người dùng hệ thống</td>
+      <td>Chọn pair và timeframe, bật/tắt strategy, chạy search, xem Leaderboard, xem chi tiết trade và tin tức</td>
+    </tr>
+    <tr>
+      <td>Nhóm phát triển strategy</td>
+      <td>Bổ sung strategy mới (MACD, SMC, Wyckoff, Sentiment…) vào hệ thống với ảnh hưởng tối thiểu đến code hiện tại</td>
+    </tr>
+    <tr>
+      <td>Người vận hành vòng loop</td>
+      <td>Cấu hình search space, start/pause/resume loop, theo dõi tiến trình và job lỗi</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="yêu-cầu-hệ-thống">Yêu cầu hệ thống</h2>
+
+<h3 id="realtime-market-data">Realtime Market Data</h3>
+
+<p>Hệ thống lấy dữ liệu giá crypto từ Binance với hai loại dữ liệu. <strong>Historical Data</strong> là dữ liệu quá khứ (ví dụ BTCUSDT từ 01/07 → 30/07 ở các khung 1m, 5m, 15m, 1h, 4h, 1d), dùng cho backtesting, tính indicator, huấn luyện ML và phân tích lịch sử. <strong>Realtime Data</strong> là giá đang thay đổi tại thời điểm hiện tại; frontend phải nhận cập nhật mà không liên tục polling <code class="language-plaintext highlighter-rouge">GET /price</code>.</p>
+
+<p>Frontend <strong>không được phụ thuộc trực tiếp</strong> vào cấu trúc dữ liệu Binance. Luồng dữ liệu cần đi qua một lớp trung gian để sau này bổ sung <code class="language-plaintext highlighter-rouge">OKXAdapter</code>, <code class="language-plaintext highlighter-rouge">BybitAdapter</code>, <code class="language-plaintext highlighter-rouge">CoinbaseAdapter</code> mà frontend không phải thay đổi:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Binance
+   ↓
+Market Data Adapter
+   ↓
+Event / Stream
+   ↓
+Backend
+   ↓
+WebSocket
+   ↓
+Frontend
+</code></pre></div></div>
+
+<h3 id="multi-timeframe-chart">Multi-Timeframe Chart</h3>
+
+<p>Dashboard hỗ trợ <strong>tối đa 4 chart</strong> trên một màn hình (ví dụ BTCUSDT ở 5m, 15m, 1h, 4h). Mỗi chart có thể đổi timeframe riêng — khi người dùng đổi Chart 1 từ 5m sang 1h thì chỉ Chart 1 đổi dữ liệu, không reload toàn bộ hệ thống. Chart cần visualize được: Candlestick, Volume, MA, Bollinger Bands, vùng Support, vùng Resistance, Buy Signal, Sell Signal, điểm Entry, Stop Loss, Take Profit.</p>
+
+<h3 id="strategy-engine">Strategy Engine</h3>
+
+<p>Đây là module quan trọng nhất. Một strategy nhận dữ liệu thị trường và tạo ra một tín hiệu được chuẩn hóa thành <code class="language-plaintext highlighter-rouge">BUY</code> / <code class="language-plaintext highlighter-rouge">SELL</code> / <code class="language-plaintext highlighter-rouge">HOLD</code> (hoặc <code class="language-plaintext highlighter-rouge">LONG</code> / <code class="language-plaintext highlighter-rouge">SHORT</code> / <code class="language-plaintext highlighter-rouge">NONE</code>):</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>interface Strategy {
+    analyze(context)
+    return:
+        BUY
+        SELL
+        HOLD
+}
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">context</code> có thể chứa price, volume, candles, timeframe, indicators, market state, sentiment…</p>
+
+<p>Tối thiểu phải có 4 strategy đơn lẻ:</p>
+
+<ul>
+  <li><strong>Moving Average:</strong> MA20 cắt lên MA50 → BUY; cắt xuống → SELL. Tham số <code class="language-plaintext highlighter-rouge">fastPeriod</code>, <code class="language-plaintext highlighter-rouge">slowPeriod</code>.</li>
+  <li><strong>RSI:</strong> giá trị 0–100; <code class="language-plaintext highlighter-rouge">RSI &lt; 30</code> (oversold) → BUY, <code class="language-plaintext highlighter-rouge">RSI &gt; 70</code> (overbought) → SELL. Tham số <code class="language-plaintext highlighter-rouge">period</code>, <code class="language-plaintext highlighter-rouge">buyThreshold</code>, <code class="language-plaintext highlighter-rouge">sellThreshold</code> — cho phép thử RSI(14,30,70), RSI(14,25,75), RSI(21,30,70).</li>
+  <li><strong>Bollinger Bands:</strong> ba đường Upper/Middle/Lower. Price &lt; Lower → BUY, Price &gt; Upper → SELL; hoặc breakout Upper → BUY. Cùng một indicator có thể sinh nhiều strategy khác nhau.</li>
+  <li><strong>Support/Resistance:</strong> giá gần Support → BUY, gần Resistance → SELL; hoặc breakout Resistance → BUY.</li>
+</ul>
+
+<p>Mỗi strategy chỉ chịu trách nhiệm về logic của chính nó — <strong>không</strong> chứa code gọi Binance, lưu database, vẽ chart hay gửi notification. Strategy nâng cao như SMC, Wyckoff không bắt buộc cài đặt đầy đủ, nhưng kiến trúc phải chứng minh được khả năng hỗ trợ chúng.</p>
+
+<h3 id="strategy-plugin">Strategy Plugin</h3>
+
+<p>Hệ thống phải cho phép bổ sung strategy mới dễ dàng. Lý tưởng nhất, Strategy Engine chỉ cần <code class="language-plaintext highlighter-rouge">register(SupportResistance)</code> thay vì phải sửa chuỗi <code class="language-plaintext highlighter-rouge">if strategy == MA … else if strategy == RSI …</code>. Nhóm nghiên cứu các architectural/design pattern phù hợp — Strategy Pattern, Plugin Architecture, Factory, Registry, Dependency Injection — không bắt buộc dùng đúng một pattern cụ thể, nhưng phải giải thích được: <strong>vì sao kiến trúc của nhóm có thể thêm strategy mới mà ảnh hưởng tối thiểu đến code hiện tại?</strong></p>
+
+<h3 id="composite-strategy">Composite Strategy</h3>
+
+<p>Đây là phần trung tâm của bài toán: từ MA, RSI, Bollinger, SupportResistance có thể tạo MA+RSI, MA+Bollinger, RSI+SR, MA+RSI+SR… Vấn đề quan trọng là <strong>khi các strategy đưa ra tín hiệu khác nhau thì kết hợp thế nào?</strong></p>
+
+<p>Ví dụ với <strong>Majority Vote</strong>: MA → BUY, RSI → BUY, SR → HOLD thì BUY=2, HOLD=1 → kết quả BUY. Ví dụ với <strong>Weighted Combination</strong>, mỗi strategy có trọng số riêng (MA=0.2, RSI=0.3, SR=0.5), encode BUY=+1, HOLD=0, SELL=-1:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Score = 1×0.2 + (-1)×0.3 + 1×0.5 = 0.4
+
+score &gt;  0.3 → BUY
+score &lt; -0.3 → SELL
+còn lại      → HOLD
+</code></pre></div></div>
+
+<p>Đây chỉ là ví dụ — nhóm được quyền thiết kế phương pháp combination riêng nhưng phải trình bày rõ cách tính.</p>
+
+<h3 id="strategy-search-engine">Strategy Search Engine</h3>
+
+<p>Số tổ hợp tăng rất nhanh: chỉ 4 strategy đã sinh nhiều combination, và mỗi strategy lại có nhiều bộ parameter (MA 10/20, 20/50, 50/200; RSI 14/30/70, 14/20/80, 21/30/70) làm không gian tìm kiếm lớn hơn nhiều. Hệ thống cần một Strategy Search Engine với tối thiểu <strong>một</strong> phương pháp:</p>
+
+<ul>
+  <li><strong>Random Search</strong> <em>(bắt buộc — mức tối thiểu của MVP)</em>: random một tổ hợp, mỗi combination đi qua pipeline <code class="language-plaintext highlighter-rouge">generate → backtest → evaluate → rank</code>.</li>
+  <li><strong>Domain-guided Search</strong> <em>(tùy chọn)</em>: phân nhóm strategy theo domain (Trend: MA, MACD; Momentum: RSI, Stochastic; Volatility: Bollinger, ATR; Structure: SR, SMC, Wyckoff; Information: News Sentiment) và đặt rule — ví dụ một composite phải lấy 1 Trend + 1 Momentum + 1 Structure, thay vì MA10+MA20+MA50. Nếu nhóm cài đặt hướng này thì cần giải thích domain knowledge đã được đưa vào quá trình search như thế nào.</li>
+</ul>
+
+<p>Các hướng nâng cao (<strong>không bắt buộc</strong>, là phần mở rộng): Genetic Algorithm, Bayesian Optimization, Evolutionary Search, Reinforcement Learning, LLM-generated Strategy, Agent-based Search, AlphaEvolve-style optimization, Loop Engineering.</p>
+
+<h3 id="backtesting-engine">Backtesting Engine</h3>
+
+<p>Backtesting giả lập: <em>nếu sử dụng strategy này trong quá khứ thì kết quả sẽ như thế nào?</em> Strategy sinh ra chuỗi tín hiệu (05/01 BUY @82,000 → 12/01 SELL @86,000 → 22/01 BUY @88,000 → 31/01 SELL @87,000), Backtesting Engine giả lập các giao dịch này và tính lãi/lỗ từng trade.</p>
+
+<h3 id="evaluation">Evaluation</h3>
+
+<p>Strategy <strong>không</strong> được đánh giá chỉ bằng Total Profit. Strategy A lãi +30% nhưng từng có lúc -45% có thể kém ổn định hơn Strategy B lãi +25% với Max Drawdown chỉ -8%. Hệ thống cung cấp tối thiểu các metric: <strong>Total Return</strong>, <strong>Win Rate</strong>, <strong>Max Drawdown</strong>, <strong>Number of Trades</strong>; khuyến khích bổ sung Profit/Loss, Profit Factor, Sharpe Ratio. Không yêu cầu hiểu sâu tài chính định lượng, nhưng <strong>Strategy Evaluation phải tách biệt khỏi Strategy Implementation</strong>.</p>
+
+<h3 id="leaderboard">Leaderboard</h3>
+
+<p>Sau mỗi lần backtest, kết quả được đưa vào Leaderboard:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Rank</th>
+      <th>Strategy</th>
+      <th>Return</th>
+      <th>Win Rate</th>
+      <th>MDD</th>
+      <th>Trades</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>MA+RSI+SR</td>
+      <td>24.2%</td>
+      <td>62%</td>
+      <td>-7.1%</td>
+      <td>81</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>MA+BB</td>
+      <td>21.7%</td>
+      <td>55%</td>
+      <td>-8.4%</td>
+      <td>105</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>RSI+SR</td>
+      <td>18.4%</td>
+      <td>64%</td>
+      <td>-6.7%</td>
+      <td>52</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>MA</td>
+      <td>9.1%</td>
+      <td>48%</td>
+      <td>-14.2%</td>
+      <td>140</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Leaderboard cho phép sort theo Return, Win Rate, Max Drawdown, Sharpe, hoặc định nghĩa một <strong>Overall Score</strong> (ví dụ <code class="language-plaintext highlighter-rouge">Score = 0.5×Return + 0.2×WinRate + 0.3×RiskScore</code>) — nhóm phải trình bày rõ cách tính. Hệ thống giữ <strong>Top-K</strong> strategy (ví dụ K=10): candidate mới có score 82.1 cao hơn strategy đang đứng thứ 10 (78.4) thì được đưa vào Leaderboard.</p>
+
+<h3 id="continuous-strategy-loop">Continuous Strategy Loop</h3>
+
+<p>Hệ thống chạy một vòng loop ngầm:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Generate Strategy → Backtest → Evaluate → Rank → Leaderboard → Generate tiếp
+</code></pre></div></div>
+
+<p>Loop có thể chạy theo số candidate (100 candidate), theo thời gian (1 giờ) hoặc đến khi không cải thiện sau 50 iterations. <strong>Nhóm phải thiết kế Stop Condition</strong> — không được để <code class="language-plaintext highlighter-rouge">while(true)</code> chạy vô hạn mà không kiểm soát.</p>
+
+<p>Một implementation kém đặt tất cả (tính indicator, backtest, save DB, update UI) trong một function. Implementation tốt tách thành <code class="language-plaintext highlighter-rouge">Strategy Generator → Strategy Queue → Backtest Worker → Evaluator → Ranking Service → Leaderboard</code>, nhờ đó có thể chạy nhiều worker, retry khi worker lỗi, pause/resume loop, theo dõi tiến trình, thay search algorithm và scale trong tương lai.</p>
+
+<h3 id="visualization--trade-detail">Visualization &amp; Trade Detail</h3>
+
+<p>Không chỉ hiển thị <code class="language-plaintext highlighter-rouge">Profit = +20%</code> mà phải cho người dùng hiểu strategy đã làm gì. Khi click vào một strategy (MA20 + RSI14 + SupportResistance), chart hiển thị MA20, RSI signals, Support zones, Buy points, Sell points. Người dùng xem được bảng Trade Detail (thời điểm Entry/Exit, giá, kết quả từng trade) và khi click một trade thì chart highlight vị trí ENTRY/EXIT tương ứng.</p>
+
+<h3 id="news-crawler">News Crawler</h3>
+
+<p>Giá crypto không chỉ phụ thuộc vào biểu đồ — tin tức (Bitcoin ETF, lãi suất Fed, quy định pháp lý, sàn bị hack, nâng cấp blockchain, dòng tiền tổ chức) cũng tác động đến thị trường. Module <strong>News Collector</strong> thu thập dữ liệu và chuẩn hóa thành:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>News
+  id
+  title
+  content
+  source
+  publishedAt
+  crawledAt
+  relatedCoins
+  url
+</code></pre></div></div>
+
+<p>News <strong>không</strong> được gắn cứng với một crawler cụ thể. Cần một lớp <strong>News Provider</strong> phía trên nhiều nguồn (RSS, News API, Crawler) và tất cả provider trả về cùng một format chuẩn (<code class="language-plaintext highlighter-rouge">NewsItem</code>), nhờ đó thay nguồn dữ liệu không ảnh hưởng các module phía sau.</p>
+
+<h3 id="sentiment-analysis">Sentiment Analysis</h3>
+
+<p>Machine Learning Service phân loại news thành <code class="language-plaintext highlighter-rouge">POSITIVE</code> / <code class="language-plaintext highlighter-rouge">NEGATIVE</code> / <code class="language-plaintext highlighter-rouge">NEUTRAL</code> kèm score (ví dụ 0.82) và lưu kết quả cùng bản tin. Pipeline tối thiểu: <code class="language-plaintext highlighter-rouge">Collect → Store → Analyze sentiment</code>.</p>
+
+<p>Điểm kiến trúc thú vị: <strong>sentiment có thể trở thành một strategy</strong>. Ví dụ <code class="language-plaintext highlighter-rouge">NewsSentimentStrategy</code>: average sentiment trong 1 giờ &gt; 0.7 → BUY, &lt; -0.7 → SELL. Khi đó search engine có thể tìm MA + RSI + News Sentiment hoặc SupportResistance + News Sentiment — kiến trúc không còn giới hạn ở Technical Analysis. Crawler chỉ thu thập news; Sentiment Service mới xử lý phân tích — <strong>không</strong> để Crawler phụ thuộc chặt vào model ML.</p>
+
+<h3 id="database-và-reproducibility">Database và Reproducibility</h3>
+
+<p>Các nhóm dữ liệu chính: <strong>Market Data</strong> (Candles: pair, timeframe, timestamp, OHLCV), <strong>Strategy</strong> (StrategyDefinition, Parameters, Version, CreatedAt), <strong>Experiment</strong> (Combination, Dataset, Timeframe, Parameters), <strong>Result</strong> (Trades: entry, exit, profit, strategy), <strong>News</strong> (title, content, source, publishedAt, relatedCoin, sentiment) và <strong>Leaderboard</strong> (lưu trực tiếp hoặc tính từ Experiment Results — nhóm cần giải thích lựa chọn).</p>
+
+<p>Strategy phải có <strong>version</strong>: MA-RSI Strategy v1 (MA20/MA50/RSI14) sau khi sửa thành v2 (MA10/MA30/RSI21) <strong>không được overwrite</strong> kết quả cũ. Experiment #122 phải luôn biết chính xác nó đã dùng strategy version nào — đây là vấn đề <strong>Reproducibility</strong>.</p>
+
+<h3 id="observability">Observability</h3>
+
+<p>Hệ thống phải trả lời được: loop đang chạy hay dừng? Đã thử bao nhiêu strategy? Backtest mất bao lâu? Có bao nhiêu job lỗi? Strategy nào đang đứng Top 1?</p>
+
+<hr />
+
+<h2 id="các-vấn-đề-cần-giải-quyết">Các vấn đề cần giải quyết</h2>
+
+<p>Đây là các <strong>architectural driver</strong> của đồ án — nhóm phải giải quyết và giải thích được trong báo cáo.</p>
+
+<p><strong>Modifiability:</strong> Có thể thêm <code class="language-plaintext highlighter-rouge">MACDStrategy</code> mà không phải sửa 20 module. Thêm một strategy mới không được yêu cầu sửa toàn bộ Strategy Engine.</p>
+
+<p><strong>Scalability:</strong> Ban đầu 10 strategy, sau này 100.000 candidate strategy — kiến trúc thay đổi như thế nào? Nếu 1 Backtest Worker mất 2 giây/candidate thì 10.000 candidate cần 20.000 giây; đề bài dùng ví dụ này để cho thấy Queue, Worker và Event có thể quan trọng trong kiến trúc, hệ thống nên cho phép mở rộng theo hướng đó khi cần.</p>
+
+<p><strong>Realtime:</strong> Khi Binance có dữ liệu mới, luồng <code class="language-plaintext highlighter-rouge">Market Data → Indicator → Strategy → UI</code> phải cập nhật với độ trễ thấp.</p>
+
+<p><strong>Reliability:</strong> Nếu Binance mất kết nối thì hệ thống xử lý ra sao — reconnect, retry, và có mất candles không? Nếu News Service lỗi thì Chart có còn chạy không?</p>
+
+<p><strong>Performance:</strong> Có 1.000 strategy cần backtest — nên chạy tuần tự hay dùng Job Queue kết hợp Workers? Nhóm phải lập luận lựa chọn của mình.</p>
+
+<p><strong>Maintainability:</strong> Strategy Search không được phụ thuộc chặt vào Backtesting implementation. Phải thay được Random Search bằng Genetic Search mà Backtester giữ nguyên.</p>
+
+<p><strong>Observability:</strong> Hệ thống phải quan sát được trạng thái loop, số candidate đã thử, thời gian backtest, số job lỗi và strategy đang đứng Top 1.</p>
+
+<p><strong>Reproducibility:</strong> Mỗi kết quả trên Leaderboard phải truy được về đúng version strategy đã tạo ra nó.</p>
+
+<h3 id="các-anti-pattern-phải-tránh">Các anti-pattern phải tránh</h3>
+
+<ul>
+  <li><strong>God Service:</strong> một <code class="language-plaintext highlighter-rouge">TradingService</code> vừa lấy dữ liệu Binance, tính RSI, crawl news, chạy ML, backtest, rank, save database, gửi WebSocket.</li>
+  <li><strong>Hard-coded Strategy:</strong> chuỗi <code class="language-plaintext highlighter-rouge">if MA &amp;&amp; RSI … else if MA &amp;&amp; Bollinger …</code> để xử lý từng tổ hợp.</li>
+  <li><strong>Frontend chứa business logic:</strong> để React/Vue tính trading strategy, backtest, profit, ranking.</li>
+  <li><strong>Strategy truy cập trực tiếp Database:</strong> <code class="language-plaintext highlighter-rouge">RSIStrategy → MySQL</code>. Strategy phải nhận data qua abstraction thích hợp.</li>
+  <li><strong>Crawler phụ thuộc chặt vào ML:</strong> <code class="language-plaintext highlighter-rouge">Crawler → BERT model</code>. Crawler chỉ collect news; Sentiment Service mới analyze.</li>
+</ul>
+
+<h3 id="scenario-đánh-giá-kiến-trúc">Scenario đánh giá kiến trúc</h3>
+
+<p>Giảng viên có thể đặt các yêu cầu sau để kiểm tra chất lượng kiến trúc:</p>
+
+<ul>
+  <li><strong>Extensibility:</strong> “Hệ thống hiện có MA, RSI, Bollinger và Support/Resistance. Hãy bổ sung MACD.” Nhóm tốt chỉ cần <code class="language-plaintext highlighter-rouge">class MACDStrategy implements Strategy</code> và <code class="language-plaintext highlighter-rouge">StrategyRegistry.register(MACDStrategy)</code>. Nhóm thiết kế coupling cao phải sửa Controller, Backtester, UI, Database, Combination Engine, Evaluator.</li>
+  <li><strong>Changeability:</strong> “Hiện có <code class="language-plaintext highlighter-rouge">RandomStrategyGenerator</code>, hãy thêm <code class="language-plaintext highlighter-rouge">DomainGuidedStrategyGenerator</code>.” Với <code class="language-plaintext highlighter-rouge">interface StrategyGenerator { generate() }</code>, các component phía sau chỉ nhận <code class="language-plaintext highlighter-rouge">CandidateStrategy</code> và không cần biết candidate được sinh ra bằng cách nào.</li>
+  <li><strong>Scalability:</strong> “Số backtest tăng từ 100 lên 100.000.” Hệ thống mở rộng bằng Queue + Worker pool thay vì sửa lại pipeline.</li>
+</ul>
+
+<hr />
+
+<h1 id="các-nội-dung-cần-thực-hiện">Các nội dung cần thực hiện</h1>
+
+<h2 id="phần-1--blueprint">Phần 1 — Blueprint</h2>
+
+<h3 id="1-tài-liệu-thiết-kế-hệ-thống">1. Tài liệu thiết kế hệ thống</h3>
+
+<p>Mô tả kiến trúc tổng thể của hệ thống, bao gồm các thành phần chính, cách chúng giao tiếp và lý do lựa chọn kiến trúc đó. Tài liệu cần trả lời được: hệ thống gồm những phần nào, phần nào nói chuyện với nhau như thế nào, và khi một phần gặp sự cố (Binance disconnect, News Service chết, Backtest Worker lỗi) thì phần còn lại bị ảnh hưởng ra sao.</p>
+
+<p>Một kiến trúc <strong>tham khảo</strong> (nhóm được phép đề xuất kiến trúc khác nếu giải thích được lựa chọn):</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                    Frontend Dashboard
+                            │
+                     API / WebSocket
+                            │
+                         Backend
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+ Market Data           Strategy               News
+  Service               Service              Service
+     │                     │                    │
+     ▼                     ▼                    ▼
+ Binance              Strategy               News
+ Adapter              Registry             Providers
+                          │                    │
+                          ▼                    ▼
+                 Combination Engine     Sentiment Service
+                          │                    │
+                          ▼                    ▼
+                     Backtester         Sentiment Database
+                          │                    │
+                          ▼                    │
+                      Evaluator ◄──────────────┘
+                          │
+                          ▼
+                     Leaderboard
+</code></pre></div></div>
+
+<h3 id="2-các-góc-nhìn-kiến-trúc-bắt-buộc">2. Các góc nhìn kiến trúc bắt buộc</h3>
+
+<p>Tài liệu kiến trúc phải mô tả tối thiểu các góc nhìn sau (đây cũng là nội dung bắt buộc của Architecture Document ở phần Deliverables):</p>
+
+<ul>
+  <li><strong>System Context</strong> — hệ thống nằm trong bức tranh nào: ai dùng, tích hợp với hệ thống ngoài nào (Binance, nguồn tin tức, mô hình ML).</li>
+  <li><strong>Container/Module decomposition</strong> — phân rã hệ thống thành các container/module và chỉ rõ cách chúng giao tiếp.</li>
+  <li><strong>Component responsibilities</strong> — trách nhiệm của từng component: ai lấy dữ liệu, ai tính indicator, ai sinh candidate, ai backtest, ai evaluate, ai rank, ai phân tích sentiment.</li>
+  <li><strong>Data Flow</strong> — dữ liệu đi từ đâu đến đâu, được lưu ở đâu, ai đọc ai ghi.</li>
+  <li><strong>Realtime Flow</strong> — từ khi Binance phát sinh dữ liệu mới đến khi chart cập nhật.</li>
+  <li><strong>Strategy Flow</strong> — từ khi một strategy được đăng ký đến khi nó sinh tín hiệu và được combine.</li>
+  <li><strong>Search/Backtest Flow</strong> — vòng <code class="language-plaintext highlighter-rouge">Generate → Backtest → Evaluate → Rank → Leaderboard</code>.</li>
+</ul>
+
+<p><em>Gợi ý về ký pháp (không bắt buộc):</em> nhóm có thể trình bày System Context và Container decomposition bằng hai cấp đầu của <strong>C4 diagram</strong> — Level 1 (System Context) và Level 2 (Container) — hoặc bất kỳ ký pháp nào khác diễn đạt được các nội dung trên.</p>
+
+<h3 id="3-sơ-đồ-kiến-trúc-tổng-quan">3. Sơ đồ kiến trúc tổng quan</h3>
+
+<p>Vẽ sơ đồ thể hiện luồng dữ liệu và sự phụ thuộc giữa các thành phần, đặc biệt tại các điểm tích hợp (Binance adapter, news provider, sentiment model) và tại vòng loop <code class="language-plaintext highlighter-rouge">Generate → Backtest → Evaluate → Rank → Leaderboard</code>.</p>
+
+<h3 id="4-thiết-kế-cơ-sở-dữ-liệu">4. Thiết kế cơ sở dữ liệu</h3>
+
+<p>Xác định các loại dữ liệu chính (Candles, StrategyDefinition, Experiment, Trades, News + Sentiment, Leaderboard), đề xuất loại database phù hợp (SQL, NoSQL, time-series, hoặc kết hợp) và giải thích lý do dựa trên đặc điểm từng loại dữ liệu. Thiết kế schema cho các entity quan trọng nhất, bao gồm cơ chế <strong>versioning strategy</strong> để đảm bảo reproducibility, và giải thích lựa chọn lưu Leaderboard trực tiếp hay tính từ Experiment Results.</p>
+
+<h3 id="5-mô-tả-các-luồng-nghiệp-vụ-quan-trọng">5. Mô tả các luồng nghiệp vụ quan trọng</h3>
+
+<p>Mô tả <strong>đầy đủ</strong> các luồng bắt buộc sau:</p>
+
+<ul>
+  <li><strong>Realtime Flow:</strong> từ khi Binance phát sinh giá mới đến khi chart trên frontend cập nhật.</li>
+  <li><strong>Strategy Flow:</strong> từ khi một strategy được đăng ký vào hệ thống đến khi nó nhận context, sinh tín hiệu <code class="language-plaintext highlighter-rouge">BUY</code>/<code class="language-plaintext highlighter-rouge">SELL</code>/<code class="language-plaintext highlighter-rouge">HOLD</code> và được Combination Engine gộp thành quyết định của composite strategy.</li>
+  <li><strong>Search/Backtest Flow:</strong> từ khi bắt đầu search đến khi Leaderboard thay đổi (generate candidate → queue → backtest → evaluate → rank → cập nhật Leaderboard trên UI).</li>
+  <li><strong>Data Flow:</strong> dữ liệu candles, strategy definition, experiment, trades, news và sentiment đi từ đâu đến đâu, được lưu ở đâu, thành phần nào đọc và thành phần nào ghi.</li>
+  <li><strong>News + Sentiment Flow:</strong> từ khi collect tin đến khi store, phân tích sentiment và kết quả sentiment được <code class="language-plaintext highlighter-rouge">NewsSentimentStrategy</code> sử dụng. Luồng này thuộc MVP nên cũng phải được mô tả.</li>
+</ul>
+
+<p>Với mỗi luồng, trình bày các bước xử lý, các thành phần tham gia và cách hệ thống phản ứng khi có lỗi xảy ra giữa chừng.</p>
+
+<p>Ví dụ một luồng hoàn chỉnh theo đề bài: người dùng chọn BTCUSDT 5m → lấy candles từ Binance → Strategy Generator sinh candidate <code class="language-plaintext highlighter-rouge">MA20 + RSI14 + SupportResistance</code> → Backtester chạy trên 01/01 → 01/07 khung 5m → Trade Simulation sinh 82 trades → Evaluator tính Return 18.2%, Win Rate 61%, MDD -6.1% → Ranking tính Score 81.4 → candidate đứng Rank #2 → Frontend nhận event <code class="language-plaintext highlighter-rouge">LEADERBOARD_UPDATED</code> → Leaderboard tự cập nhật, không cần refresh trang.</p>
+
+<h3 id="6-thiết-kế-strategy-plugin-và-combination">6. Thiết kế Strategy Plugin và Combination</h3>
+
+<p>Thiết kế cơ chế cho phép thêm strategy mới với ảnh hưởng tối thiểu đến code hiện tại: interface của Strategy, cách khai báo parameter và version, cơ chế đăng ký (Registry / Factory / DI / Plugin Architecture), và cách Combination Engine gộp nhiều tín hiệu thành một quyết định (Majority Vote, Weighted Combination hoặc phương pháp riêng). Trình bày rõ công thức và ngưỡng quyết định.</p>
+
+<h3 id="7-thiết-kế-các-cơ-chế-bảo-vệ-và-mở-rộng-hệ-thống">7. Thiết kế các cơ chế bảo vệ và mở rộng hệ thống</h3>
+
+<p>Với mỗi vấn đề kiến trúc dưới đây, trình bày giải pháp nhóm lựa chọn, giải thích cách nó hoạt động và lý do phù hợp với bài toán. Các kỹ thuật trong ngoặc chỉ là <strong>gợi ý tham khảo, không phải yêu cầu bắt buộc</strong> — nhóm được quyền chọn giải pháp khác nếu lập luận thuyết phục:</p>
+
+<ul>
+  <li><strong>Realtime với độ trễ thấp:</strong> Làm thế nào đẩy dữ liệu Binance đến frontend mà client không phải liên tục gọi <code class="language-plaintext highlighter-rouge">GET /price</code>? <em>(gợi ý: WebSocket, event/stream nội bộ, tách Market Data Service khỏi Adapter)</em></li>
+  <li><strong>Mất kết nối nguồn dữ liệu:</strong> Khi Binance WebSocket disconnect thì hệ thống phục hồi thế nào và có mất candles không? <em>(gợi ý: reconnect, retry, phát hiện và bù phần dữ liệu bị thiếu)</em></li>
+  <li><strong>Cô lập lỗi giữa các module:</strong> Nếu News Service hoặc Sentiment Model lỗi thì Chart và Backtest vẫn phải chạy. <em>(gợi ý: tách service, giao tiếp qua event để giảm coupling, suy giảm chức năng có kiểm soát, circuit breaker)</em></li>
+  <li><strong>Kiểm soát khối lượng backtest:</strong> Làm thế nào chạy số lượng lớn candidate mà không nghẽn hệ thống? <em>(gợi ý: Job Queue + nhiều Worker, retry job lỗi, pause/resume loop, giới hạn số job chạy song song)</em></li>
+  <li><strong>Stop Condition cho vòng loop:</strong> Loop dừng theo điều kiện nào và ai kiểm soát? Không được để <code class="language-plaintext highlighter-rouge">while(true)</code> chạy vô hạn. <em>(gợi ý: giới hạn số candidate, giới hạn thời gian, dừng khi không cải thiện sau N iterations)</em></li>
+  <li><strong>Reproducibility:</strong> Làm sao biết một kết quả trên Leaderboard được tạo bởi strategy version nào? <em>(gợi ý: không overwrite StrategyDefinition cũ, gắn version, lưu lại parameter và dataset của từng Experiment)</em></li>
+</ul>
+
+<h3 id="8-các-câu-hỏi-kiến-trúc-trung-tâm">8. Các câu hỏi kiến trúc trung tâm</h3>
+
+<p>Trong báo cáo, nhóm <strong>phải</strong> trả lời được:</p>
+
+<ol>
+  <li>Strategy mới (ví dụ <code class="language-plaintext highlighter-rouge">MACDStrategy</code>) được thêm vào hệ thống như thế nào, sửa những component nào?</li>
+  <li>Search algorithm mới được thêm như thế nào — từ Random Search sang Genetic Search có ảnh hưởng Backtesting Engine không?</li>
+  <li>Market Data Provider mới được thêm như thế nào — từ Binance sang Binance + OKX có phải sửa frontend không?</li>
+  <li>Nếu số backtest tăng từ 100 lên 100.000 thì kiến trúc thay đổi thế nào?</li>
+  <li>Nếu News Service bị lỗi thì Chart có còn chạy không?</li>
+  <li>Nếu Sentiment Model thay đổi thì Strategy Engine có bị ảnh hưởng không?</li>
+  <li>Nếu Binance WebSocket disconnect thì hệ thống phục hồi như thế nào?</li>
+  <li>Làm sao kiểm tra một kết quả trên Leaderboard được tạo ra bởi version strategy nào?</li>
+</ol>
+
+<h3 id="9-architectural-decisions-adr">9. Architectural Decisions (ADR)</h3>
+
+<p>Với mỗi quyết định lớn: chọn gì, tại sao, đánh đổi gì. Ví dụ theo đề bài:</p>
+
+<ul>
+  <li><strong>ADR-001:</strong> Tại sao dùng WebSocket?</li>
+  <li><strong>ADR-002:</strong> Tại sao dùng Plugin Architecture cho Strategy?</li>
+  <li><strong>ADR-003:</strong> Tại sao dùng Queue cho Backtesting?</li>
+  <li><strong>ADR-004:</strong> Tại sao tách Sentiment Service?</li>
+</ul>
+
+<p><strong>Không được cộng điểm chỉ vì sử dụng công nghệ phức tạp.</strong> Nếu nhóm dùng Redis, Kafka/RabbitMQ, Microservices, CQRS, Event Sourcing… thì phải chứng minh công nghệ đó giải quyết vấn đề kiến trúc nào.</p>
+
+<hr />
+
+<h2 id="phần-2--cài-đặt">Phần 2 — Cài đặt</h2>
+
+<p>Phần mềm hoàn chỉnh, có thể chạy được, cài đặt hệ thống đã mô tả trong Blueprint.</p>
+
+<h3 id="mvp-bắt-buộc">MVP bắt buộc</h3>
+
+<p>Để tránh đồ án quá lớn, nhóm <strong>bắt buộc</strong> hoàn thành tối thiểu:</p>
+
+<ul>
+  <li><strong>Market:</strong> dữ liệu Binance, candlestick chart, realtime update, tối đa 4 timeframe.</li>
+  <li><strong>Strategy:</strong> ít nhất 4 strategy đơn lẻ — MA, RSI, Bollinger, Support/Resistance.</li>
+  <li><strong>Combination:</strong> có khả năng tạo composite strategy.</li>
+  <li><strong>Backtest:</strong> có khả năng giả lập giao dịch trên historical data.</li>
+  <li><strong>Evaluation:</strong> tối thiểu Return, Win Rate, Max Drawdown, Number of Trades.</li>
+  <li><strong>Search:</strong> ít nhất một phương pháp — <strong>Random Search</strong>.</li>
+  <li><strong>Leaderboard:</strong> Top-K strategies.</li>
+  <li><strong>Visualization:</strong> chart có Buy/Sell và Entry/Exit.</li>
+  <li><strong>News:</strong> pipeline <code class="language-plaintext highlighter-rouge">Collect → Store → Analyze sentiment</code>.</li>
+</ul>
+
+<p>Ngoài các tính năng trên, các cơ chế kiến trúc đã thiết kế trong Blueprint (plugin/registry cho strategy, combination, stop condition của loop, versioning strategy, observability) phải được cài đặt thực sự trong code, không chỉ mô tả trên tài liệu.</p>
+
+<h3 id="tùy-chọn--phần-mở-rộng">Tùy chọn — phần mở rộng</h3>
+
+<p>Không bắt buộc và <strong>không được cộng điểm chỉ vì sử dụng công nghệ phức tạp</strong>. Nếu làm, nhóm phải chứng minh nó giải quyết vấn đề kiến trúc nào:</p>
+
+<ul>
+  <li><strong>Search:</strong> Domain-Guided Search, Genetic Algorithm, Evolutionary Search, Bayesian Optimization, Reinforcement Learning, LLM Strategy Generator, Agent-based Search.</li>
+  <li><strong>Trading:</strong> Long/Short, Stop Loss, Take Profit, Trailing Stop, Position Sizing.</li>
+  <li><strong>Market:</strong> nhiều coin, nhiều exchange (thêm adapter cho sàn khác ngoài Binance).</li>
+  <li><strong>Strategy nâng cao:</strong> cài đặt đầy đủ SMC, Wyckoff (đề bài chỉ yêu cầu kiến trúc chứng minh được khả năng hỗ trợ chúng).</li>
+  <li><strong>ML:</strong> sentiment nâng cao, price prediction, market regime detection.</li>
+  <li><strong>Architecture:</strong> Redis, Kafka/RabbitMQ, Worker Pool khi cần scale, Microservices, CQRS, Event Sourcing, Plugin Architecture.</li>
+</ul>
+
+<p>Sinh viên được tự do lựa chọn framework, database, message queue, mô hình ML và thuật toán tìm kiếm.</p>
+
+<h3 id="event-driven-architecture-gợi-ý">Event-driven architecture (gợi ý)</h3>
+
+<p>Nhóm dùng event-driven architecture có thể định nghĩa các event: <code class="language-plaintext highlighter-rouge">MarketPriceUpdated</code>, <code class="language-plaintext highlighter-rouge">CandleClosed</code>, <code class="language-plaintext highlighter-rouge">StrategyGenerated</code>, <code class="language-plaintext highlighter-rouge">BacktestStarted</code>, <code class="language-plaintext highlighter-rouge">BacktestCompleted</code>, <code class="language-plaintext highlighter-rouge">StrategyEvaluated</code>, <code class="language-plaintext highlighter-rouge">LeaderboardUpdated</code>, <code class="language-plaintext highlighter-rouge">NewsCollected</code>, <code class="language-plaintext highlighter-rouge">SentimentAnalyzed</code>. Khi đó Backtest Worker không cần gọi trực tiếp <code class="language-plaintext highlighter-rouge">LeaderboardService.update()</code> mà chỉ publish <code class="language-plaintext highlighter-rouge">StrategyEvaluatedEvent</code> và Ranking Service nhận event đó — giảm coupling giữa các module.</p>
+
+<hr />
+
+<h2 id="deliverables">Deliverables</h2>
+
+<p>Nhóm cần nộp đủ các thành phần sau:</p>
+
+<h3 id="1-source-code">1. Source Code</h3>
+
+<p>Repository hoàn chỉnh.</p>
+
+<h3 id="2-readme">2. README</h3>
+
+<p>Hướng dẫn gồm bốn phần:</p>
+
+<ul>
+  <li><strong>Install</strong> — cách cài đặt.</li>
+  <li><strong>Run</strong> — cách khởi chạy hệ thống.</li>
+  <li><strong>Architecture</strong> — tóm tắt kiến trúc.</li>
+  <li><strong>Demo</strong> — cách chạy demo.</li>
+</ul>
+
+<h3 id="3-architecture-document">3. Architecture Document</h3>
+
+<p>Tối thiểu mô tả:</p>
+
+<ul>
+  <li><strong>System Context</strong></li>
+  <li><strong>Container/Module decomposition</strong></li>
+  <li><strong>Component responsibilities</strong></li>
+  <li><strong>Data Flow</strong></li>
+  <li><strong>Realtime Flow</strong></li>
+  <li><strong>Strategy Flow</strong></li>
+  <li><strong>Search/Backtest Flow</strong></li>
+</ul>
+
+<h3 id="4-architectural-decisions">4. Architectural Decisions</h3>
+
+<p>Các quyết định kiến trúc dưới dạng ADR, ví dụ:</p>
+
+<ul>
+  <li><strong>ADR-001:</strong> Tại sao dùng WebSocket?</li>
+  <li><strong>ADR-002:</strong> Tại sao dùng Plugin Architecture cho Strategy?</li>
+  <li><strong>ADR-003:</strong> Tại sao dùng Queue cho Backtesting?</li>
+  <li><strong>ADR-004:</strong> Tại sao tách Sentiment Service?</li>
+</ul>
+
+<h3 id="5-demo">5. Demo</h3>
+
+<p>Demo tối thiểu phải thể hiện: realtime chart, multi timeframe, thêm/chọn strategy, generate combination, backtest, Leaderboard, trade visualization, news và sentiment.</p>
+
+<h2 id="tham-khảo-cấu-trúc-tài-liệu-blueprint">Tham khảo: cấu trúc tài liệu Blueprint</h2>
+
+<p>Đề bài <strong>không quy định</strong> cấu trúc file cho tài liệu. Phần dưới đây chỉ là <strong>một cách tổ chức gợi ý</strong>, tham khảo theo <a href="https://github.com/Fission-AI/OpenSpec">OpenSpec</a> — framework spec-driven development, gồm ba lớp tài liệu: <strong>proposal</strong> (vấn đề và lý do), <strong>design</strong> (giải pháp kỹ thuật), <strong>specs</strong> (kịch bản và ràng buộc cho từng tính năng). Nhóm được quyền chọn cách tổ chức khác, miễn là tài liệu bao gồm đủ các nội dung ở phần Deliverables.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>blueprint/
+├── proposal.md                  # Bối cảnh, vấn đề, mục tiêu
+├── design.md                    # Kiến trúc, sơ đồ, quyết định kỹ thuật
+└── specs/
+    ├── market-data.md           # Đặc tả realtime + historical market data
+    ├── strategy-plugin.md       # Đặc tả interface và cơ chế đăng ký strategy
+    ├── composite-strategy.md    # Đặc tả combination và giải quyết xung đột tín hiệu
+    ├── backtest.md              # Đặc tả trade simulation
+    ├── evaluation.md            # Đặc tả metrics
+    ├── search-loop.md           # Đặc tả search engine + stop condition
+    ├── leaderboard.md           # Đặc tả ranking và Top-K
+    ├── news.md                  # Đặc tả news provider
+    ├── sentiment.md             # Đặc tả sentiment service
+    └── ...                      # Đặc tả các tính năng khác
+</code></pre></div></div>
+
+<h3 id="proposalmd">proposal.md</h3>
+
+<div class="language-markdown highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gh"># Crypto Strategy Lab — Project Proposal</span>
+
+<span class="gu">## Vấn đề</span>
+&lt;!-- Mô tả vấn đề hiện tại mà hệ thống cần giải quyết.
+     Tại sao một strategy đơn lẻ không đủ? Hậu quả cụ thể là gì? --&gt;
+
+<span class="gu">## Mục tiêu</span>
+&lt;!-- Hệ thống cần đạt được gì? Định lượng nếu có thể.
+     Ví dụ: backtest 10.000 candidate strategy, realtime 4 timeframe đồng thời. --&gt;
+
+<span class="gu">## Người dùng và nhu cầu</span>
+<span class="c">&lt;!-- Ai dùng hệ thống? Họ cần làm gì? Điều gì quan trọng nhất với họ? --&gt;</span>
+
+<span class="gu">## Phạm vi</span>
+&lt;!-- Những gì thuộc phạm vi đồ án này (MVP).
+     Những gì KHÔNG thuộc phạm vi (ví dụ: giao dịch bằng tiền thật, SMC/Wyckoff đầy đủ). --&gt;
+
+<span class="gu">## Rủi ro và ràng buộc</span>
+&lt;!-- Các vấn đề kỹ thuật đã biết trước: Binance disconnect, không gian tìm kiếm bùng nổ,
+     backtest tốn thời gian, sentiment model thay đổi, reproducibility của experiment. --&gt;
+</code></pre></div></div>
+
+<h3 id="designmd">design.md</h3>
+
+<div class="language-markdown highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gh"># Crypto Strategy Lab — Technical Design</span>
+
+<span class="gu">## Kiến trúc tổng thể</span>
+&lt;!-- Mô tả architectural style được chọn và lý do.
+     Hệ thống gồm những thành phần nào? Chúng giao tiếp với nhau như thế nào? --&gt;
+
+<span class="gu">## System Context</span>
+<span class="c">&lt;!-- Ai dùng hệ thống + hệ thống ngoài (Binance, news source, ML model) --&gt;</span>
+
+<span class="gu">## Container/Module decomposition</span>
+<span class="c">&lt;!-- Phân rã thành container/module và cách chúng giao tiếp --&gt;</span>
+
+<span class="gu">## Component responsibilities</span>
+<span class="c">&lt;!-- Trách nhiệm từng component: lấy data, tính indicator, generate, backtest, evaluate, rank, sentiment --&gt;</span>
+
+<span class="gu">## Data Flow</span>
+<span class="c">&lt;!-- Dữ liệu đi từ đâu đến đâu, lưu ở đâu, ai đọc ai ghi --&gt;</span>
+
+<span class="gu">## Realtime Flow</span>
+<span class="c">&lt;!-- Từ Binance đến khi chart cập nhật --&gt;</span>
+
+<span class="gu">## Strategy Flow</span>
+<span class="c">&lt;!-- Từ khi strategy được đăng ký đến khi sinh tín hiệu và được combine --&gt;</span>
+
+<span class="gu">## Search/Backtest Flow</span>
+<span class="c">&lt;!-- Generate → Backtest → Evaluate → Rank → Leaderboard --&gt;</span>
+
+<span class="gu">## Thiết kế cơ sở dữ liệu</span>
+<span class="c">&lt;!-- Loại database, lý do lựa chọn, schema các entity chính, cơ chế version strategy --&gt;</span>
+
+<span class="gu">## Thiết kế Strategy Plugin</span>
+<span class="c">&lt;!-- Interface Strategy, parameter, version, cơ chế đăng ký, thêm strategy mới cần sửa gì --&gt;</span>
+
+<span class="gu">## Thiết kế Composite Strategy</span>
+<span class="c">&lt;!-- Cách gộp tín hiệu, công thức, ngưỡng quyết định, xử lý khi tín hiệu xung đột --&gt;</span>
+
+<span class="gu">## Thiết kế các cơ chế bảo vệ và mở rộng</span>
+
+<span class="gu">### Realtime và độ trễ</span>
+<span class="c">&lt;!-- Cơ chế push, event bus, tần suất cập nhật --&gt;</span>
+
+<span class="gu">### Mất kết nối nguồn dữ liệu</span>
+<span class="c">&lt;!-- Reconnect, backoff, gap detection, backfill --&gt;</span>
+
+<span class="gu">### Cô lập lỗi giữa các module</span>
+<span class="c">&lt;!-- Phạm vi ảnh hưởng khi một service chết, cách giữ Chart/Backtest vẫn chạy --&gt;</span>
+
+<span class="gu">### Kiểm soát khối lượng backtest</span>
+<span class="c">&lt;!-- Queue, worker pool, concurrency, retry, pause/resume --&gt;</span>
+
+<span class="gu">### Stop Condition cho vòng loop</span>
+<span class="c">&lt;!-- Điều kiện dừng, ai kiểm soát, cách quan sát tiến trình --&gt;</span>
+
+<span class="gu">### Reproducibility</span>
+<span class="c">&lt;!-- Version strategy, snapshot parameter/dataset, truy vết kết quả Leaderboard --&gt;</span>
+
+<span class="gu">## Trả lời các câu hỏi kiến trúc trung tâm</span>
+<span class="c">&lt;!-- 8 câu hỏi ở mục 8 phần Blueprint --&gt;</span>
+
+<span class="gu">## Các quyết định kỹ thuật quan trọng (ADR)</span>
+&lt;!-- Với mỗi quyết định lớn: lựa chọn gì, tại sao, đánh đổi gì.
+     Ví dụ: WebSocket vs polling, SQL vs time-series DB, Queue vs in-process, tách Sentiment Service. --&gt;
+</code></pre></div></div>
+
+<h3 id="specsfeaturemd">specs/[feature].md</h3>
+
+<div class="language-markdown highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gh"># Đặc tả: [Tên tính năng]</span>
+
+<span class="gu">## Mô tả</span>
+<span class="c">&lt;!-- Tính năng này làm gì? --&gt;</span>
+
+<span class="gu">## Luồng chính</span>
+<span class="c">&lt;!-- Các bước xử lý theo thứ tự, các thành phần tham gia --&gt;</span>
+
+<span class="gu">## Kịch bản lỗi</span>
+<span class="c">&lt;!-- Điều gì xảy ra khi: Binance timeout, thiếu candle, worker crash, model lỗi, dữ liệu không hợp lệ --&gt;</span>
+
+<span class="gu">## Ràng buộc</span>
+<span class="c">&lt;!-- Giới hạn hiệu năng, tính nhất quán, reproducibility cần đảm bảo --&gt;</span>
+
+<span class="gu">## Tiêu chí chấp nhận</span>
+<span class="c">&lt;!-- Làm thế nào để biết tính năng này hoạt động đúng? --&gt;</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="demo-scenario-đề-xuất">Demo scenario đề xuất</h2>
+
+<p>Một demo tốt có thể diễn ra như sau:</p>
+
+<ol>
+  <li>Mở BTCUSDT với 4 chart realtime: <code class="language-plaintext highlighter-rouge">5m | 15m | 1h | 4h</code>.</li>
+  <li>Chọn các strategy: MA, RSI, Bollinger, Support Resistance.</li>
+  <li>Bấm <code class="language-plaintext highlighter-rouge">START SEARCH</code>.</li>
+  <li>Màn hình hiển thị tiến trình: <code class="language-plaintext highlighter-rouge">Candidates tested: 125</code>, current <code class="language-plaintext highlighter-rouge">MA20 + RSI14 + SR</code>, đang backtesting.</li>
+  <li>Leaderboard thay đổi: #1 <code class="language-plaintext highlighter-rouge">MA20 + RSI14 + SR</code>, #2 <code class="language-plaintext highlighter-rouge">MA50 + BB</code>, #3 <code class="language-plaintext highlighter-rouge">RSI + SR</code>.</li>
+  <li>Click Top #1 — chart hiển thị Buy, Sell, MA, Support, Resistance.</li>
+  <li>Hiển thị kết quả: Trades = 81, Win Rate = 61%, Return = 18.2%, MDD = -6.1%.</li>
+  <li>Chuyển sang News: BTC News với Positive 42%, Neutral 38%, Negative 20%.</li>
+  <li>Thêm <code class="language-plaintext highlighter-rouge">SentimentStrategy</code> vào search space.</li>
+  <li>Chạy lại loop, sinh ra các combination mới: <code class="language-plaintext highlighter-rouge">MA + RSI + Sentiment</code>, <code class="language-plaintext highlighter-rouge">MA + SR + Sentiment</code>…</li>
+</ol>
+
+<p>Qua demo này có thể thấy hầu hết các component kiến trúc hoạt động cùng nhau.</p>
+
+<hr />
+
+<h2 id="ý-nghĩa-của-đồ-án">Ý nghĩa của đồ án</h2>
+
+<p>Đồ án <strong>không</strong> nhằm chứng minh rằng MA + RSI + SMC có thể kiếm tiền thật. Mục tiêu là thiết kế một hệ thống mà hôm nay có MA + RSI, ngày mai có thể thêm SMC, Wyckoff, Sentiment hoặc một strategy hoàn toàn mới mà kiến trúc cũ vẫn hoạt động; hôm nay dùng Random Search, ngày mai thay bằng Genetic Algorithm mà Backtester, Evaluator, Leaderboard, Visualization không cần viết lại.</p>
+
+<p>Hệ thống phải chuyển bài toán <em>“Tôi có một strategy mới”</em> thành pipeline <code class="language-plaintext highlighter-rouge">Plugin Strategy → Combine → Backtest → Evaluate → Compare → Leaderboard → Visualize</code> và lặp lại được quá trình <code class="language-plaintext highlighter-rouge">Generate → Execute → Measure → Rank → Improve → Generate…</code></p>
+
+<p>Bản chất đồ án là sự kết hợp của: <strong>Realtime System + Plugin Architecture + Data Pipeline + Event-driven Architecture + Experiment Platform + Verification Loop</strong>. Điều quan trọng nhất cần chứng minh:</p>
+
+<blockquote>
+  <p>Kiến trúc được thiết kế như thế nào để các thành phần có thể thay đổi, mở rộng và hoạt động độc lập trong khi toàn bộ hệ thống vẫn duy trì được tính đúng đắn, khả năng quan sát và khả năng phát triển lâu dài.</p>
+</blockquote>
+    </main>
+  </body>
+</html>
