@@ -1,0 +1,83 @@
+sequenceDiagram
+    autonumber
+    actor U as Researcher
+    participant API as Go API
+    participant SRS as SearchRunService
+    participant GEN as CandidateGenerator
+    participant EXS as ExperimentService
+    participant DB as PostgreSQL
+    participant W1 as Worker 1
+    participant W2 as Worker 2
+    participant DP as OutboxDispatcher
+    participant EVA as Evaluator
+    participant RNK as RankingService
+    participant HUB as WS Hub (Go)
+
+    U->>API: POST /search-runs {space, stop_conditions, dataset, execution}
+    API->>API: validate + check quota (max_concurrent_runs)
+    API->>SRS: create run
+    SRS->>DB: INSERT search_runs (status=queued, stop_conditions NOT NULL)
+    SRS-->>API: 202 {search_run_id}
+    API-->>U: 202 + run_id
+
+    SRS->>DB: UPDATE status=running, started_at=now()
+
+    loop VÒNG LẶP CHÍNH — điều kiện dừng kiểm tra ở ĐẦU mỗi vòng
+        SRS->>SRS: check_stop_conditions(run)
+        Note over SRS: max_candidates? · max_duration_sec? · max_non_improving?<br/>· failure_rate? · status == paused/cancelled?<br/>KHÔNG có while(true) — mọi nhánh đều dẫn tới điều kiện thoát
+
+        SRS->>GEN: generate(space, batch_size, seed, history)
+        GEN-->>SRS: CandidateStrategy(hash=H, generated_by=..., meta=...)
+
+        SRS->>DB: INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
+        alt hash đã tồn tại trong run
+            DB-->>SRS: 0 row
+            Note over SRS: Trùng → bỏ qua, KHÔNG backtest lại. Sang candidate tiếp.
+        else candidate mới
+            SRS->>EXS: create_experiment(candidate, dataset, execution)
+            EXS->>DB: BEGIN
+            EXS->>DB: INSERT experiments (snapshot bất biến)
+            EXS->>DB: INSERT backtest_jobs (status=queued, priority=200)
+            EXS->>DB: COMMIT
+            Note over EXS,DB: Snapshot và job trong CÙNG transaction.<br/>Không có job trỏ tới experiment không tồn tại.
+            EXS->>HUB: BacktestQueued
+        end
+        SRS->>DB: UPDATE candidates_generated += 1
+        SRS->>HUB: SearchProgressUpdated
+    end
+
+    par Worker 1 và Worker 2 chạy song song, không biết nhau
+        W1->>DB: claim: SELECT ... WHERE status='queued'<br/>FOR UPDATE SKIP LOCKED LIMIT 1
+        DB-->>W1: job A + lease_token T1
+        W1->>DB: UPDATE status=leased, leased_by=w1,<br/>lease_token=T1, lease_expires_at=now()+120s
+        W1->>W1: BacktestEngine.run(snapshot, candles)
+        W1->>DB: BEGIN · trades, run_signals, equity_points<br/>· UPSERT backtest_runs WHERE lease_token=T1<br/>· INSERT domain_events BacktestCompleted (pending) · COMMIT
+        Note over W1,DB: Kết quả VÀ event trong cùng transaction (§5.7.3).<br/>Mọi UPDATE guard bằng lease_token (§8.3.1).
+    and
+        W2->>DB: claim: SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1
+        Note over W2,DB: SKIP LOCKED = W2 KHÔNG chờ W1,<br/>nó nhận job B ngay lập tức
+        DB-->>W2: job B + lease_token T2
+        W2->>W2: BacktestEngine.run(...)
+        W2->>DB: BEGIN · kết quả · INSERT domain_events (pending) · COMMIT
+    end
+
+    DP->>DB: OutboxDispatcher claim event (pending, next_attempt_at <= now)
+    DP->>EVA: deliver BacktestCompleted
+    Note over DP,EVA: Worker là process RIÊNG nên event đi qua outbox,<br/>KHÔNG qua in-process dispatcher (§5.7.1, §5.7.2)
+    EVA->>DB: INSERT event_consumptions(evaluator) + evaluations<br/>ON CONFLICT DO NOTHING — cùng transaction
+    EVA->>DB: INSERT domain_events StrategyEvaluated (pending)
+    DP->>RNK: deliver StrategyEvaluated
+    Note over DP,RNK: Qua EVENT. Evaluator KHÔNG gọi RankingService.update() (đề bài §34)
+    RNK->>DB: SELECT score thứ K hiện tại
+    alt score > entry thứ K
+        RNK->>DB: INSERT event_consumptions(ranking)<br/>+ leaderboard_entries (APPEND, không UPDATE)
+        RNK->>HUB: LeaderboardUpdated qua POST /internal/events
+        HUB->>U: leaderboard tự cập nhật (không refresh trang)
+        RNK->>SRS: best_score cải thiện → reset non_improving_count
+    else không vào Top-K
+        RNK->>SRS: non_improving_count += 1
+    end
+    DP->>DB: mọi handler đã ack → dispatch_status=delivered
+
+    SRS->>DB: UPDATE status=completed, stop_reason='max_candidates'
+    SRS->>HUB: SearchRunFinished

@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    participant W as Worker
+    participant DB as PostgreSQL
+    participant ENG as BacktestEngine
+    participant EVA as Evaluator
+
+    W->>DB: claim job, SKIP LOCKED → nhận lease_token T
+    DB-->>W: job_id, experiment_id, lease_token T, attempt 1 of 3
+    W->>DB: UPSERT backtest_runs (status=running, worker_id, lease_token=T)<br/>WHERE status IN (queued, running, failed)
+    Note over W,DB: 0 row trả về = run đã completed →<br/>đọc kết quả cũ, đánh job completed, KHÔNG chạy engine.
+    W->>DB: SELECT snapshot và nến của market_dataset_id
+    W->>DB: INSERT domain_events BacktestStarted (outbox, pending)
+    par Vòng lặp backtest
+        W->>ENG: run snapshot, candles
+        ENG-->>W: trades, signals, equity points
+    and Heartbeat mỗi 30 giây
+        W->>DB: UPDATE lease_expires_at = now + 120s<br/>WHERE id = job AND lease_token = T
+        Note over W,DB: 0 row = ĐÃ MẤT LEASE →<br/>worker abort ngay, không ghi gì.
+    end
+    W->>DB: BEGIN
+    W->>DB: INSERT trades, run_signals, equity_points theo batch
+    W->>DB: UPDATE backtest_runs status=completed<br/>WHERE experiment_id = E AND lease_token = T
+    W->>DB: UPDATE backtest_jobs status=completed, lease_token=NULL<br/>WHERE experiment_id = E AND lease_token = T
+    W->>DB: INSERT domain_events BacktestCompleted (outbox, pending)
+    W->>DB: COMMIT
+    Note over W,EVA: Worker KHÔNG gọi Evaluator trực tiếp và KHÔNG<br/>dùng in-process dispatcher (worker là process riêng).<br/>Event đi qua transactional outbox — design.md §5.7.
+    EVA->>DB: OutboxDispatcher giao BacktestCompleted → Evaluator handler

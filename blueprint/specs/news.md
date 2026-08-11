@@ -18,7 +18,7 @@ Vì input đến từ Internet, đây là bề mặt tấn công lớn nhất c�
 - **Không bao giờ** có URL do client cung cấp đi vào một outbound request. User chỉ chọn `source_id`.
 - Origin và IP đích được validate **trước fetch, sau khi resolve DNS, và sau mỗi redirect** — 3 điểm, không phải 1.
 - `news_items` không có row trùng dù collect chạy chồng lấp bao nhiêu lần: `url_hash UNIQUE` là cơ chế duy nhất.
-- News provider chết → **chart realtime và backtest technical không bị ảnh hưởng 0%** (`design.md` §1.4, §11.5).
+- News provider chết → **chart realtime và backtest technical không bị ảnh hưởng 0%** (`design.md` §1.5, §11.5).
 - Không có HTML thô nào được lưu ở dạng có thể render thành script.
 - `news.adapters` không import `sentiment` / `predictor` / `domain.strategy`.
 

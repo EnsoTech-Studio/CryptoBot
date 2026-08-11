@@ -1,0 +1,33 @@
+sequenceDiagram
+    autonumber
+    actor U as Researcher
+    participant GO as Go API
+    participant EXS as ExperimentService
+    participant MS as MarketService
+    participant DB as PostgreSQL
+    participant HUB as WS Hub
+
+    U->>GO: POST /api/v1/experiments
+    GO->>GO: L1-L4 auth, RBAC, rate limit, validate schema
+    GO->>EXS: create_experiment payload kèm X-Correlation-ID
+    EXS->>EXS: validate LẠI, không tin caller nội bộ
+    EXS->>DB: resolve strategy_version_id từ strategy_id và version
+    Note over EXS,DB: Không tìm thấy → 422 unknown_strategy_version.<br/>FK bảo đảm snapshot không trỏ tới version không tồn tại.
+    EXS->>MS: ensure_dataset symbol, timeframe, from, to
+    MS->>MS: ước lượng số nến, so với max_candles_per_experiment
+    Note over MS: Vượt 20.000 → 422 dataset_too_large,<br/>KHÔNG nạp nến rồi mới báo lỗi
+    MS-->>EXS: market_dataset_id, candle_count, content_hash
+    EXS->>EXS: candidate_hash = sha256 canonical_json của definition
+    EXS->>DB: tìm experiment đã completed cùng hash, dataset, execution, evaluator
+    alt trùng và force = false
+        DB-->>EXS: experiment cũ đã completed
+        EXS-->>GO: 200 run_id cũ kèm reused = true
+    else mới hoặc force = true
+        EXS->>DB: BEGIN
+        EXS->>DB: INSERT experiments snapshot bất biến
+        EXS->>DB: INSERT backtest_jobs status queued, priority 100
+        EXS->>DB: COMMIT
+        EXS->>HUB: BacktestQueued experiment_id, job_id, priority
+        EXS-->>GO: 202 run_id, status queued
+    end
+    GO-->>U: 202 run_id

@@ -1,0 +1,47 @@
+flowchart TB
+    Researcher["👤 Researcher / Operator"]
+
+    subgraph Sys["🔷 Crypto Strategy Lab"]
+        direction TB
+
+        Web["<b>Web Dashboard</b><br/>[Container: Next.js 16 + React 19]<br/><br/>4 chart panel độc lập, strategy picker,<br/>search control, leaderboard, trades, news.<br/><i>Chỉ render — không tính toán domain</i>"]
+
+        API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
+
+        Lab["<b>Strategy Lab</b><br/>[Container: Python 3.12 + FastAPI]<br/><br/>Market normalization, indicator, strategy registry,<br/>composite, experiment, evaluate, rank,<br/>news orchestration, sentiment."]
+
+        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint <code>python -m app.worker</code>]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
+
+        DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
+
+        Cache[("<b>Redis 7</b><br/>[Container — tuỳ chọn, có điều kiện §12.0]<br/><br/>Cache overlay đã tính,<br/>outbound rate-limit dùng chung")]
+    end
+
+    Binance["🌐 Binance<br/>REST + WSS"]
+    NewsSrc["🌐 News Sources<br/>RSS / API"]
+
+    Researcher -->|"HTTPS"| Web
+    Web -->|"REST JSON + WebSocket<br/><code>/api/v1/*</code>"| API
+    API -->|"HTTP JSON nội bộ<br/><code>/internal/*</code><br/>+ request-id, deadline, principal"| Lab
+    Lab -.->|"push event: CandleClosed,<br/>ChartOverlayUpdated,<br/>LeaderboardUpdated"| API
+
+    Lab -->|"SQL"| DB
+    Worker -->|"SQL: FOR UPDATE SKIP LOCKED<br/>+ ghi trades/evaluations"| DB
+    Lab -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB
+    Lab -.->|"cache overlay"| Cache
+    Worker -.->|"outbound rate-limit chung"| Cache
+
+    Lab -->|"HTTPS REST: klines"| Binance
+    Lab <-->|"WSS: kline stream"| Binance
+    Lab -->|"HTTPS: fetch (allowlist)"| NewsSrc
+
+    classDef person fill:#08427b,stroke:#052e56,color:#fff
+    classDef container fill:#438dd5,stroke:#2e6295,color:#fff
+    classDef db fill:#438dd5,stroke:#2e6295,color:#fff
+    classDef optional fill:#7aa9d6,stroke:#2e6295,color:#fff,stroke-dasharray: 5 5
+    classDef external fill:#999,stroke:#6b6b6b,color:#fff
+    class Researcher person
+    class Web,API,Lab,Worker container
+    class DB db
+    class Cache optional
+    class Binance,NewsSrc external

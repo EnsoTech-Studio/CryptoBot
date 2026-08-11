@@ -132,7 +132,7 @@ sequenceDiagram
     end
 ```
 
-`Evaluator` đọc từ **DB**, không nhận metrics qua payload event. Lý do: payload event là dữ liệu đi qua network (khi Phase 6 tách process) và có thể bị truncate/mất field; `trades` là nguồn sự thật. Ngoài ra đọc từ DB làm cho việc **recompute** (luồng D) đi qua đúng một code path với việc compute lần đầu — không có hai đường tính khác nhau để lệch nhau.
+`Evaluator` đọc từ **DB**, không nhận metrics qua payload event. Lý do: payload event là dữ liệu đi qua ranh giới process (Worker publish, Evaluator consume — `design.md` §5.7) và có thể bị truncate/mất field; `trades` là nguồn sự thật. Ngoài ra đọc từ DB làm cho việc **recompute** (luồng D) đi qua đúng một code path với việc compute lần đầu — không có hai đường tính khác nhau để lệch nhau.
 
 ### B. Công thức từng metric
 

@@ -4,7 +4,7 @@ Tài liệu thiết kế kiến trúc cho đồ án cuối kỳ môn Thiết k�
 
 **Chủ đề**: Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch Crypto.
 
-**Ranh giới không thương lượng**: hệ thống là **simulation-only**. Nó không đặt lệnh, không giữ credential sàn giao dịch, không đưa ra khuyến nghị đầu tư. Binance chỉ được truy cập qua adapter read-only trên public market data endpoint.
+**Ranh giới của nhóm** *(product safety / scope decision — không phải câu trích từ đề bài)*: hệ thống là **simulation-only**. Nó không đặt lệnh, không giữ credential sàn giao dịch, không đưa ra khuyến nghị đầu tư. Binance chỉ được truy cập qua adapter read-only trên public market data endpoint. Đề bài nói trọng tâm là kiến trúc và backtest là *giả lập* (§2, §19, §47) nhưng không phát biểu ranh giới này thành yêu cầu — nhóm chọn biến nó thành ranh giới cứng để loại attack surface (không có API key thì không có gì để rò rỉ) và chống scope creep. Lập luận đầy đủ ở `proposal.md` §4.3; phân loại nguồn gốc mọi yêu cầu khác ở `proposal.md` §4.4.
 
 ## Cấu trúc thư mục
 
@@ -13,12 +13,18 @@ blueprint/
 ├── README.md                      # File này — index + mapping yêu cầu
 ├── proposal.md                    # Bối cảnh, mục tiêu định lượng, phạm vi, rủi ro, tiêu chí thành công
 ├── design.md                      # Tài liệu trung tâm: 13 section
+├── assets/                        # Sơ đồ render sẵn — đọc offline / export PDF được
+│   ├── README.md                  # Danh mục 19 sơ đồ + cách render lại
+│   ├── diagrams/                  # Mermaid source (.mmd) + SVG vector
+│   └── diagrams-png/              # PNG 2× cho Word/PowerPoint
+├── scripts/
+│   └── extract_diagrams.py        # Trích .mmd từ Markdown (Markdown là nguồn sự thật)
 └── specs/
     ├── market-data.md             # Binance adapter, realtime, reconnect + backfill
     ├── chart-overlay.md           # Overlay live, subscription per panel, multi-timeframe
     ├── strategy-registry.md       # Plugin Architecture — lõi khả năng mở rộng
     ├── composite-strategy.md      # Kết hợp tín hiệu, combination policy
-    ├── experiment.md              # ExperimentSnapshot bất biến, job queue, lease
+    ├── experiment.md              # ExperimentSnapshot bất biến, job queue, lease token
     ├── backtest.md                # Backtest engine, fill policy, chống look-ahead
     ├── evaluation.md              # Metrics dẫn xuất, tách khỏi trade facts
     ├── search-loop.md             # Continuous loop, stop condition, pause/resume
@@ -30,6 +36,25 @@ blueprint/
     └── observability.md           # Metrics, correlation ID, structured log, progress panel
 ```
 
+## Sơ đồ render sẵn
+
+Mọi sơ đồ trong tài liệu đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×). Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
+
+Bảy góc nhìn kiến trúc bắt buộc đều có sơ đồ tương ứng:
+
+| Góc nhìn bắt buộc | Sơ đồ | Section |
+| ----------------- | ----- | ------- |
+| System Context | `01-c4-l1-system-context` | `design.md` §2.1 |
+| Container / HLA | `02-c4-l2-container`, `04-high-level-architecture` | §2.2, §3 |
+| Component responsibilities | `03-c4-l3-component-strategy-lab` | §2.3 |
+| ERD | `06-erd` | §4.3 |
+| Data Flow | `05-candle-path-binance-to-pixel`, `07-outbox-scenarios`, `13-news-sentiment-flow` | §3.2, §5.7.5, §6.4 |
+| Realtime / Reconnect Flow | `09-realtime-reconnect-backfill-flow` | §6.1 |
+| Strategy Flow | `10-strategy-flow` | §6.2 |
+| Search / Backtest Flow | `11-search-backtest-flow`, `15-job-queue-scale`, `17`–`19` | §6.3, §8.3, `specs/experiment.md` |
+
+Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/README.md`**.
+
 ## Cách đọc
 
 1. **`proposal.md`** — đọc trước. Vấn đề kiến trúc là gì, mục tiêu định lượng nào, phạm vi ở đâu, 10 tiêu chí thành công S1–S10.
@@ -37,18 +62,18 @@ blueprint/
 
    | §   | Nội dung                                       |
    | --- | ---------------------------------------------- |
-   | 1   | Kiến trúc tổng thể (4 quyết định style lồng nhau) |
+   | 1   | Kiến trúc tổng thể: architectural style theo từng process, **Service Boundary & Ownership** (Go/Python), read projection, artifact vs workload, hành vi khi sự cố |
    | 2   | C4 Diagram — Level 1 (Context), Level 2 (Container), Level 3 (Component) |
    | 3   | High-Level Architecture + 6 điểm tích hợp      |
    | 4   | Thiết kế cơ sở dữ liệu (DDL đầy đủ + ERD + đường provenance) |
-   | 5   | Domain contract (7 port) + Event vocabulary (15 event) |
+   | 5   | Domain contract (7 port) + Event vocabulary (15 event) + **transactional outbox** (§5.7) + **`POST /internal/events`** (§5.8) |
    | 6   | 4 luồng nghiệp vụ: Realtime, Strategy, Search/Backtest, News/Sentiment |
    | 7   | Kiểm soát truy cập: RBAC + ownership, Defense in Depth 4 lớp |
-   | 8   | 4 cơ chế bảo vệ: Plugin Registry, Quota/Rate limit, Job Queue, Observability |
+   | 8   | 4 cơ chế bảo vệ: Plugin Registry, Quota/Rate limit, Job Queue (+ **lease token** §8.3.1), Observability |
    | 9   | 5 anti-pattern đề bài + 3 bổ sung, kèm test kiểm chứng |
-   | 10  | **14 ADR**                                     |
+   | 10  | **16 ADR**                                     |
    | 11  | **Trả lời 8 câu hỏi kiến trúc trung tâm**      |
-   | 12  | Roadmap 7 phase + Demo script 18 bước + Truy vết yêu cầu |
+   | 12  | **Target Architecture vs Delivery Roadmap** (§12.0) + 7 phase + Demo script 18 bước + Truy vết yêu cầu |
    | 13  | Phụ lục: cấu trúc thư mục source code          |
 
 3. **`specs/*.md`** — đặc tả chi tiết từng tính năng. Mỗi file có cấu trúc thống nhất:
@@ -78,7 +103,7 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | 1. Source Code                     | `design.md` §13 (cấu trúc thư mục đề xuất)                        |
 | 2. README (Install/Run/Architecture/Demo) | `README.md` gốc repo + `design.md` §12.2                   |
 | 3. Architecture Document           | `design.md` §1–§8 (System Context, Container, Component, Data Flow, Realtime Flow, Strategy Flow, Search/Backtest Flow) |
-| 4. Architectural Decisions         | `design.md` §10 — **14 ADR**                                      |
+| 4. Architectural Decisions         | `design.md` §10 — **16 ADR**                                      |
 | 5. Demo                            | `design.md` §12.2 — 18 bước                                       |
 
 ### Module chức năng
@@ -105,11 +130,11 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Driver              | Cơ chế thiết kế                                      | Tài liệu                     | Demo |
 | ------------------- | ---------------------------------------------------- | ---------------------------- | ---- |
 | §32.1 Modifiability | Plugin Registry + auto-discovery + metadata khai báo | `design.md` §8.1, ADR-002    | S3   |
-| §32.2 Scalability   | Job Queue với contract cố định                       | `design.md` §8.3, ADR-005    | S10  |
-| §32.3 Realtime      | Backend-mediated WebSocket + subscription per panel  | `design.md` §6.1, ADR-001    | S2   |
-| §32.4 Reliability   | Reconnect + backfill; cô lập lỗi từng module         | `design.md` §1.4, §6.1       | S8, S9 |
-| §32.5 Performance   | `FOR UPDATE SKIP LOCKED` + N worker + bounded input  | `design.md` §8.3, ADR-014    | S10  |
-| §32.6 Maintainability | 7 port + Dependency Inversion                      | `design.md` §5.1, ADR-004    | S4   |
+| §32.2 Scalability   | Job Queue với contract cố định; scale = đổi replica  | `design.md` §8.3, ADR-005, ADR-015 | S10  |
+| §32.3 Realtime      | Backend-mediated WebSocket + subscription per panel; `POST /internal/events` | `design.md` §6.1, §5.8, ADR-001, ADR-016 | S2   |
+| §32.4 Reliability   | Reconnect + backfill; cô lập lỗi từng module; outbox không mất event; lease token | `design.md` §1.5, §5.7, §6.1, §8.3.1 | S8, S9 |
+| §32.5 Performance   | `FOR UPDATE SKIP LOCKED` + N worker + bounded input  | `design.md` §8.3, §8.3.1, ADR-014 | S10  |
+| §32.6 Maintainability | Ownership rõ ràng (§1.2) + 7 port + Dependency Inversion | `design.md` §1.2, §5.1, ADR-004 | S4   |
 | §32.7 Observability | Metric theo domain + correlation ID + progress panel | `design.md` §8.4 · `specs/observability.md` | S6 |
 
 ### Scenario đánh giá và 8 câu hỏi
@@ -136,7 +161,11 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Backtest chiếm HTTP request 40 giây                | `POST /experiments` → `202 + run_id`, luôn async (không có fast path)   | `specs/experiment.md`, ADR-006 |
 | Search loop chạy vô hạn                            | Stop condition bắt buộc ở **3 lớp**: schema `CHECK`, API, runtime       | `specs/search-loop.md`       |
 | Search space nổ tổ hợp                             | Dedup `candidate_hash` + quota `max_candidates_per_run`                | `specs/search-loop.md`       |
-| Worker chết giữa job → job treo                    | `lease_expires_at` + heartbeat 30 s + `attempt`/`max_attempts`          | `specs/experiment.md`        |
+| Worker chết giữa job → job treo                    | `lease_token` + `lease_expires_at` + heartbeat 30 s + `attempt`/`max_attempts`; UPSERT tiếp quản run mồ côi | `design.md` §8.3.1, `specs/experiment.md` |
+| Worker cũ (lease đã mất) ghi đè kết quả worker mới | Mọi UPDATE guard bằng `AND lease_token = $token` → khớp 0 row → worker cũ tự dừng | `design.md` §8.3.1 |
+| Event từ Worker mất vì in-process dispatcher       | **Transactional outbox**: state + event cùng transaction; dispatcher claim/retry; consumer idempotent | `design.md` §5.7 |
+| Go WS Hub down → mất frame realtime                | `POST /internal/events` best-effort + retry/backoff + circuit breaker; state đã persist nên client refetch theo `seq` | `design.md` §5.8, ADR-016 |
+| Ownership DB chồng chéo giữa Go và Python          | Python sở hữu write + migration bảng domain; Go chỉ `SELECT` trên schema `read` qua role `api_reader` | `design.md` §1.2.4, §1.2.5 |
 | Duplicate event tạo entry trùng                    | `event_consumptions` + `UNIQUE (backtest_run_id, evaluator_version)`   | `specs/leaderboard.md`       |
 | Kết quả Leaderboard không truy nguồn được          | Snapshot append-only 6 bảng + `code_fingerprint` + `content_hash`      | `specs/leaderboard.md`, ADR-009, ADR-012 |
 | Strategy plugin lỗi giết cả worker                 | Sandbox timeout 1 s/call + exception isolation → candidate `failed`     | `specs/strategy-registry.md` |
@@ -150,18 +179,21 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 
 ## Nguyên tắc thiết kế xuyên suốt
 
-Bốn nguyên tắc được áp dụng nhất quán trong toàn bộ blueprint, đáng đọc trước khi đi vào chi tiết:
+Năm nguyên tắc được áp dụng nhất quán trong toàn bộ blueprint, đáng đọc trước khi đi vào chi tiết:
 
-1. **Ranh giới được thực thi bằng cấu trúc, không bằng quy ước.** `AnalysisContext` không có DB session — nên strategy *không thể* query SQL, không phải *không nên*. `stop_conditions` có DB `CHECK` — nên search run vô hạn *không INSERT được*. Mọi ràng buộc quan trọng đều có một test tự động hoặc một constraint DB đứng sau; quy ước chỉ nằm trong code review sẽ bị vi phạm sau vài tuần.
+1. **Ranh giới được thực thi bằng cấu trúc, không bằng quy ước.** `AnalysisContext` không có DB session — nên strategy *không thể* query SQL, không phải *không nên*. `stop_conditions` có DB `CHECK` — nên search run vô hạn *không INSERT được*. Go không có `GRANT` trên bảng domain — nên nó *không thể* ghi, không phải *không nên*. Mọi ràng buộc quan trọng đều có một test tự động hoặc một constraint DB đứng sau; quy ước chỉ nằm trong code review sẽ bị vi phạm sau vài tuần.
 
 2. **Không fake dữ liệu khi dependency down.** Sentiment không khả dụng → `null` + `unavailable`, không phải `NEUTRAL`. Feed stale → `is_stale=true` + `last_closed_at`, không phải im lặng hiển thị nến cũ. Biến "không biết" thành "biết một giá trị cụ thể" là loại lỗi đi vào tới kết quả cuối cùng mà không có triệu chứng để debug. (ADR-013)
 
-3. **Chỉ thêm công nghệ khi có vấn đề kiến trúc cụ thể.** Đề bài nói rõ không cộng điểm cho công nghệ phức tạp. Vì vậy: PostgreSQL làm queue thay vì RabbitMQ (và nêu điều kiện đo được để đổi); Redis chỉ vào Phase 6; không Kafka, không CQRS, không microservice per module. Mỗi lựa chọn có ADR nêu vấn đề nó giải quyết và điều kiện thay thế.
+3. **Chỉ thêm công nghệ khi có vấn đề kiến trúc cụ thể.** Đề bài nói rõ không cộng điểm cho công nghệ phức tạp. Vì vậy: PostgreSQL làm queue thay vì RabbitMQ (và nêu điều kiện đo được để đổi); Redis là **tuỳ chọn có điều kiện**, chỉ thêm nếu benchmark ở Phase 6 thoả điều kiện tại `design.md` §12.0; không Kafka, không CQRS ở write path, không microservice per module. Mỗi lựa chọn có ADR nêu vấn đề nó giải quyết và điều kiện thay thế. Phân biệt quan trọng: **Backtest Worker không thuộc nhóm "tuỳ chọn"** — nó là kiến trúc bắt buộc (ADR-006, vì `POST /experiments` luôn async) và có từ Phase 3 với 1 replica.
 
 4. **Reproducibility đứng trước tối ưu hoá.** Ghi đủ provenance (strategy version + params + dataset hash + fee/slippage + evaluator version) trước khi làm scoring phức tạp hay search thông minh. Một kết quả không giải thích được thì không có giá trị dù nó cao bao nhiêu. (ADR-007)
 
+5. **Trung thực về nguồn gốc của từng yêu cầu.** Mỗi yêu cầu được gắn nhãn **[SRC]** (đề bài nói tường minh), **[PD]** (nhóm tự quyết cho sản phẩm), hoặc **[NFR]** (ngưỡng nhóm tự đặt để có cái đo) — bảng đầy đủ ở `proposal.md` §4.4. Nói "đề bài yêu cầu p95 < 1.5 s" là sai: đề bài chỉ nói "độ trễ thấp". Với **[SRC]** nhóm chỉ cần chứng minh đã cài đặt; với **[PD]** và **[NFR]** nhóm phải giải thích vấn đề kiến trúc mà nó giải quyết.
+
 ## Phiên bản
 
+- **v1.1** — 2026-08-11 — Làm rõ ranh giới kiến trúc sau review: architectural style theo từng process (§1.1) + Service Boundary & Ownership (§1.2) + read projection cho Go (§1.2.5) + artifact vs workload (§1.3.1); chốt transactional outbox (§5.7) và `POST /internal/events` (§5.8); chốt lease token cho retry/take-over (§8.3.1); tách Target Architecture khỏi Delivery Roadmap (§12.0); thêm ADR-015, ADR-016; sửa bug `weighted_vote` với `threshold = 0`; phân loại nguồn gốc yêu cầu [SRC]/[PD]/[NFR] (`proposal.md` §4.4) + điều kiện đo cho mọi SLO (§2.2); thêm 19 sơ đồ render sẵn ở `assets/`.
 - **v1.0** — 2026-08-11 — Bản blueprint đầu cho phần thiết kế kiến trúc.
 
 ## Tác giả

@@ -1,0 +1,19 @@
+stateDiagram-v2
+    [*] --> queued : POST /search-runs
+    queued --> running : worker picks up
+    running --> paused : action=pause
+    paused --> queued : action=resume
+    running --> completed : stop condition đạt
+    running --> failed : lỗi hệ thống
+    queued --> cancelled : action=cancel
+    running --> cancelled : action=cancel
+    paused --> cancelled : action=cancel
+    completed --> [*]
+    failed --> [*]
+    cancelled --> [*]
+
+    note right of completed
+        3 state terminal.
+        Mọi control command tới đây
+        đều bị reject 409.
+    end note

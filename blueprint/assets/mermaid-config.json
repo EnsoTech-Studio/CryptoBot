@@ -1,0 +1,8 @@
+{
+  "theme": "default",
+  "themeVariables": { "fontFamily": "Segoe UI, Arial, sans-serif", "fontSize": "15px" },
+  "flowchart": { "htmlLabels": true, "curve": "basis", "useMaxWidth": false },
+  "sequence": { "useMaxWidth": false, "wrap": true },
+  "er": { "useMaxWidth": false },
+  "state": { "useMaxWidth": false }
+}

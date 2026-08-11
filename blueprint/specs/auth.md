@@ -6,7 +6,9 @@ Module này là **public boundary** của hệ thống: toàn bộ nằm trong `
 
 Phạm vi gồm năm nhánh: (1) vòng đời credential — đăng ký với `argon2id`, đăng nhập, refresh token rotation, logout, revoke; (2) phát hành và verify access token JWT **RS256** TTL 15 phút; (3) RBAC 3 role `RESEARCHER`/`OPERATOR`/`ADMIN` cộng **ownership check** trên từng resource; (4) quota theo **worker-second** (`max_concurrent_runs`, `max_candidates_per_run`, `max_candles_per_experiment`) và rate limit **token bucket**; (5) hardening ở biên — CORS allowlist, CSRF synchronizer token, security header, body limit 1 MiB, error envelope không rò rỉ nội bộ.
 
-Hệ thống là **SIMULATION ONLY**: không đặt lệnh, không giữ API key sàn (`proposal.md` §4.3). Điều đó thay đổi mô hình đe doạ một cách rất cụ thể: tài sản cần bảo vệ **không phải tiền** mà là **CPU của worker** và **tính toàn vẹn của leaderboard**. Một search run hợp lệ = 500 candidate × 40 s ≈ **5,5 giờ CPU**. Vì vậy thiết kế dồn sức vào quota và ownership hơn là vào việc siết chặt cửa sổ sống của access token — đánh đổi này được ghi rõ ở §7.5 `design.md` và nhắc lại trong "Ràng buộc / Bảo mật" bên dưới.
+Hệ thống là **simulation-only** — không đặt lệnh, không giữ API key sàn. Đây là ranh giới **nhóm tự đặt** (`proposal.md` §4.3, nhãn **[PD]**), không phải câu trích nguyên văn từ đề bài; nhưng một khi đã chọn thì nó thay đổi mô hình đe doạ rất cụ thể: tài sản cần bảo vệ **không phải tiền** mà là **CPU của worker** và **tính toàn vẹn của leaderboard**. Một search run hợp lệ = 500 candidate × 40 s ≈ **5,5 giờ CPU**. Vì vậy thiết kế dồn sức vào quota và ownership hơn là vào việc siết chặt cửa sổ sống của access token — đánh đổi này được ghi rõ ở §7.5 `design.md` và nhắc lại trong "Ràng buộc / Bảo mật" bên dưới.
+
+> **Nguồn gốc của toàn bộ spec này: [PD] — product decision.** Đề bài **không** yêu cầu authentication, RBAC hay quota. Nhóm thêm vì không có principal thì không enforce được quota, và quota là điều kiện để §32.5 (Performance) và §43 (scenario scalability) có nghĩa: nếu bất kỳ ai gửi được một request sinh 5,5 giờ CPU thì "1.000 strategy cần backtest" không còn là bài toán thiết kế. Phân loại đầy đủ ở `proposal.md` §4.4.
 
 Hai lỗ hổng **đang tồn tại trong scaffold** phải được đóng như một phần của spec này, không để lại "sẽ làm sau": hàm `withCORS` trong `server/internal/httpapi/handler.go` đang **echo lại Origin** của request, và `docker-compose.yml` đang publish `${AI_PORT:-8000}:8000` ra host khiến Python Lab (không có auth) tiếp cận được từ ngoài. Chi tiết ở Luồng F.
 
@@ -93,7 +95,7 @@ sequenceDiagram
     AZ-->>B: 202 search_run_id, status queued
 ```
 
-> **Vì sao re-check `is_active` mỗi request nhưng cache 30 giây?** Không cache thì mỗi request thêm một round-trip DB, phá vỡ chính lý do chọn JWT stateless. Cache vĩnh viễn thì `is_active=false` không có tác dụng. 30 giây là điểm giữa: cửa sổ trễ tối đa 30 s, chi phí trung bình gần 0. Cache bị **invalidate ngay** khi chính process đó xử lý một lệnh admin đổi `is_active` hoặc `role`; ở deployment 1 instance API của MVP điều này là chính xác tuyệt đối, khi scale ngang (Phase 6) thì trở về đúng 30 s trễ.
+> **Vì sao re-check `is_active` mỗi request nhưng cache 30 giây?** Không cache thì mỗi request thêm một round-trip DB, phá vỡ chính lý do chọn JWT stateless. Cache vĩnh viễn thì `is_active=false` không có tác dụng. 30 giây là điểm giữa: cửa sổ trễ tối đa 30 s, chi phí trung bình gần 0. Cache bị **invalidate ngay** khi chính process đó xử lý một lệnh admin đổi `is_active` hoặc `role`; ở deployment 1 instance API của MVP điều này là chính xác tuyệt đối, khi scale ngang API thì trở về đúng 30 s trễ.
 
 > **Vì sao thứ tự phải là rateLimit trước JWT verify?** Verify RS256 là phép toán bất đối xứng tốn CPU. Đặt sau rate limit nghĩa là một flood token rác vẫn bị chặn ở lớp rẻ nhất. Ngược lại thì attacker bắt server làm việc đắt trước khi bị từ chối. Tương tự, `bodyLimit` đứng trước mọi thứ đọc body.
 
@@ -179,7 +181,7 @@ Mọi hành động vượt ownership của `OPERATOR`/`ADMIN` để lại vết
 4. Request tiếp theo của user: refresh **thất bại ngay** (không còn row), access token **còn hiệu lực tối đa 15 phút** hoặc tối đa 30 s nếu cache đã hết hạn và re-check `is_active` bắt được.
 5. Search run đang chạy của user đó **không** tự dừng; muốn dừng phải gọi `POST /search-runs/{id}/actions` với `cancel` — vì việc dừng work là quyết định riêng, tách khỏi việc chặn đăng nhập.
 
-> **Đánh đổi được chấp nhận có ý thức.** Không blacklist `jti`. Blacklist buộc mỗi request phải hỏi một store dùng chung, tức là (a) thêm dependency bắt buộc — trái ADR-010 xem PostgreSQL là store duy nhất bắt buộc và Redis chỉ là cache Phase 6, (b) biến JWT stateless thành stateful, (c) mỗi request tốn một round-trip. Với hệ thống nghiên cứu không giữ tiền và không đặt lệnh, cửa sổ ≤ 15 phút là chấp nhận được. Lối siết chặt về sau đã có sẵn: re-check `is_active` ở Lớp 2 chỉ cần giảm TTL cache từ 30 s xuống 0.
+> **Đánh đổi được chấp nhận có ý thức.** Không blacklist `jti`. Blacklist buộc mỗi request phải hỏi một store dùng chung, tức là (a) thêm dependency bắt buộc — trái ADR-010 xem PostgreSQL là store duy nhất bắt buộc và Redis chỉ là cache tuỳ chọn, (b) biến JWT stateless thành stateful, (c) mỗi request tốn một round-trip. Với hệ thống nghiên cứu không giữ tiền và không đặt lệnh, cửa sổ ≤ 15 phút là chấp nhận được. Lối siết chặt về sau đã có sẵn: re-check `is_active` ở Lớp 2 chỉ cần giảm TTL cache từ 30 s xuống 0.
 
 ### F. CORS allowlist, CSRF và hai lỗ hổng trong scaffold hiện tại
 
@@ -285,7 +287,7 @@ services:
 - Verify access token: **0 query DB** khi cache principal còn hạn; p95 **< 2 ms** (chỉ là một phép verify RS256).
 - `argon2id` cấu hình `m=64MiB, t=3, p=2` → mỗi lần verify **60–120 ms** trên máy demo. Tối đa **4** phép hash song song, hàng đợi tối đa 2 s rồi `503`.
 - Cache principal TTL **30 giây**, dung lượng tối đa **10.000** entry, LRU. Ownership query dùng index PK nên p95 **< 5 ms**.
-- Token bucket in-memory: **O(1)** memory mỗi key, dọn key không hoạt động > 10 phút. Interface `RateLimiter` không đổi khi chuyển sang Redis + Lua ở Phase 6 (`design.md` §8.2).
+- Token bucket in-memory: **O(1)** memory mỗi key, dọn key không hoạt động > 10 phút. Interface `RateLimiter` không đổi khi chuyển sang Redis + Lua nếu scale ngang API (`design.md` §8.2, điều kiện ở §12.0).
 - Tổng overhead của 4 lớp trên một request đã auth: p95 **< 10 ms**, tức < 4 % ngân sách 300 ms của `GET /markets/candles`.
 
 **Bảo mật**

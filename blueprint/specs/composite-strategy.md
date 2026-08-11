@@ -91,7 +91,7 @@ Composite snapshot — đây là **dữ liệu**, được lưu nguyên văn và
 6. Validate `parameters` theo `parameters_schema` của strategy đó → `422 invalid_parameters` kèm `field`.
 7. Kiểm tra trùng child: không được có 2 child cùng `(strategy_id, version, canonical(parameters))` → `422 duplicate_child`.
 8. Kiểm tra weight: mọi `weight >= 0`; `sum(weight) > 0` → tổng bằng 0 → `422 zero_total_weight`.
-9. Kiểm tra `policy` có combiner đã đăng ký → `422 unknown_policy`; `threshold ∈ [0, 1]` → `422 invalid_threshold`.
+9. Kiểm tra `policy` có combiner đã đăng ký → `422 unknown_policy`; `threshold ∈ [0, 1]` → `422 invalid_threshold`. Biên `0` **được phép** vì `WeightedVoteCombiner` so sánh ngặt (`score > threshold`): `threshold = 0` nghĩa "bất kỳ score khác 0 đều quyết định", còn `score = 0` vẫn cho `HOLD`.
 10. Tính `warm_up_candles = max(child.warm_up_candles(child.parameters))` trên mọi child.
 11. Tính `candidate_hash = sha256(canonical_json(definition))`.
 12. Ghi `experiments(candidate_definition, candidate_hash, ...)` — bất biến từ giây phút này.
@@ -144,9 +144,9 @@ def combine(self, children, policy) -> Signal:
         for spec, sig in children
     ) / total_weight                            # chuẩn hoá → score ∈ [-1, 1]
 
-    if score >= policy.threshold:
+    if score > policy.threshold:
         action = "BUY"
-    elif score <= -policy.threshold:
+    elif score < -policy.threshold:
         action = "SELL"
     else:
         action = "HOLD"
@@ -157,10 +157,11 @@ def combine(self, children, policy) -> Signal:
                             "children": {s.strategy_id: g.action for s, g in children}})
 ```
 
-Bốn quyết định trong 15 dòng này, mỗi cái đều có lý do:
+Năm quyết định trong 15 dòng này, mỗi cái đều có lý do:
 
 - **Chuẩn hoá theo `total_weight`, không bắt buộc `sum(weight) == 1`.** Bắt buộc tổng = 1 nghĩa là `CandidateGenerator` phải sinh weight thoả ràng buộc tổng — một bài toán khó hơn hẳn việc sinh 3 số ngẫu nhiên ≥ 0. Chuẩn hoá lúc tính giải phóng generator, và `score` vẫn nằm trong `[-1, 1]` nên `threshold` có ý nghĩa nhất quán giữa mọi composite.
-- **Ngưỡng đối xứng (`score <= -threshold` cho SELL).** Ngưỡng bất đối xứng là một policy khác, và nếu cần thì nó là một `SignalCombiner` mới — không phải một `if` thêm vào đây.
+- **So sánh ngặt (`score > threshold`, `score < -threshold`), không phải `>=`/`<=`.** Với `>=`, `threshold = 0` làm `score >= 0` luôn đúng khi mọi child HOLD (`score = 0`) → composite BUY liên tục, tức bất biến "mọi child bỏ phiếu trắng thì composite không có ý kiến" bị phá ở đúng một giá trị threshold hợp lệ. So sánh ngặt biến `threshold = 0` thành nghĩa đúng của nó: *"bất kỳ score khác 0 đều quyết định"* — một baseline hợp lệ và hữu ích — trong khi `score = 0` vẫn cho `HOLD`. Hệ quả kèm theo: `score == threshold` chính xác cũng cho `HOLD`, và đó là lựa chọn bảo vệ được — một score đúng bằng ngưỡng chưa phải bằng chứng *vượt* ngưỡng. Bất biến khi đó đúng **về cấu trúc** cho mọi `threshold ∈ [0, 1]`, không phải nhờ một WARN mà người đọc log phải để ý.
+- **Ngưỡng đối xứng (`score < -threshold` cho SELL).** Ngưỡng bất đối xứng là một policy khác, và nếu cần thì nó là một `SignalCombiner` mới — không phải một `if` thêm vào đây.
 - **`confidence = abs(score)`**, không phải `score`. `confidence` theo contract là `0..1`; dấu đã nằm trong `action`.
 - **`Decimal`, không `float`.** `0.2 + 0.3 + 0.5` bằng `1.0` với `Decimal` nhưng không hẳn với `float64`. Khi `score` rơi sát `threshold`, sai số float đủ để lật `BUY` thành `HOLD` — và lỗi đó **không tái lập được ổn định** giữa các kiến trúc CPU.
 
@@ -233,9 +234,10 @@ Chi phí: `UNIQUE (backtest_run_id, candle_time)` + JSONB khoảng 120–200 byt
 | `sum(weight) == 0` | `422 zero_total_weight` — không chuẩn hoá được, và composite không có ý nghĩa |
 | `sum(weight) == 2.7` | **Hợp lệ**, chuẩn hoá lúc tính |
 | `threshold = 1.5` hoặc `-0.1` | `422 invalid_threshold` — ngoài `[0, 1]` |
-| `threshold = 0` với `weighted_vote` | **Hợp lệ nhưng cảnh báo**: `score >= 0` luôn đúng khi mọi child HOLD → composite BUY liên tục. Log WARN lúc validate, không reject (đây là một baseline hợp lệ để so sánh) |
+| `threshold = 0` với `weighted_vote` | **Hợp lệ và đúng.** So sánh ngặt (`score > 0` cho BUY, `score < 0` cho SELL) nên `threshold = 0` nghĩa "bất kỳ score khác 0 đều quyết định" — một baseline hợp lệ để so sánh. Không WARN, không reject |
+| `score` đúng bằng `threshold` (ví dụ `score = 0.3`, `threshold = 0.3`) | `HOLD` — một score đúng bằng ngưỡng chưa phải bằng chứng *vượt* ngưỡng |
 | `policy` không có combiner đăng ký | `422 unknown_policy` kèm danh sách policy khả dụng |
-| Mọi child trả `HOLD` | `score = 0` → `HOLD` (vì `0 < threshold` khi `threshold > 0`). Không tạo trade |
+| Mọi child trả `HOLD` | `score = 0` → `HOLD` với **mọi** `threshold ∈ [0, 1]` (nhờ so sánh ngặt, kể cả `threshold = 0`). Không tạo trade |
 | Majority vote: BUY=1, SELL=1, HOLD=1 | `HOLD` (tie-break deterministic). Log DEBUG với vote count |
 | Một child raise `ZeroDivisionError` | Catch ở biên gọi plugin (R7): candidate `status='failed'`, `failure_reason='strategy_error:rsi@1.0.0'`. **Không** coi child đó là HOLD rồi tính tiếp — kết quả khi đó là của một composite khác với composite được khai báo |
 | Một child vượt deadline `analyze()` | Cùng xử lý như trên, `failure_reason='strategy_timeout:...'`. Search run **tiếp tục** với candidate kế tiếp |
@@ -249,6 +251,7 @@ Chi phí: `UNIQUE (backtest_run_id, candle_time)` + JSONB khoảng 120–200 byt
 
 - `combine()` là **pure function**: 0 lệnh I/O, 0 lời gọi random, 0 lần đọc `datetime.now()`. Kiểm chứng bằng test chạy trong môi trường không có socket (mẫu `tests/architecture/test_strategy_purity.py`).
 - Mọi phép tính score dùng `Decimal`, không `float`. `weight` và `threshold` lưu và tính ở `Decimal`.
+- `weighted_vote` so sánh **ngặt**: `score > threshold` → BUY, `score < -threshold` → SELL, còn lại HOLD. Hệ quả bắt buộc: mọi child trả `HOLD` (`score = 0`) → composite `HOLD` với **mọi** `threshold ∈ [0, 1]`, kể cả `0`.
 - Tie-break của majority vote là deterministic và được test tường minh.
 - `warm_up_candles(composite) = max(warm_up(child))` — không phải sum, không phải của child đầu tiên.
 - `candidate_hash` tính trên `canonical_json`: sort key, chuẩn hoá số, UTF-8 NFC. Cùng definition khác thứ tự key → **cùng** hash.
@@ -275,13 +278,13 @@ Chi phí: `UNIQUE (backtest_run_id, candle_time)` + JSONB khoảng 120–200 byt
 - `strategy_analyze_errors_total{strategy_id,version}` — child nào hay lỗi.
 - `strategy_timeout_total{strategy_id}` — child nào chậm.
 - `search_dedup_hits_total` — dedup theo `candidate_hash` có hoạt động hay không. Số này bằng 0 vĩnh viễn trên một search run lớn là dấu hiệu `canonical_json` bị sai.
-- Log WARN khi `threshold == 0` hoặc khi một child chiếm > 80% tổng weight (composite khi đó thực chất là strategy đơn lẻ đội lốt).
+- Log WARN khi một child chiếm > 80% tổng weight (composite khi đó thực chất là strategy đơn lẻ đội lốt).
 
 ## Tiêu chí chấp nhận
 
-- [ ] AC-01: Fixture đề bài §14 — children `{ma_cross:0.2, rsi:0.3, support_resistance:0.5}`, signals `{BUY, SELL, BUY}`, `threshold=0.3` → `score = 0.4`, action = `BUY`. Kiểm tra tới **6 chữ số thập phân**.
+- [ ] AC-01: Fixture đề bài §14 — children `{ma_cross:0.2, rsi:0.3, support_resistance:0.5}`, signals `{BUY, SELL, BUY}`, `threshold=0.3` → `score = 0.4`, action = `BUY` (`0.4 > 0.3`). Kiểm tra tới **6 chữ số thập phân**.
 - [ ] AC-02: Fixture đề bài §13 — majority vote với `{BUY, BUY, HOLD}` → `BUY`, `confidence = 2/3`.
-- [ ] AC-03: Đổi `threshold` từ `0.3` → `0.5` với cùng children/signals của AC-01 → action = `HOLD`, và `candidate_hash` **khác** hash của AC-01.
+- [ ] AC-03: Đổi `threshold` từ `0.3` → `0.5` với cùng children/signals của AC-01 → action = `HOLD` (`0.4 > 0.5` sai, `0.4 < -0.5` sai), và `candidate_hash` **khác** hash của AC-01.
 - [ ] AC-04: Hai definition cùng nội dung nhưng key đảo thứ tự (`{"a":1,"b":2}` vs `{"b":2,"a":1}`, kể cả trong `parameters` lồng) → **cùng** `candidate_hash`.
 - [ ] AC-05: Thêm `UnanimousCombiner` (file mới) → tạo được experiment với `policy: "unanimous"`. `git diff --stat` cho đúng **1 file thêm, 0 file sửa** ngoài test.
 - [ ] AC-06: `test_no_strategy_name_branching` chạy trong CI: `re.compile(r'(strategy_id|strategy)\s*==\s*["\']')` không khớp bất kỳ file nào trong `app/` (bỏ qua `/tests/` và `/plugins/`).
@@ -293,6 +296,7 @@ Chi phí: `UNIQUE (backtest_run_id, candle_time)` + JSONB khoảng 120–200 byt
 - [ ] AC-12: Inject child raise `ZeroDivisionError` → `search_candidates.status = 'failed'`, `failure_reason` chứa `strategy_id@version`, worker **không** crash, candidate kế tiếp vẫn được xử lý.
 - [ ] AC-13: Majority vote với `{BUY, SELL, HOLD}` → `HOLD`. Chạy 100 lần → 100 lần `HOLD` (không random tie-break).
 - [ ] AC-14: Sau một backtest, query `run_signals` cho một `candle_time` có `signal='BUY'` → `child_signals` chứa đủ 3 key strategy + key `score`, và tổng có trọng số của các action đó tái tạo đúng `score` đã lưu.
+- [ ] AC-15: Mọi child trả `HOLD` → composite `HOLD`, test với **cả** `threshold = 0` và `threshold = 0.3` (bất biến phải đúng ở biên, không chỉ ở giá trị dương). Kèm biên: `score` đúng bằng `threshold` (`score = 0.3`, `threshold = 0.3`) → `HOLD`; `score = 0.4`, `threshold = 0.3` → `BUY`.
 
 ---
 

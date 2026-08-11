@@ -1,0 +1,51 @@
+flowchart TB
+    REQ["HTTP Request"] --> L1
+
+    subgraph L1["Lớp 1 — Edge / Go middleware chain"]
+        direction TB
+        A1["requestID: gán X-Request-ID"]
+        A2["CORS: allowlist origin cụ thể,<br/>KHÔNG echo Origin"]
+        A3["securityHeaders: HSTS, nosniff,<br/>X-Frame-Options DENY, CSP"]
+        A4["bodyLimit: 1 MiB"]
+        A5["rateLimit: per-IP + per-principal"]
+        A1 --> A2 --> A3 --> A4 --> A5
+    end
+
+    L1 --> L2
+
+    subgraph L2["Lớp 2 — Authentication (Go)"]
+        B1["JWT RS256 verify<br/>(signature, exp, iss, aud)"]
+        B2["Load principal: user_id, role, is_active"]
+        B3["re-check is_active tại MỖI request,<br/>không chỉ tại login"]
+        B1 --> B2 --> B3
+    end
+
+    L2 --> L3
+
+    subgraph L3["Lớp 3 — Authorization (Go)"]
+        C1["RBAC: role ∈ allowed_roles của route"]
+        C2["Ownership: resource.owner_id == principal.id<br/>OR role ∈ (OPERATOR, ADMIN)"]
+        C3["Quota: concurrent_runs, candidates_per_run,<br/>candles_per_experiment"]
+        C1 --> C2 --> C3
+    end
+
+    L3 --> L4
+
+    subgraph L4["Lớp 4 — Validation & Domain guard (Go + Python)"]
+        D1["Go: schema, range, enum, symbol, timeframe"]
+        D2["Python: validate LẠI (không tin caller nội bộ)"]
+        D3["Python: parameters_schema per strategy version"]
+        D4["DB: CHECK constraint + FK + UNIQUE"]
+        D1 --> D2 --> D3 --> D4
+    end
+
+    L4 --> DOM["Domain logic"]
+
+    classDef l1 fill:#fee2e2,stroke:#ef4444
+    classDef l2 fill:#fed7aa,stroke:#f97316
+    classDef l3 fill:#fef08a,stroke:#eab308
+    classDef l4 fill:#bbf7d0,stroke:#22c55e
+    class A1,A2,A3,A4,A5 l1
+    class B1,B2,B3 l2
+    class C1,C2,C3 l3
+    class D1,D2,D3,D4 l4

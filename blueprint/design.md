@@ -1,6 +1,6 @@
 # Crypto Strategy Lab — Technical Design
 
-> Phần 1 / Blueprint • Tài liệu thiết kế kỹ thuật • Phiên bản 1.0
+> Phần 1 / Blueprint • Tài liệu thiết kế kỹ thuật • Phiên bản 1.1
 
 **Mục lục**
 
@@ -28,31 +28,34 @@
 
 ### 1.1 Architectural Style được chọn
 
-Hệ thống dùng **Layered Modular Monolith trong một topology polyglot 3-deployable**, cộng **Plugin Architecture** cho lõi strategy và **Event-driven in-process** cho pipeline bất đồng bộ.
+Hệ thống **không** có một style duy nhất. Nó là một **polyglot multi-process topology**, trong đó mỗi process có style riêng phù hợp với trách nhiệm của nó:
 
-Nói cụ thể hơn, có 4 quyết định style xếp lồng nhau:
+| Thành phần                | Style của chính nó                                      | Trách nhiệm                                            |
+| ------------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
+| **Web Dashboard** (Next.js) | **Presentation layer** — client-side rendering + SSR   | Render, không tính toán domain                          |
+| **Public API** (Go)       | **Edge service / BFF** (Backend-for-Frontend)            | Public boundary: auth, RBAC, rate limit, validate, WS fan-out |
+| **Strategy Lab** (Python) | **Modular Monolith + Hexagonal** (Ports & Adapters)      | Toàn bộ domain: market, strategy, experiment, evaluate, rank, news |
+| **Backtest Worker** (Python) | Cùng codebase với Strategy Lab, khác entrypoint       | Consume job queue, chạy `BacktestEngine`                |
 
-| Lớp quyết định            | Style chọn                                    | Vấn đề nó giải quyết                                                                 |
-| ------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Topology triển khai       | 3 deployable: Web / Go API / Python Lab       | Tách public boundary khỏi domain nặng CPU; giữ nguyên scaffold đã có                 |
-| Cấu trúc domain (Python)  | **Modular Monolith** + Hexagonal (Ports & Adapters) | Chống God Service, cho phép tách microservice sau mà không viết lại               |
-| Lõi strategy              | **Plugin Architecture** (Registry + Strategy Pattern) | Thêm strategy = thêm file, không sửa core (§32.1 Modifiability)               |
-| Pipeline bất đồng bộ      | **Event-driven** + **Job Queue** (bảng PostgreSQL trước, broker sau) | Tách Generator ↛ Backtester ↛ Evaluator ↛ Ranking; scale bằng worker (§32.5) |
+Cách gọi đúng: **"Python Strategy Lab là một Modular Monolith / Hexagonal domain core"**, không phải "toàn hệ thống là một modular monolith". Toàn hệ thống là nhiều deployable; chỉ **domain core** mới là modular monolith.
 
-**Vì sao Modular Monolith, không Microservices**
+Trên nền topology đó có hai quyết định style áp riêng cho phần domain:
 
-- Đề bài nói rõ: *"Không có cộng điểm chỉ vì sử dụng công nghệ phức tạp. Nhóm phải chứng minh: công nghệ đó giải quyết vấn đề kiến trúc nào?"* (§38). Microservice per module ở quy mô này chỉ thêm service discovery, distributed tracing, eventual consistency — không giải quyết vấn đề nào trong §32.
-- Cả 7 architectural driver của đề bài (§32) đạt được bằng **ranh giới module trong process** + **ports/adapters**, không cần ranh giới network.
+| Lớp quyết định       | Style chọn                                                            | Vấn đề nó giải quyết                                                          |
+| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Lõi strategy         | **Plugin Architecture** (Registry + Strategy Pattern)                 | Thêm strategy = thêm file, không sửa core (§32.1 Modifiability)                |
+| Pipeline bất đồng bộ | **Event-driven** + **Job Queue** (bảng PostgreSQL trước, broker sau)  | Tách Generator ↛ Backtester ↛ Evaluator ↛ Ranking; scale bằng worker (§32.5)   |
+
+**Vì sao domain core là Modular Monolith, không phải microservice-per-module**
+
+Đây là chỗ dễ bị hiểu nhầm nhất, nên nói thẳng: hệ thống **có** nhiều process, nhưng ranh giới process **không** trùng ranh giới module domain. Go/Python là ranh giới *kỹ thuật* (edge vs computation), không phải phân rã domain thành service. Sáu module domain — Market Data, Strategy Engine, Experiment, Search, Ranking, News — nằm **cùng một process** Python và giao tiếp qua port in-process, không qua network.
+
+- Đề bài nói rõ: *"Không có cộng điểm chỉ vì sử dụng công nghệ phức tạp. Nhóm phải chứng minh: công nghệ đó giải quyết vấn đề kiến trúc nào?"* (§38). Tách 6 module thành 6 service HTTP chỉ thêm service discovery, distributed tracing, eventual consistency — không giải quyết vấn đề nào trong §32.
+- Cả 7 architectural driver của đề bài (§32) đạt được bằng **ranh giới module trong process** + **ports/adapters**, không cần ranh giới network cho từng module.
 - Team 3 người: một codebase Python cho domain giúp refactor contract đồng bộ, không phải version 6 API nội bộ.
 - Modular hoá đúng cách khiến việc tách sau này là *deployment change*, không phải *rewrite*: mỗi module chỉ nói chuyện qua port, không import repository của module khác.
 
-**Vì sao vẫn giữ 3 deployable (không gộp thành 1)**
-
-Đây không phải "vì scaffold sẵn có". Có lý do kiến trúc cho từng cái:
-
-- **Go API** giữ public boundary vì nó phải fan-out WebSocket cho tới 4 panel × N browser đồng thời. Goroutine + channel làm việc này với memory footprint nhỏ và không có GIL. Đây cũng là nơi duy nhất chạm internet công khai → tập trung CORS, rate limit, validation, error mapping, request ID vào một chỗ.
-- **Python Lab** giữ domain vì backtest và indicator là CPU-bound numeric. Hệ sinh thái numeric (numpy/pandas) và ML (sentiment model) đều ở Python. Đưa phần này sang Go nghĩa là tự viết lại indicator library và mất luôn sentiment model.
-- **Next.js web** tách riêng vì nó là static/SSR asset, scale và deploy theo nhịp khác backend.
+Chi tiết ranh giới và ownership giữa Go và Python ở **§1.2 Service Boundary & Ownership**; lý do chọn topology này thay vì gộp hoặc chia nhỏ hơn ở **ADR-011** và **ADR-015**.
 
 **Vì sao Plugin Architecture cho strategy, không Factory-with-switch**
 
@@ -60,13 +63,77 @@ Kiến trúc phải chịu được scenario đánh giá của đề bài (§41)
 
 **Vì sao Event-driven cho pipeline, không gọi trực tiếp**
 
-Backtest Worker **không** gọi `LeaderboardService.update()`. Nó publish `StrategyEvaluated`; Ranking Service subscribe. Lý do: (a) giảm coupling để thay từng mắt trong chuỗi Generate→Backtest→Evaluate→Rank độc lập; (b) event log là nền tảng cho observability (§8.4); (c) khi chuyển sang multi-worker, cùng event contract chạy qua broker mà consumer không đổi. Đây là yêu cầu §34 của đề bài.
+Backtest Worker **không** gọi `LeaderboardService.update()`. Nó publish `StrategyEvaluated`; Ranking Service subscribe. Lý do: (a) giảm coupling để thay từng mắt trong chuỗi Generate→Backtest→Evaluate→Rank độc lập; (b) event log là nền tảng cho observability (§8.4); (c) cùng event contract chạy được qua nhiều cơ chế delivery mà consumer không đổi. Đây là yêu cầu §34 của đề bài.
+
+Nhưng "event-driven" ở đây **không** có nghĩa "in-process dispatcher là đủ cho mọi trường hợp". Vì Worker là process riêng (§1.2), event từ Worker tới Evaluator/Ranking là **cross-process** và phải đi qua **transactional outbox** trên PostgreSQL, không qua dict handler in-memory. Ranh giới chính xác của từng event ở **§5.7**.
 
 **Vì sao Job Queue bằng bảng PostgreSQL, không RabbitMQ/Kafka ngay**
 
-`SELECT ... FOR UPDATE SKIP LOCKED` cho đúng semantics cần thiết (at-least-once, N consumer, không mất job khi worker chết) với **0 service thêm vào stack** và có transaction cùng với việc ghi kết quả. Khi số đo cho thấy PostgreSQL là bottleneck (Phase 6), đổi `JobDispatcher` adapter sang broker mà job contract không đổi. Xem ADR-005 và §8.3.
+`SELECT ... FOR UPDATE SKIP LOCKED` cho đúng semantics cần thiết (at-least-once, N consumer, không mất job khi worker chết) với **0 service thêm vào stack** và có transaction cùng với việc ghi kết quả. Khi số đo cho thấy PostgreSQL là bottleneck, đổi `JobDispatcher` adapter sang broker mà job contract không đổi. Xem ADR-005 và §8.3.
 
-### 1.2 Các thành phần chính
+### 1.2 Service Boundary & Ownership
+
+Đây là section chuẩn: mọi tài liệu khác (README, proposal, specs) dùng đúng định nghĩa dưới đây khi nói về vai trò Go/Python.
+
+#### 1.2.1 Ranh giới trách nhiệm
+
+| | **Public API (Go)** | **Strategy Lab (Python)** |
+| --- | --- | --- |
+| Vai trò | Public backend / boundary — **edge service** | Internal computation domain service |
+| Ai gọi tới | Browser (internet công khai) | **Chỉ** Go API và Worker (internal network) |
+| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, quota enforcement, request validation, error mapping, request/correlation ID, WS subscription registry và fan-out | Market normalization, indicator, strategy registry, composite, experiment snapshot, backtest, evaluation, ranking, news orchestration, sentiment |
+| **Không** được sở hữu | Thuật toán strategy, backtest math, công thức metric/score, quyết định domain | Trình bày HTTP cho browser, session người dùng, phát hành/xác thực token |
+| Ngôn ngữ được chọn vì | Goroutine + channel: fan-out WebSocket I/O-bound, không GIL | numpy/pandas cho indicator CPU-bound; hệ sinh thái ML cho sentiment |
+
+#### 1.2.2 Vì sao indicator, backtest, search, ranking, sentiment đều ở Python
+
+Không phải vì "Python có sẵn trong scaffold". Bốn lý do kiến trúc:
+
+1. **Cùng dữ liệu, cùng vòng đời.** Indicator đọc `candles`; backtest đọc `candles` + `ExperimentSnapshot`; evaluation đọc `trades`; ranking đọc `evaluations`. Đây là **một chuỗi biến đổi trên cùng một tập dữ liệu**. Tách ra process khác nhau nghĩa là mỗi bước phải serialize hàng chục nghìn nến qua network — chi phí thuần, không mua được gì.
+2. **Reproducibility đòi hỏi một implementation duy nhất.** Nếu indicator tồn tại ở cả Go (cho overlay realtime) và Python (cho backtest), sẽ có ngày RSI trên chart khác RSI mà backtest đã dùng. Đó là hai nguồn chân lý (§9.3). Một implementation, ở Python, là ràng buộc về tính đúng đắn.
+3. **CPU-bound nên tách khỏi I/O-bound.** Backtest chiếm CPU liên tục 2–40 s. Nếu nó chạy cùng process với WebSocket loop thì GIL và CPU contention làm độ trễ realtime tăng vọt. Tách Go ra để backtest nặng **không** ảnh hưởng độ trễ chart.
+4. **Sentiment model là Python.** Model ML sống trong Python. Crawler chỉ collect và publish `NewsCollected`; Sentiment Service subscribe (§9.5) — cả hai đều trong domain core nên không phát sinh network hop cho một pipeline nội bộ.
+
+#### 1.2.3 Vì sao browser chỉ nói chuyện với Go
+
+| Nếu browser gọi thẳng Python | Hệ quả |
+| --- | --- |
+| Python phải tự làm auth, RBAC, rate limit, CORS | Trách nhiệm edge trộn vào domain — đúng anti-pattern God Service (§9.1) |
+| Có **hai** public surface cần hardening | Gấp đôi diện tích tấn công, hai chỗ phải giữ đồng bộ chính sách bảo mật |
+| Browser biết cấu trúc nội bộ | Đổi phân rã domain thành breaking change với frontend |
+| Fan-out WebSocket ở Python | GIL + CPU contention với backtest (lý do 3 ở trên) |
+
+Vì thế: **Python service không publish port ra host trong profile production**. Browser **chỉ** biết Go API tồn tại — không biết PostgreSQL, không biết Binance, không biết Python service. Đây là cái làm câu hỏi §40.3 (*"thêm OKX có phải sửa frontend không?"*) có câu trả lời "không".
+
+#### 1.2.4 Ownership của database
+
+Ranh giới này được chốt để không có ownership chồng chéo ngầm:
+
+| Nhóm bảng | Owner (write + migration) | Bên còn lại |
+| --- | --- | --- |
+| **Domain**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs`, `domain_events`, `event_consumptions` | **Python Strategy Lab** (+ Worker, cùng codebase) | Go: **read-only projection**, xem §1.2.5 |
+| **Edge**: `users`, `refresh_tokens`, `user_quotas` | **Go API** | Python: không đọc, không ghi. Nhận `principal` qua header nội bộ |
+
+Alembic migration của bảng domain nằm trong repo Python. Go **không** có migration cho bảng domain và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
+
+#### 1.2.5 Read projection — CQRS read path của Go
+
+Có hai chỗ trong specs cho thấy Go `SELECT` trực tiếp dữ liệu domain (`specs/chart-overlay.md` — `GET /markets/candles`; `specs/visualization.md` §A — `GET /experiments/{id}`). Đây **không** phải ownership chồng chéo; nó là một **read path riêng biệt, có tên, có giới hạn**:
+
+| Thuộc tính | Quy định |
+| --- | --- |
+| Tên gọi | **Read projection** — CQRS read path. Write đi qua Python; read có thể đi trực tiếp. |
+| Schema được phép đọc | **Chỉ** các view trong schema `read`: `read.candles_v1`, `read.experiment_summary_v1`, `read.trades_v1`, `read.equity_v1`, `read.leaderboard_v1`, `read.news_v1`. Không đọc bảng gốc. |
+| Quyền DB | Go dùng role `api_reader` có `SELECT` trên schema `read` và **không** có quyền gì trên bảng gốc. Ownership được cưỡng chế bằng `GRANT`, không bằng quy ước. |
+| View là contract | Python sở hữu định nghĩa view. Đổi bảng gốc mà giữ nguyên view → Go không phải sửa. Đổi view = breaking change, phải version (`_v1` → `_v2`, giữ song song một phase). |
+| Consistency model | Cùng một PostgreSQL nên **không có replication lag**. Nhưng "vừa `202 Accepted` mà `status` vẫn `queued`" là **đúng**, không phải stale — job chưa chạy. UI biết khi nào refetch qua WS event (`BacktestCompleted`, `LeaderboardUpdated`), không poll cho tới khi thấy dữ liệu. |
+| Không được làm gì trong read path | Không JOIN để tính toán domain (score, metric, PnL). Nếu Go cần một con số phái sinh, con số đó phải đã được Python tính và ghi vào cột. Go chỉ `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`. |
+| Vì sao không route mọi read qua Python | `GET /markets/candles` trả tới 1000 nến và là endpoint bị gọi nhiều nhất. Thêm một hop Go→Python chỉ để chuyển tiếp một `SELECT` không thêm bảo đảm nào (Python cũng đọc đúng bảng đó) mà cộng 1–3 ms và một điểm hỏng nữa. |
+| Khi nào **phải** route qua Python | Mọi read cần **áp dụng logic domain**: overlay (cần indicator + fill policy), provenance resolution, aggregate sentiment theo giờ. |
+
+Quy tắc một dòng để nhớ: **Go đọc cái Python đã ghi, qua view Python định nghĩa, và không tính gì thêm.**
+
+### 1.3 Các thành phần chính
 
 | Thành phần                | Vai trò                                                                                              | Công nghệ                             | Không được sở hữu                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------- |
@@ -76,28 +143,55 @@ Backtest Worker **không** gọi `LeaderboardService.update()`. Nó publish `Str
 | **Backtest Worker**       | Consume `backtest_jobs`, chạy backtest, publish `BacktestCompleted`                                  | **Cùng image Python**, entrypoint khác | Nhận request HTTP từ browser                             |
 | **Sentiment Model**       | Phân loại `POSITIVE/NEUTRAL/NEGATIVE` + score + `model_version`                                      | Module trong Python service (Phase 5 tách nếu cần GPU) | Crawl news, biết về strategy               |
 | **PostgreSQL**            | Nguồn sự thật: candles, strategy versions, experiments, trades, evaluations, leaderboard, news, sentiment, jobs | PostgreSQL 16                | Logic quyết định của strategy                            |
-| **Redis** *(Phase 6, có điều kiện)* | Cache overlay đã tính, outbound rate-limit token bucket dùng chung khi có > 1 worker         | Redis 7                               | Nguồn sự thật cho bất kỳ dữ liệu nào                     |
+| **Redis** *(tuỳ chọn, có điều kiện — §12.0)* | Cache overlay đã tính, outbound rate-limit token bucket dùng chung khi có > 1 worker         | Redis 7                               | Nguồn sự thật cho bất kỳ dữ liệu nào                     |
 | **Binance**               | Nguồn market data (REST klines + WebSocket kline stream)                                             | Public API, read-only                 | —                                                        |
 | **News Providers**        | Nguồn tin (RSS feeds + News API), allowlist server-side                                              | HTTPS                                 | —                                                        |
 
 Lưu ý về **Backtest Worker**: đây là *cùng một image, cùng một class `BacktestEngine`*, chỉ khác entrypoint (`python -m app.worker` thay vì uvicorn). Điều này quan trọng: nghĩa là không có code path riêng cho "chạy inline" và "chạy trong worker" — cùng một `ExperimentSnapshot` vào, cùng một `BacktestResult` ra. Đó là cái làm cho ADR-005 (scale bằng cách đổi deployment, không đổi code) đứng vững.
 
-### 1.3 Cách các thành phần giao tiếp
+#### 1.3.1 Code artifact so với runtime workload
+
+"3 deployable" là một cách nói dễ gây nhầm, vì Worker dùng **cùng image** với Strategy Lab nhưng là một **process/container riêng**. Hai con số khác nhau và cần tách bạch:
+
+**Code artifacts / images — 3**
+
+| # | Artifact | Build từ | Chạy thành gì |
+| - | -------- | -------- | ------------- |
+| 1 | `web` image | `web/Dockerfile` (Next.js) | 1 process |
+| 2 | `api` image | `server/Dockerfile` (Go) | 1 process |
+| 3 | `lab` image | `ai/Dockerfile` (Python) | **2 loại process**: API server (`uvicorn app.main:app`) và Worker (`python -m app.worker`) |
+
+**Runtime workloads / processes — 4 loại (5 container ở MVP, 4+N khi scale)**
+
+| Workload | Image | Entrypoint | Replicas MVP | Replicas khi scale |
+| -------- | ----- | ---------- | ------------ | ------------------ |
+| `web` | `web` | `next start` | 1 | 1 |
+| `api` | `api` | `/app/api` | 1 | 1 |
+| `lab` | `lab` | `uvicorn app.main:app` | 1 | 1 |
+| `worker` | `lab` | `python -m app.worker` | **1** | **N** (`--scale worker=N`) |
+| `postgres` | `postgres:16` | — | 1 | 1 |
+| `redis` *(có điều kiện)* | `redis:7` | — | **0** | 0 hoặc 1, xem §12.1 |
+
+Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container ở MVP**. `worker` không phải image thứ tư — nó là workload thứ tư dùng image thứ ba. Đây chính là điều làm demo S10 (`--scale worker=4`) không cần build lại gì.
+
+### 1.4 Cách các thành phần giao tiếp
 
 | Cặp                          | Giao thức                                            | Chi tiết                                                                                                                            |
 | ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Browser ↔ Go API             | HTTPS REST + **WebSocket** (`/api/v1/markets/stream`) | JSON. WebSocket vì cần client→server message (`subscribe`/`unsubscribe` từng panel), SSE một chiều không đủ. Xem ADR-001.            |
-| Go API ↔ Python Lab          | HTTP/1.1 JSON trên **internal network**              | Không publish port ra ngoài trong topology production. Propagate `X-Request-ID`, `X-Correlation-ID`, deadline (`X-Deadline-Ms`), principal context. |
-| Python Lab ↔ PostgreSQL      | TCP, connection pool (asyncpg / SQLAlchemy)          | Parameterized query. Migration bằng Alembic, chạy **trước** khi readiness báo healthy.                                              |
+| Go API → Python Lab          | HTTP/1.1 JSON trên **internal network**              | Không publish port ra ngoài trong profile production. Propagate `X-Request-ID`, `X-Correlation-ID`, deadline (`X-Deadline-Ms`), principal context. |
+| Go API → PostgreSQL (read)   | TCP, role `api_reader`, **chỉ schema `read`**        | Read projection / CQRS read path. `SELECT` trên view `read.*`; không quyền trên bảng gốc. Xem §1.2.5. |
+| Python Lab ↔ PostgreSQL      | TCP, connection pool (asyncpg / SQLAlchemy)          | Owner của bảng domain: write + migration (Alembic), chạy **trước** khi readiness báo healthy. Parameterized query. |
 | Python Lab ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
 | Python Lab ↔ Binance WS      | WSS, persistent                                      | 1 connection multiplexed nhiều stream. Reconnect capped exponential backoff + backfill (§6.1).                                       |
-| Python Lab → Go API (push)   | WebSocket nội bộ hoặc HTTP POST `/internal/events`   | Đẩy `CandleClosed` / `ChartOverlayUpdated` / `LeaderboardUpdated` để Go fan-out theo subscription.                                   |
+| Python Lab → Go API (push)   | **HTTP POST `/internal/events`** (đã chốt, xem §5.8) | Đẩy `CandleClosed` / `ChartOverlayUpdated` / `LeaderboardUpdated` để Go fan-out theo subscription. Internal auth + idempotency theo `event_id` + retry backoff. |
 | Python Lab ↔ Worker          | **Qua PostgreSQL** (`backtest_jobs` + `FOR UPDATE SKIP LOCKED`) | Không gọi trực tiếp. Job record là contract. Đổi sang broker = đổi adapter.                                                |
-| Module ↔ Module trong Python | **In-process event dispatcher** + port interface     | `MarketService` không import `LeaderboardRepository`. Event payload có `schema_version` để giữ nguyên khi tách process.              |
+| Worker → Evaluator / Ranking | **Transactional outbox** trên `domain_events` (§5.7) | **Cross-process**: worker và consumer là process khác nhau nên không dùng in-process dispatcher. Publisher ghi state + event cùng transaction; dispatcher claim/retry; consumer idempotent theo `event_id`. |
+| Module ↔ Module **trong cùng process** | **In-process event dispatcher** + port interface | Chỉ dùng khi publisher và consumer chắc chắn cùng process (ví dụ `CandleClosed` → `OverlayCalculator` trong `lab`). `MarketService` không import `LeaderboardRepository`. Event payload có `schema_version` giữ nguyên khi tách process. |
 
 **Ranh giới quan trọng**: browser **chỉ** nói chuyện với Go API. Nó không biết PostgreSQL tồn tại, không biết Binance tồn tại, không biết Python service tồn tại. Đây là cái làm câu hỏi kiến trúc §40.3 ("thêm OKX có phải sửa frontend không?") có câu trả lời "không".
 
-### 1.4 Hành vi khi từng thành phần gặp sự cố
+### 1.5 Hành vi khi từng thành phần gặp sự cố
 
 | Thành phần down            | Tác động trực tiếp                          | Hành vi hệ thống                                                                                                                                              |
 | -------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -108,7 +202,7 @@ Lưu ý về **Backtest Worker**: đây là *cùng một image, cùng một clas
 | **PostgreSQL**             | Không đọc/ghi được gì                       | Readiness fail → API `503`. **Không** trả kết quả partial như completed. Job đang chạy fail và **không** commit evaluation nửa vời.                            |
 | **News Provider**          | Không thu được tin mới                      | Job news đó fail, ghi `failure_reason`, retry theo schedule. Chart, backtest technical, leaderboard **không bị ảnh hưởng**. Trang News hiển thị dữ liệu cũ + `last_collected_at`. |
 | **Sentiment Model**        | News không có nhãn                          | News được lưu **không có** sentiment, field `sentiment = null`, UI hiện `unavailable`. **Không fake NEUTRAL** — nhãn giả sẽ làm `NewsSentimentStrategy` ra tín hiệu sai một cách âm thầm. |
-| **Redis** (Phase 6)        | Mất cache overlay                           | Overlay tính lại từ PostgreSQL (chậm hơn, vẫn đúng). Outbound rate limit fallback về per-process in-memory (bảo thủ hơn, an toàn hơn).                          |
+| **Redis** *(nếu có)*        | Mất cache overlay                           | Overlay tính lại từ PostgreSQL (chậm hơn, vẫn đúng). Outbound rate limit fallback về per-process in-memory (bảo thủ hơn, an toàn hơn).                          |
 | **Web (Next.js)**          | Không truy cập được dashboard                | API vẫn phục vụ (có thể test bằng curl). Không ảnh hưởng search run đang chạy hay job đang xử lý.                                                              |
 
 Bảng này là câu trả lời trực tiếp cho §32.4 (Reliability) và câu hỏi §40.5 ("Nếu News Service bị lỗi thì Chart có còn chạy không?" → **có**, dòng News Provider).
@@ -126,7 +220,7 @@ flowchart TB
     Developer["👤 Strategy Developer<br/><i>Viết strategy plugin mới</i>"]
 
     subgraph SystemBoundary["🔷 Crypto Strategy Lab (hệ thống đang thiết kế)"]
-        System["<b>Crypto Strategy Lab</b><br/>Nền tảng phân tích, kết hợp và<br/>đánh giá chiến lược giao dịch crypto.<br/><br/><i>SIMULATION ONLY —<br/>không đặt lệnh, không giữ API key sàn</i>"]
+        System["<b>Crypto Strategy Lab</b><br/>Nền tảng phân tích, kết hợp và<br/>đánh giá chiến lược giao dịch crypto.<br/><br/><i>SIMULATION ONLY —<br/>không đặt lệnh, không giữ API key sàn<br/>(ranh giới nhóm chọn, proposal §4.3)</i>"]
     end
 
     Binance["🌐 Binance<br/><i>Sàn giao dịch</i><br/>REST klines + WebSocket stream<br/><b>read-only, public endpoint</b>"]
@@ -151,7 +245,7 @@ flowchart TB
 **Đọc gì từ Level 1**
 
 - Chỉ có **2 loại phụ thuộc ngoài**: sàn giao dịch và nguồn tin. Cả hai đều **một chiều đọc**.
-- Không có mũi tên nào từ hệ thống đi ra để **ghi** vào Binance. Đây là biểu diễn của ranh giới simulation-only (`proposal.md` §4.3).
+- Không có mũi tên nào từ hệ thống đi ra để **ghi** vào Binance. Đây là biểu diễn của ranh giới simulation-only — một **product decision của nhóm** (`proposal.md` §4.3), không phải yêu cầu trích từ đề bài.
 - `Strategy Developer` nối bằng đường nét đứt và **không đi qua UI**: strategy được thêm bằng code + deploy, không bằng form. Đây là chủ ý — cho phép upload code strategy qua UI là một lỗ RCE.
 
 ### 2.2 Level 2 — Container
@@ -173,7 +267,7 @@ flowchart TB
 
         DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
 
-        Cache[("<b>Redis 7</b><br/>[Container — Phase 6, có điều kiện]<br/><br/>Cache overlay đã tính,<br/>outbound rate-limit dùng chung")]
+        Cache[("<b>Redis 7</b><br/>[Container — tuỳ chọn, có điều kiện §12.0]<br/><br/>Cache overlay đã tính,<br/>outbound rate-limit dùng chung")]
     end
 
     Binance["🌐 Binance<br/>REST + WSS"]
@@ -210,7 +304,7 @@ flowchart TB
 
 1. **Worker dùng cùng image với Lab.** Không có container "backtest service" riêng với code riêng. Cùng `BacktestEngine`, khác entrypoint. Đây là điều khiến việc scale (§40.4) không cần viết lại gì.
 2. **Lab và Worker không nói chuyện trực tiếp.** Chúng giao tiếp qua bảng `backtest_jobs`. Nghĩa là: worker chết giữa job → job quay về `queued` sau lease timeout; thêm worker → chỉ cần `docker compose up --scale worker=4`.
-3. **Redis vẽ nét đứt.** Nó chưa tồn tại ở MVP. Đưa vào diagram để thấy chỗ nó *sẽ* nằm khi có số đo chứng minh cần — không phải để trông cho "đủ enterprise".
+3. **Redis vẽ nét đứt vì nó là tuỳ chọn, không phải "chưa tới phase".** Nó không tồn tại ở MVP và có thể **không bao giờ** được thêm — điều kiện thêm nằm ở §12.0 và phải đo mới biết. Đưa vào diagram để thấy chỗ nó *sẽ* nằm nếu cần, không phải để trông cho "đủ enterprise". Ngược lại, `Worker` vẽ nét liền: nó là workload bắt buộc từ Phase 3 (§1.3.1, §12.0).
 
 ### 2.3 Level 3 — Component (Strategy Lab)
 
@@ -253,7 +347,7 @@ flowchart TB
             ADomain["DomainGuidedGenerator"]
             ARss["RssNewsAdapter · NewsApiAdapter"]
             AModel["SentimentModelAdapter"]
-            APg["PostgresJobDispatcher<br/><i>(BrokerJobDispatcher ở Phase 6)</i>"]
+            APg["PostgresJobDispatcher<br/><i>(BrokerJobDispatcher nếu đo được cần)</i>"]
             ASql["SQLAlchemy Repositories"]
         end
     end
@@ -493,8 +587,8 @@ sequenceDiagram
 
     BN->>AD: {"e":"kline","k":{"t":...,"c":"118150","x":false}}
     AD->>AD: validate schema + normalize → Candle(provisional)
-    AD->>MS: CandleUpdated(BTCUSDT, 5m, provisional)
-    MS->>HUB: candle delta (provisional)
+    AD->>MS: MarketPriceUpdated(BTCUSDT, 5m, provisional)
+    MS->>HUB: candle delta qua POST /internal/events
     HUB->>P1: frame khớp subscription (BTCUSDT,5m)
     Note over P2: KHÔNG nhận — subscription là (BTCUSDT,15m)
 
@@ -502,10 +596,10 @@ sequenceDiagram
     AD->>MS: CandleClosed(BTCUSDT, 5m, close_time=T)
     MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,close_time) DO UPDATE
     MS->>MS: cập nhật last_closed_at (dùng cho backfill)
-    MS->>EV: publish CandleClosed
+    MS->>EV: publish CandleClosed (in-process, cùng process lab)
     EV->>OC: CandleClosed
     OC->>OC: tính overlay cho các config_hash đang được subscribe
-    OC->>HUB: ChartOverlayUpdated(symbol,timeframe,strategy@ver,config_hash, delta)
+    OC->>HUB: ChartOverlayUpdated(symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
     HUB->>P1: chỉ overlay của config_hash mà Panel 1 đã subscribe
 ```
 
@@ -536,11 +630,11 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 
 Đề bài (§35) liệt kê 6 nhóm dữ liệu: Market Data, Strategy, Experiment, Trades, News, Leaderboard — và yêu cầu nhóm **giải thích lựa chọn**, đặc biệt là Leaderboard nên lưu trực tiếp hay tính từ Experiment Results.
 
-**Quyết định: PostgreSQL 16 là store duy nhất bắt buộc ở MVP.** Redis chỉ vào Phase 6 và chỉ làm cache, không bao giờ làm nguồn sự thật.
+**Quyết định: PostgreSQL 16 là store duy nhất bắt buộc.** Redis là tuỳ chọn có điều kiện (§12.0) và chỉ làm cache, không bao giờ làm nguồn sự thật.
 
 | Nhóm dữ liệu             | Đặc điểm truy cập                                                            | Lựa chọn                        | Lý do                                                                                                     |
 | ------------------------ | ---------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Candles**              | Ghi append theo thời gian, đọc range query `WHERE symbol,timeframe AND close_time BETWEEN` | **PostgreSQL** (partition theo tháng ở Phase 6) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Time-series DB (TimescaleDB/InfluxDB) sẽ dùng khi > 100M row — chưa đến. |
+| **Candles**              | Ghi append theo thời gian, đọc range query `WHERE symbol,timeframe AND close_time BETWEEN` | **PostgreSQL** (partition theo tháng nếu số row đòi hỏi) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Time-series DB (TimescaleDB/InfluxDB) sẽ dùng khi > 100M row — chưa đến. |
 | **Strategy definitions / versions** | Ghi rất ít, đọc nhiều, **bất biến sau khi dùng**                    | **PostgreSQL**                  | Cần FK từ `experiments` để đảm bảo referential integrity của provenance. Đây là lý do không dùng file JSON. |
 | **Experiments (snapshot)** | Ghi 1 lần, đọc lại nhiều, schema cố tình mở rộng được                      | **PostgreSQL + JSONB**          | Cột chuẩn hoá cho field cần query/index (`symbol`, `timeframe`, `status`); `JSONB` cho `candidate_definition` vì cấu trúc composite lồng nhau và sẽ tiến hoá. |
 | **Backtest jobs**        | Ghi/đọc/update trạng thái tần suất cao, cần lock để nhiều worker không tranh nhau | **PostgreSQL** (`FOR UPDATE SKIP LOCKED`) | Cho đúng semantics của queue **và** transaction chung với việc ghi kết quả. Broker riêng không cho được điều thứ hai. Xem ADR-005. |
@@ -549,7 +643,7 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 | **Leaderboard**          | Đọc rất nhiều (Top-K), ghi mỗi khi có evaluation mới                         | **PostgreSQL — bảng vật chất hoá** | Xem phân tích riêng bên dưới.                                                                             |
 | **News items**           | Ghi theo batch crawl, đọc theo thời gian + coin                              | **PostgreSQL**                  | Full-text search dùng `tsvector` nếu cần, không phải thêm Elasticsearch.                                    |
 | **Sentiment results**    | 1..N row / news (1 row per model_version)                                    | **PostgreSQL**                  | `model_version` là phần của khoá → đổi model không ghi đè kết quả cũ (R10).                                 |
-| **Overlay đã tính**      | Đọc nhiều, tính lại được, TTL ngắn                                            | **Redis** (Phase 6, tuỳ chọn)   | Dữ liệu dẫn xuất, mất không sao. Chỉ thêm khi đo được overlay recompute là bottleneck.                     |
+| **Overlay đã tính**      | Đọc nhiều, tính lại được, TTL ngắn                                            | **Redis** (tuỳ chọn, §12.0)   | Dữ liệu dẫn xuất, mất không sao. Chỉ thêm khi đo được overlay recompute là bottleneck.                     |
 
 **Leaderboard: lưu trực tiếp hay tính từ Experiment Results?**
 
@@ -582,6 +676,8 @@ CREATE TYPE sentiment_enum AS ENUM ('POSITIVE','NEUTRAL','NEGATIVE');
 CREATE TYPE trade_side     AS ENUM ('LONG','SHORT');
 CREATE TYPE fill_policy_enum AS ENUM ('next_candle_open','same_candle_close');
 CREATE TYPE position_policy_enum AS ENUM ('long_only','long_short');
+-- Trạng thái dispatch của transactional outbox (§5.7)
+CREATE TYPE event_dispatch_status AS ENUM ('pending','claimed','delivered','dead');
 ```
 
 ```sql
@@ -830,10 +926,14 @@ CREATE TABLE backtest_jobs (
     attempt          SMALLINT NOT NULL DEFAULT 0,
     max_attempts     SMALLINT NOT NULL DEFAULT 3,
     leased_by        VARCHAR(64),                     -- worker id
+    lease_token      UUID,                            -- sinh MỚI mỗi lần claim; xem §8.3.1
     lease_expires_at TIMESTAMPTZ,                     -- worker chết → job về queued
     last_error       TEXT,
     enqueued_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at     TIMESTAMPTZ
+    completed_at     TIMESTAMPTZ,
+    -- Job đang được giữ thì phải có đủ cả ba trường lease. Chặn trạng thái nửa vời.
+    CHECK (status <> 'leased'
+           OR (leased_by IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL))
 );
 -- Index này là thứ làm "SELECT job tiếp theo" không full-scan khi có 100K job
 CREATE INDEX idx_jobs_claimable ON backtest_jobs(priority, enqueued_at)
@@ -846,6 +946,8 @@ CREATE TABLE backtest_runs (
     experiment_id  UUID UNIQUE NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
     status         run_status NOT NULL DEFAULT 'queued',
     worker_id      VARCHAR(64),
+    lease_token    UUID,          -- token của lượt claim đang sở hữu run này
+    attempt        SMALLINT NOT NULL DEFAULT 0,   -- lượt thực thi thứ mấy
     candles_read   INT,
     signals_count  INT,
     duration_ms    INT,
@@ -857,7 +959,7 @@ CREATE TABLE backtest_runs (
 );
 ```
 
-> **`experiment_id` UNIQUE trên cả `backtest_jobs` và `backtest_runs`** là cái chặn double-execution: at-least-once delivery của queue có thể giao cùng job cho 2 worker khi lease hết hạn sai lúc, nhưng chỉ 1 trong 2 INSERT được `backtest_runs` row. Worker thua đọc lại row đã có và bỏ qua.
+> **`experiment_id` UNIQUE trên cả `backtest_jobs` và `backtest_runs`** giữ đúng bất biến "một experiment có nhiều nhất một run": UNIQUE violation là **tín hiệu**, không phải kết luận. Nó nói "run này đã tồn tại", nhưng *phải làm gì* thì phụ thuộc worker có claim được lease hay không — và đó là việc của `lease_token`. Quy tắc đầy đủ ở **§8.3.1**; đừng suy diễn từ mỗi constraint này.
 
 ```sql
 -- =============================================================
@@ -1022,8 +1124,10 @@ CREATE TABLE news_collection_jobs (
 
 ```sql
 -- =============================================================
--- 9. Event log & Observability
+-- 9. Transactional outbox & Observability
 -- =============================================================
+-- domain_events LÀ outbox, không phải audit log thụ động.
+-- Publisher ghi domain state + event trong CÙNG transaction (§5.7).
 CREATE TABLE domain_events (
     event_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type     VARCHAR(48) NOT NULL,
@@ -1032,19 +1136,48 @@ CREATE TABLE domain_events (
     aggregate_id   UUID NOT NULL,
     correlation_id VARCHAR(64),
     payload        JSONB NOT NULL,
-    occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- ----- Trạng thái outbox: dispatcher claim / retry / delivered -----
+    -- pending: chờ dispatch · claimed: dispatcher đang xử lý
+    -- delivered: MỌI consumer đã ack · dead: cạn max_attempts
+    dispatch_status  event_dispatch_status NOT NULL DEFAULT 'pending',
+    attempt          SMALLINT NOT NULL DEFAULT 0,
+    max_attempts     SMALLINT NOT NULL DEFAULT 5,
+    claimed_by       VARCHAR(64),              -- dispatcher instance id
+    claim_expires_at TIMESTAMPTZ,              -- dispatcher chết → event về pending
+    next_attempt_at  TIMESTAMPTZ NOT NULL DEFAULT now(),  -- exponential backoff
+    last_error       TEXT,
+    delivered_at     TIMESTAMPTZ,
+
+    CHECK (dispatch_status <> 'delivered' OR delivered_at IS NOT NULL)
 );
 CREATE INDEX idx_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occurred_at);
 CREATE INDEX idx_events_correlation ON domain_events(correlation_id) WHERE correlation_id IS NOT NULL;
+-- Index của dispatcher: "event nào tới lượt dispatch" không full-scan khi bảng có 1M row
+CREATE INDEX idx_events_dispatchable ON domain_events(next_attempt_at, occurred_at)
+    WHERE dispatch_status = 'pending';
+CREATE INDEX idx_events_expired_claim ON domain_events(claim_expires_at)
+    WHERE dispatch_status = 'claimed';
+CREATE INDEX idx_events_dead ON domain_events(occurred_at)
+    WHERE dispatch_status = 'dead';
 
--- Chống xử lý trùng event (R12): consumer ghi vào đây trước khi hành động
+-- Ai đã tiêu thụ event nào. Đây là cơ chế idempotency (R12) VÀ là điều kiện
+-- để dispatcher biết khi nào một event đã delivered đủ mọi consumer.
 CREATE TABLE event_consumptions (
-    event_id    UUID NOT NULL,
+    event_id    UUID NOT NULL REFERENCES domain_events(event_id) ON DELETE CASCADE,
     consumer    VARCHAR(48) NOT NULL,
     consumed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, consumer)
 );
+CREATE INDEX idx_consumptions_event ON event_consumptions(event_id);
 ```
+
+> **Vì sao `domain_events` có cột trạng thái dispatch, không chỉ là event log.** Nếu bảng này chỉ ghi lại "đã xảy ra gì" thì việc *giao* event cho consumer phải do một cơ chế khác đảm nhận — và cơ chế đó (in-process dispatcher) mất event khi process chết giữa lúc publish. Với outbox: event nằm trong **cùng transaction** với domain state, nên không có trạng thái nào mà state đã commit nhưng event thì mất. Dispatcher là một vòng lặp riêng, đọc `dispatch_status='pending'`, giao, và chỉ đánh `delivered` khi mọi consumer đã ghi `event_consumptions`. Flow đầy đủ ở §5.7.
+
+> **`next_attempt_at` tách khỏi `occurred_at` là điều bắt buộc cho backoff.** Nếu dispatcher chỉ `ORDER BY occurred_at`, một event đang fail liên tục sẽ luôn ở đầu hàng đợi và chặn mọi event sau nó (head-of-line blocking). Với `next_attempt_at`, event fail bị đẩy về tương lai theo backoff và các event khác đi trước.
+
+> **`dead` không phải `failed`.** Event cạn `max_attempts` chuyển `dead`, giữ nguyên payload và `last_error`, **không** bị xoá. `idx_events_dead` tồn tại để có một query duy nhất trả lời "có event nào chưa tới được consumer?" — một trong các signal của §8.4. Xử lý `dead` là việc thủ công có chủ ý (đọc `last_error`, sửa nguyên nhân, rồi `UPDATE dispatch_status='pending', attempt=0`), không phải retry vô hạn.
 
 ### 4.3 ERD tóm tắt
 
@@ -1173,7 +1306,7 @@ class JobDispatcher(Protocol):
     def claim(self, worker_id: str, lease_sec: int) -> BacktestJob | None: ...
     def complete(self, job_id: UUID) -> None: ...
     def fail(self, job_id: UUID, error: str, retryable: bool) -> None: ...
-# Implement: PostgresJobDispatcher (MVP) → BrokerJobDispatcher (Phase 6)
+# Implement: PostgresJobDispatcher (bắt buộc) → BrokerJobDispatcher (nếu đo được cần)
 ```
 
 **Bảng seam — thay gì thì cái gì không đổi**
@@ -1279,6 +1412,8 @@ class CandidateStrategy:
 
 Ví dụ tính theo đề bài §14: MA→BUY(+1), RSI→SELL(−1), SR→BUY(+1) → `score = 1×0.2 + (−1)×0.3 + 1×0.5 = 0.4 > 0.3` → **BUY**.
 
+So sánh là **ngặt**: `score > threshold` → BUY, `score < -threshold` → SELL, còn lại HOLD. Đây không phải chi tiết cú pháp. Với `>=`, giá trị hợp lệ `threshold = 0` làm `score >= 0` luôn đúng khi mọi child trả HOLD (`score = 0`) → composite BUY liên tục, tức bất biến "mọi child bỏ phiếu trắng thì composite không có ý kiến" bị phá. So sánh ngặt giữ `threshold = 0` là giá trị hợp lệ với nghĩa *"bất kỳ score khác 0 đều quyết định"* — một baseline hữu ích — trong khi `score = 0` vẫn cho HOLD. Kèm theo: `score` đúng bằng `threshold` cho HOLD, vì một score bằng ngưỡng chưa phải bằng chứng *vượt* ngưỡng. Bất biến khi đó đúng về cấu trúc cho mọi `threshold ∈ [0, 1]` thay vì phụ thuộc một cảnh báo lúc validate (`specs/composite-strategy.md` §C).
+
 Điểm kiến trúc: `policy` và `threshold` là **field trong snapshot được lưu vào DB**, không phải hằng số trong code. Hệ quả:
 
 - Thêm `policy: "unanimous"` là thêm 1 `SignalCombiner`, không sửa snapshot schema.
@@ -1339,25 +1474,25 @@ Quy tắc **không thương lượng** ở boundary:
 
 ### 5.6 Event vocabulary
 
-Đề bài §34 yêu cầu định nghĩa event. Đây là danh sách đầy đủ, kèm publisher/consumer để thấy rõ **không có ai gọi trực tiếp ai**:
+Đề bài §34 yêu cầu định nghĩa event. Đây là danh sách đầy đủ, kèm publisher/consumer để thấy rõ **không có ai gọi trực tiếp ai**. Cột **Delivery** là ranh giới process của từng event — chi tiết cơ chế ở §5.7.
 
-| Event                   | Publisher            | Consumer                          | Payload chính                                                    |
-| ----------------------- | -------------------- | --------------------------------- | ---------------------------------------------------------------- |
-| `MarketPriceUpdated`    | BinanceAdapter       | WS Hub                            | symbol, timeframe, provisional candle                            |
-| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | symbol, timeframe, close_time, OHLCV                             |
-| `ChartOverlayUpdated`   | OverlayCalculator    | WS Hub                            | symbol, timeframe, strategy@ver, `config_hash`, delta series     |
-| `StreamStale`           | MarketService        | WS Hub, metrics                   | symbol, timeframe, last_closed_at, reconnect_count               |
-| `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | search_run_id, candidate_hash, definition, generation_meta       |
-| `BacktestQueued`        | ExperimentService    | metrics, WS Hub                   | experiment_id, job_id, priority                                  |
-| `BacktestStarted`       | Worker               | metrics, WS Hub                   | experiment_id, worker_id, candle_count                           |
-| `BacktestCompleted`     | Worker               | Evaluator                         | backtest_run_id, trade_count, duration_ms                        |
-| `BacktestFailed`        | Worker               | SearchRunService, metrics         | experiment_id, error_code, retryable                             |
-| `StrategyEvaluated`     | Evaluator            | **RankingService**                | evaluation_id, metrics, evaluator_version                        |
-| `LeaderboardUpdated`    | RankingService       | WS Hub                            | entry_id, rank, score, dataset_version                           |
-| `SearchProgressUpdated` | SearchRunService     | WS Hub                            | tested, queued, failed, best_score, current_candidate, elapsed   |
-| `SearchRunFinished`     | SearchRunService     | WS Hub, metrics                   | search_run_id, stop_reason, totals                               |
-| `NewsCollected`         | NewsCollector        | SentimentAnalyzer                 | news_item_id, source_key, title_hash                             |
-| `SentimentAnalyzed`     | SentimentAnalyzer    | (chỉ persist)                     | news_item_id, label, score, model_version                        |
+| Event                   | Publisher            | Consumer                          | Delivery | Payload chính                                                    |
+| ----------------------- | -------------------- | --------------------------------- | -------- | ---------------------------------------------------------------- |
+| `MarketPriceUpdated`    | BinanceAdapter       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | symbol, timeframe, provisional candle |
+| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | **In-proc** (`lab`)                     | symbol, timeframe, close_time, OHLCV |
+| `ChartOverlayUpdated`   | OverlayCalculator    | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | symbol, timeframe, strategy@ver, `config_hash`, delta series |
+| `StreamStale`           | MarketService        | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | symbol, timeframe, last_closed_at, reconnect_count |
+| `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | **In-proc** (`lab`)                     | search_run_id, candidate_hash, definition, generation_meta |
+| `BacktestQueued`        | ExperimentService    | metrics, WS Hub                   | **Outbox** → metrics; HTTP → WS Hub     | experiment_id, job_id, priority |
+| `BacktestStarted`       | Worker               | metrics, WS Hub                   | **Outbox** (worker → dispatcher)        | experiment_id, worker_id, candle_count |
+| `BacktestCompleted`     | Worker               | Evaluator                         | **Outbox** (worker → dispatcher)        | backtest_run_id, trade_count, duration_ms |
+| `BacktestFailed`        | Worker               | SearchRunService, metrics         | **Outbox** (worker → dispatcher)        | experiment_id, error_code, retryable |
+| `StrategyEvaluated`     | Evaluator            | **RankingService**                | **Outbox** (§5.7.4)                     | evaluation_id, metrics, evaluator_version |
+| `LeaderboardUpdated`    | RankingService       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | entry_id, rank, score, dataset_version |
+| `SearchProgressUpdated` | SearchRunService     | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | tested, queued, failed, best_score, current_candidate, elapsed |
+| `SearchRunFinished`     | SearchRunService     | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | search_run_id, stop_reason, totals |
+| `NewsCollected`         | NewsCollector        | SentimentAnalyzer                 | **In-proc** (`lab`)                     | news_item_id, source_key, title_hash |
+| `SentimentAnalyzed`     | SentimentAnalyzer    | (chỉ persist)                     | **In-proc** (`lab`)                     | news_item_id, label, score, model_version |
 
 Mọi event có envelope chung:
 
@@ -1378,11 +1513,312 @@ Mọi event có envelope chung:
 
 1. **Idempotent.** Consumer INSERT `event_consumptions(event_id, consumer)` trước khi hành động; conflict → bỏ qua. `BacktestCompleted` đến 2 lần **không** tạo 2 evaluation (đã có `UNIQUE (backtest_run_id, evaluator_version)` làm lớp thứ hai).
 2. **Không phụ thuộc thứ tự giữa các aggregate khác nhau.** Chỉ event của cùng một aggregate mới có thứ tự.
-3. **`schema_version` cố định khi tách process.** Đây là lý do event-driven in-process của MVP chuyển sang broker được mà consumer không phải sửa: contract đã được version từ ngày đầu.
+3. **`schema_version` cố định khi đổi cơ chế delivery.** Contract được version từ ngày đầu, nên đổi in-process → outbox → broker không buộc consumer sửa payload handling.
 
-**Vì sao dùng in-process dispatcher trước, không broker**
+### 5.7 Ranh giới process của event — in-process dispatcher và transactional outbox
 
-`EventDispatcher` MVP là một dict `event_type → list[handler]` gọi đồng bộ (hoặc qua `asyncio.Queue`). Nó **không** cho được cross-process delivery. Nhưng ở MVP, publisher và consumer đều trong cùng process nên đó không phải vấn đề. Cái nó cho được — và là cái thực sự quan trọng — là **ép decoupling ngay từ đầu**: `Evaluator` không import `RankingService`. Khi cần cross-process (Phase 6), đổi implementation của `EventDispatcher`; handler và payload không đổi một dòng.
+Đây là chỗ dễ sai nhất trong toàn bộ thiết kế, nên nói thẳng vấn đề trước: **`EventDispatcher` in-process không thể giao event cho một process khác.** Nó là một dict `event_type → list[handler]` trong bộ nhớ của một process. Nếu `Worker` publish `BacktestCompleted` vào dispatcher của **chính nó** mà `Evaluator` lại được đăng ký trong dispatcher của process `lab`, thì handler không bao giờ chạy — và không có lỗi nào xuất hiện, vì "0 handler cho event này" là trạng thái hợp lệ của một dict.
+
+Vì `Worker` **luôn** là process riêng (§1.3.1) kể cả ở MVP một replica, mọi event từ Worker đều là cross-process từ ngày đầu. Không có "phase mà worker chạy in-process".
+
+#### 5.7.1 Ba cơ chế delivery và điều kiện dùng từng cơ chế
+
+| Cơ chế | Dùng khi | Bảo đảm | Ví dụ |
+| ------ | -------- | ------- | ----- |
+| **In-process dispatcher** | Publisher và consumer **chắc chắn** trong cùng một process | At-most-once, mất khi process chết. Chấp nhận được vì consumer chỉ tính toán phái sinh, tính lại được | `CandleClosed` → `OverlayCalculator`; `NewsCollected` → `SentimentAnalyzer` (đều trong `lab`) |
+| **Transactional outbox** (`domain_events`) | Publisher và consumer **khác process**, và mất event là không chấp nhận được | At-least-once + idempotent consumer = effectively-once. Không mất event dù process chết bất kỳ lúc nào | `BacktestCompleted` (worker → Evaluator); `StrategyEvaluated` (Evaluator → Ranking) |
+| **HTTP POST `/internal/events`** | Consumer là **Go WS Hub** (ngôn ngữ khác, chỉ fan-out cho browser) | Best-effort + retry. Mất một frame realtime không sai dữ liệu — client refetch theo `seq` | `ChartOverlayUpdated`, `LeaderboardUpdated`, `SearchProgressUpdated` |
+
+Quy tắc chọn, một câu: **event nào mà việc mất nó làm dữ liệu sai thì đi outbox; event nào chỉ để cập nhật UI thì đi HTTP; event nào không ra khỏi process thì đi in-process dispatcher.**
+
+#### 5.7.2 Quy tắc bắt buộc cho worker process
+
+Vì `Worker` không có `Evaluator`/`RankingService` chạy trong nó, worker **không được** dựa vào in-process dispatcher cho các event pipeline. Cụ thể:
+
+| Việc | Đúng | Sai |
+| ---- | ---- | --- |
+| Worker publish `BacktestCompleted` | `INSERT INTO domain_events (...) ` trong **cùng transaction** với `UPDATE backtest_runs status='completed'` | `dispatcher.publish(BacktestCompleted(...))` — không ai nghe, event bốc hơi |
+| Ai chạy `Evaluator` | **Outbox dispatcher** trong process `lab` (mặc định), hoặc worker tự đăng ký handler nếu chọn cấu hình `EVENT_CONSUMERS=evaluator,ranking` | Giả định "chắc là ở đâu đó có" |
+| Worker biết `Evaluator` tồn tại | Không. Worker chỉ ghi vào outbox. | `from app.domain.evaluation import Evaluator` trong code worker |
+
+Có **hai cấu hình triển khai hợp lệ**, và blueprint chốt cấu hình A làm mặc định:
+
+**Cấu hình A (mặc định) — outbox dispatcher trong `lab`**
+
+```text
+worker process:  claim job → run engine → COMMIT(state + outbox event)
+lab process:     OutboxDispatcher loop → Evaluator handler → RankingService handler
+                 → INSERT event_consumptions → mark delivered
+```
+
+**Cấu hình B — consumer chạy trong worker**
+
+```text
+worker process:  claim job → run engine → COMMIT(state + outbox event)
+                 → OutboxDispatcher loop (cùng process) → Evaluator → Ranking
+lab process:     không chạy dispatcher (EVENT_CONSUMERS rỗng)
+```
+
+Cấu hình B hợp lệ nhưng có một đánh đổi phải biết: dispatcher và backtest engine tranh CPU trong cùng process, nên khi worker đang chạy một backtest 40 s thì event của backtest **trước đó** bị delay. Cấu hình A tách hai vòng lặp nên không có vấn đề này. Điều bắt buộc chung cho cả hai: **`EVENT_CONSUMERS` phải được set tường minh, và startup check phải fail nếu tổng số process khai báo một consumer khác 1.** Không có consumer nào → event tồn đọng `pending` mãi; hai consumer trùng → hai lần xử lý (idempotency chặn được, nhưng đó là lãng phí có thể phát hiện sớm).
+
+#### 5.7.3 Publish — state và event trong cùng transaction
+
+```python
+# app/infrastructure/events/outbox.py  (rút gọn)
+async def publish_transactional(conn, event: DomainEvent) -> None:
+    """PHẢI gọi trong transaction đang mở của caller, không tự BEGIN."""
+    await conn.execute(
+        """INSERT INTO domain_events
+             (event_id, event_type, schema_version, aggregate_type, aggregate_id,
+              correlation_id, payload, dispatch_status, next_attempt_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending', now())""",
+        event.event_id, event.event_type, event.schema_version,
+        event.aggregate_type, event.aggregate_id,
+        event.correlation_id, json.dumps(event.payload),
+    )
+
+# Worker: ghi kết quả VÀ event trong MỘT transaction
+async with conn.transaction():
+    await repo.insert_trades(conn, run_id, trades)
+    await repo.insert_equity_points(conn, run_id, equity)
+    await repo.update_run_completed(conn, run_id, duration_ms, candles_read)
+    await repo.update_job_completed(conn, job_id)
+    await publish_transactional(conn, BacktestCompleted(run_id, len(trades), duration_ms))
+# COMMIT: hoặc cả kết quả lẫn event được ghi, hoặc không gì cả.
+```
+
+Đây là điểm cốt lõi: **không tồn tại trạng thái "kết quả đã ghi nhưng event mất"**, cũng không tồn tại "event đã gửi nhưng kết quả rollback". Với một broker riêng, đúng chỗ này là dual-write và cần Outbox pattern để đạt cùng bảo đảm — nên ta dùng outbox luôn, và vì queue cũng ở PostgreSQL thì nó miễn phí (ADR-005).
+
+#### 5.7.4 Dispatch — claim, retry, ack
+
+```sql
+-- Dispatcher claim một batch event tới lượt. Cùng cơ chế với claim job (§8.3).
+WITH claimed AS (
+    SELECT event_id
+    FROM domain_events
+    WHERE (dispatch_status = 'pending' AND next_attempt_at <= now())
+       OR (dispatch_status = 'claimed' AND claim_expires_at < now())  -- dispatcher chết
+    ORDER BY occurred_at ASC
+    FOR UPDATE SKIP LOCKED
+    LIMIT 32
+)
+UPDATE domain_events e
+SET dispatch_status  = 'claimed',
+    claimed_by       = $1,
+    claim_expires_at = now() + interval '60 seconds',
+    attempt          = e.attempt + 1
+FROM claimed c
+WHERE e.event_id = c.event_id
+RETURNING e.event_id, e.event_type, e.payload, e.attempt, e.max_attempts, e.correlation_id;
+```
+
+Với mỗi event đã claim, dispatcher gọi lần lượt các handler đã đăng ký cho `event_type`. Mỗi handler chạy trong **transaction riêng của nó**, và bước đầu tiên trong transaction đó là ghi `event_consumptions`:
+
+```python
+async def deliver(conn, event, handler_name, handler) -> bool:
+    async with conn.transaction():
+        inserted = await conn.fetchval(
+            """INSERT INTO event_consumptions (event_id, consumer)
+               VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING TRUE""",
+            event.event_id, handler_name,
+        )
+        if not inserted:
+            return True          # đã xử lý ở lần giao trước → coi như thành công
+        await handler(conn, event)   # cùng transaction với event_consumptions
+    return True
+```
+
+`event_consumptions` và tác dụng của handler nằm **cùng transaction** — đó là điều làm idempotency đúng. Nếu ghi `event_consumptions` ở transaction riêng rồi mới chạy handler, sẽ có cửa sổ mà event bị đánh "đã tiêu thụ" nhưng handler chưa chạy, và retry sẽ bỏ qua nó vĩnh viễn.
+
+Chỉ khi **mọi** handler của `event_type` đã có row trong `event_consumptions` thì event mới được đánh `delivered`:
+
+```sql
+UPDATE domain_events
+SET dispatch_status = 'delivered', delivered_at = now(), claimed_by = NULL, claim_expires_at = NULL
+WHERE event_id = $1
+  AND (SELECT count(*) FROM event_consumptions WHERE event_id = $1) = $2;  -- $2 = số handler mong đợi
+```
+
+Nếu một handler fail: event về `pending` với backoff, `last_error` ghi rõ. Các handler **đã** thành công không chạy lại (đã có `event_consumptions`), chỉ handler còn thiếu được thử lại.
+
+```python
+BACKOFF_SECONDS = [1, 5, 30, 120, 600]   # attempt 1..5
+
+async def on_handler_failure(conn, event, err):
+    if event.attempt >= event.max_attempts:
+        await conn.execute(
+            """UPDATE domain_events SET dispatch_status='dead', last_error=$2,
+                   claimed_by=NULL, claim_expires_at=NULL WHERE event_id=$1""",
+            event.event_id, str(err)[:2000])
+    else:
+        delay = BACKOFF_SECONDS[min(event.attempt, len(BACKOFF_SECONDS)) - 1]
+        await conn.execute(
+            """UPDATE domain_events SET dispatch_status='pending', last_error=$2,
+                   next_attempt_at = now() + make_interval(secs => $3),
+                   claimed_by=NULL, claim_expires_at=NULL WHERE event_id=$1""",
+            event.event_id, str(err)[:2000], delay)
+```
+
+#### 5.7.5 Bốn kịch bản, đọc theo sequence diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker
+    participant DB as PostgreSQL<br/>(domain_events)
+    participant DP as OutboxDispatcher
+    participant EVA as Evaluator handler
+    participant RNK as Ranking handler
+
+    rect rgba(200,240,200,0.25)
+    Note over W,RNK: ① Đường thành công
+    W->>DB: BEGIN · trades · runs.status=completed · INSERT event(pending) · COMMIT
+    DP->>DB: claim batch → status=claimed, attempt=1, claim_expires=+60s
+    DP->>EVA: deliver(BacktestCompleted)
+    EVA->>DB: BEGIN · INSERT consumptions(evaluator) · INSERT evaluations · COMMIT
+    DP->>RNK: deliver(BacktestCompleted)
+    RNK->>DB: BEGIN · INSERT consumptions(ranking) · (xét Top-K) · COMMIT
+    DP->>DB: count(consumptions)=2 = số handler → status=delivered, delivered_at=now()
+    end
+
+    rect rgba(255,235,200,0.35)
+    Note over DP,RNK: ② Một handler fail → retry chỉ handler đó
+    DP->>EVA: deliver → OK, consumptions(evaluator) đã ghi
+    DP->>RNK: deliver → ✕ RankingService lỗi
+    DP->>DB: status=pending, attempt=2, next_attempt_at=+5s, last_error
+    Note over DP,DB: count(consumptions)=1 ≠ 2 → KHÔNG delivered
+    DP->>EVA: lần 2: INSERT consumptions conflict → bỏ qua, KHÔNG tính lại metric
+    DP->>RNK: lần 2 → OK → count=2 → delivered
+    end
+
+    rect rgba(255,215,215,0.4)
+    Note over DP,DB: ③ Dispatcher chết giữa lúc giao
+    DP->>DB: claim event E, claim_expires_at = T+60s
+    Note over DP: ✕ process chết tại T+10s
+    Note over DB: E ở 'claimed' nhưng không ai xử lý
+    DP->>DB: dispatcher mới, tại T+61s: điều kiện<br/>claimed AND claim_expires_at < now() → claim lại E
+    Note over DP,DB: Handler đã ack trước khi chết vẫn có consumptions →<br/>không chạy lại. Chỉ handler thiếu được giao.
+    end
+
+    rect rgba(215,225,255,0.4)
+    Note over W,DB: ④ Duplicate: cùng event giao 2 lần
+    DP->>EVA: deliver(E) lần 1 → INSERT consumptions OK → INSERT evaluations
+    DP->>EVA: deliver(E) lần 2 → INSERT consumptions CONFLICT → return sớm
+    Note over EVA,DB: Lớp 2: UNIQUE(backtest_run_id, evaluator_version)<br/>chặn ngay cả khi consumptions bị xoá bằng tay (R12)
+    end
+```
+
+#### 5.7.6 Trạng thái của một event
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : INSERT cùng transaction với domain state
+    pending --> claimed : dispatcher claim (attempt += 1)
+    claimed --> delivered : mọi handler đã ghi event_consumptions
+    claimed --> pending : handler fail, còn attempt → backoff qua next_attempt_at
+    claimed --> pending : claim_expires_at < now() (dispatcher chết)
+    claimed --> dead : cạn max_attempts
+    dead --> pending : can thiệp thủ công sau khi sửa nguyên nhân
+    delivered --> [*]
+
+    note right of dead
+        dead KHÔNG bị xoá.
+        Payload + last_error giữ lại.
+        Metric outbox_dead_events > 0
+        là một alert (§8.4).
+    end note
+```
+
+**Vì sao không dùng `LISTEN/NOTIFY` để đẩy thay vì polling.** `NOTIFY` không bền: consumer không kết nối lúc đó thì mất thông báo, và đúng lúc cần bảo đảm nhất (process vừa restart) là lúc nó không có. Cách đúng là dùng `NOTIFY` như một **tín hiệu đánh thức** cho dispatcher đang polling, không phải như kênh giao event. Dispatcher poll mỗi 200 ms; `NOTIFY` chỉ giảm latency, không phải nguồn chân lý. Ở MVP, polling 200 ms là đủ và bỏ `NOTIFY` cho đơn giản.
+
+**Điều gì đổi và không đổi khi thay outbox bằng broker.** Handler signature (`async def handler(conn, event)`) không đổi. `event_consumptions` vẫn cần vì broker cũng chỉ cho at-least-once. Cái đổi là `OutboxDispatcher` được thay bằng một consumer group của broker — tức một adapter, đúng như `JobDispatcher` (ADR-005). Đây là lý do outbox không phải "giải pháp tạm": nó là **cùng một contract** mà broker sẽ phải thoả mãn.
+
+### 5.8 Protocol nội bộ Python → Go: `POST /internal/events`
+
+Quyết định đã chốt: **HTTP POST `/internal/events`**. Không có phương án "hoặc WebSocket nội bộ". Lý do ở ADR-016.
+
+#### 5.8.1 Contract
+
+```http
+POST /internal/events HTTP/1.1
+Host: api:8080
+Content-Type: application/json
+Authorization: Bearer <INTERNAL_EVENT_TOKEN>
+X-Correlation-Id: req_01JB2X9K7M4NQZ
+Idempotency-Key: 01JB2X9K7M4NQZ8V3T5W6Y7Z8A      # = event_id của event đầu batch
+
+{
+  "events": [
+    {
+      "event_id": "01JB2X9K7M4NQZ8V3T5W6Y7Z8A",
+      "event_type": "ChartOverlayUpdated",
+      "schema_version": 1,
+      "aggregate_type": "market_stream",
+      "aggregate_id": "…",
+      "correlation_id": "req_01JB2X9K7M4NQZ",
+      "occurred_at": "2026-08-11T09:14:22.481Z",
+      "seq": 8472,
+      "subscription_key": "BTCUSDT|5m|rsi@1.0.0|sha256:4d1f…",
+      "payload": { }
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{ "accepted": ["01JB2X9K7M4NQZ8V3T5W6Y7Z8A"], "duplicate": [], "rejected": [] }
+```
+
+| Thuộc tính | Quy định |
+| --- | --- |
+| Method + path | `POST /internal/events`. Batch tới **64 event** một request để tránh một HTTP call cho mỗi tick. |
+| **Internal auth** | Bearer token tĩnh từ env `INTERNAL_EVENT_TOKEN`, so sánh **constant-time** (`hmac.Equal`, không `==`). Route nằm sau một middleware chỉ nhận request từ CIDR nội bộ của compose network, và **không** đăng ký trên listener public. Không dùng JWT của user: đây là service-to-service, không có principal. |
+| Timeout | Python client: 2 s. Ngắn có chủ ý — đây là đường realtime, chậm hơn 2 s thì frame đã vô nghĩa với UI. |
+| **Idempotency** | Go giữ một ring buffer `event_id` đã nhận (dung lượng 10.000, TTL 5 phút) trong bộ nhớ. `event_id` đã thấy → trả về trong `duplicate[]`, **không** fan-out lần hai. Đây là chống duplicate do retry, không phải chống replay attack. |
+| Ack | `200` với `accepted[]`/`duplicate[]`/`rejected[]` theo từng `event_id`. Ack **từng phần**: một event xấu trong batch không làm cả batch fail. |
+| Ordering | `seq` tăng đơn điệu theo `subscription_key`, do Python cấp. Go **không** sắp xếp lại; client so `frame.seq` với `snapshot.seq` để phát hiện gap và refetch REST (xem `specs/chart-overlay.md`). Đây là lý do mất một frame không làm chart sai. |
+
+#### 5.8.2 Retry, backoff và khi Go WS Hub down
+
+```python
+# app/infrastructure/notify/internal_events.py  (rút gọn)
+RETRY_DELAYS = [0.2, 1.0, 3.0]        # 3 lần thử, tổng ≤ ~4.2 s + 3×timeout
+
+async def push(batch: list[DomainEvent]) -> PushResult:
+    for i, delay in enumerate([0.0, *RETRY_DELAYS]):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            r = await client.post("/internal/events", json=encode(batch), timeout=2.0)
+            if r.status_code == 200:
+                return PushResult.ok(r.json())
+            if 400 <= r.status_code < 500:
+                # Contract sai — retry không giúp gì. Log ERROR + drop.
+                metrics.internal_push_rejected.inc(len(batch))
+                return PushResult.rejected(r)
+        except (httpx.TimeoutException, httpx.ConnectError):
+            metrics.internal_push_retry.inc()
+    metrics.internal_push_dropped.inc(len(batch))
+    return PushResult.dropped()          # KHÔNG raise — không được làm chết vòng market
+```
+
+Hành vi khi Go WS Hub down, theo từng loại event:
+
+| Event | Khi push thất bại sau 3 lần retry | Vì sao chấp nhận được |
+| ----- | --------------------------------- | --------------------- |
+| `MarketPriceUpdated`, `ChartOverlayUpdated`, `StreamStale` | **Drop**, tăng `internal_push_dropped_total` | Nến đã đóng vẫn được ghi PostgreSQL trước khi push (§6.1). Khi Go lên, client reconnect → fetch REST → thấy đủ nến. Không mất dữ liệu, chỉ mất tính realtime tạm thời. |
+| `SearchProgressUpdated` | **Drop** | Là snapshot tiến trình, không phải delta. Frame sau ghi đè frame trước; mất một cái không tích luỹ sai. |
+| `LeaderboardUpdated`, `SearchRunFinished` | **Drop khỏi đường push**, nhưng state đã ở `leaderboard_entries` / `search_runs` | UI refetch `GET /leaderboard` khi WS reconnect. Bảng là nguồn chân lý, event chỉ là tín hiệu "có cái mới". |
+
+Nguyên tắc: **`/internal/events` không bao giờ là nơi duy nhất một thông tin tồn tại.** Mọi event đi qua nó đều đã hoặc sẽ được persist. Đó là điều làm "best-effort + drop" là lựa chọn đúng thay vì phải xây outbox thứ hai cho đường realtime.
+
+Ba chi tiết còn lại:
+
+- **Circuit breaker.** Sau 20 lần push fail liên tiếp, client mở circuit 10 s: bỏ push, chỉ tăng counter, không tốn 3 retry × 2 s timeout cho mỗi batch. Nửa mở sau 10 s: thử 1 batch. Điều này ngăn Go down làm chậm vòng lặp market của Python.
+- **Không chặn vòng market.** `push()` được gọi qua một `asyncio.Queue` có `maxsize=1000`; queue đầy → drop event **cũ nhất** (không phải mới nhất) và tăng counter. Vòng đọc Binance không bao giờ `await` trên HTTP tới Go.
+- **`readyz` của Go không phụ thuộc `/internal/events`.** Ngược lại cũng vậy: Python `readyz` không fail vì Go down. Hai service không được ràng buộc readiness lẫn nhau, nếu không một cái restart sẽ kéo cái kia xuống theo.
 
 ---
 
@@ -1508,9 +1944,10 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant W1 as Worker 1
     participant W2 as Worker 2
+    participant DP as OutboxDispatcher
     participant EVA as Evaluator
     participant RNK as RankingService
-    participant HUB as WS Hub
+    participant HUB as WS Hub (Go)
 
     U->>API: POST /search-runs {space, stop_conditions, dataset, execution}
     API->>API: validate + check quota (max_concurrent_runs)
@@ -1546,32 +1983,37 @@ sequenceDiagram
     end
 
     par Worker 1 và Worker 2 chạy song song, không biết nhau
-        W1->>DB: SELECT ... WHERE status='queued' ORDER BY priority, enqueued_at<br/>FOR UPDATE SKIP LOCKED LIMIT 1
-        DB-->>W1: job A
-        W1->>DB: UPDATE status=leased, leased_by=w1, lease_expires_at=now()+120s
+        W1->>DB: claim: SELECT ... WHERE status='queued'<br/>FOR UPDATE SKIP LOCKED LIMIT 1
+        DB-->>W1: job A + lease_token T1
+        W1->>DB: UPDATE status=leased, leased_by=w1,<br/>lease_token=T1, lease_expires_at=now()+120s
         W1->>W1: BacktestEngine.run(snapshot, candles)
-        W1->>DB: INSERT backtest_runs, trades, run_signals, equity_points
-        W1->>EVA: BacktestCompleted
+        W1->>DB: BEGIN · trades, run_signals, equity_points<br/>· UPSERT backtest_runs WHERE lease_token=T1<br/>· INSERT domain_events BacktestCompleted (pending) · COMMIT
+        Note over W1,DB: Kết quả VÀ event trong cùng transaction (§5.7.3).<br/>Mọi UPDATE guard bằng lease_token (§8.3.1).
     and
-        W2->>DB: SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1
+        W2->>DB: claim: SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1
         Note over W2,DB: SKIP LOCKED = W2 KHÔNG chờ W1,<br/>nó nhận job B ngay lập tức
-        DB-->>W2: job B
+        DB-->>W2: job B + lease_token T2
         W2->>W2: BacktestEngine.run(...)
-        W2->>EVA: BacktestCompleted
+        W2->>DB: BEGIN · kết quả · INSERT domain_events (pending) · COMMIT
     end
 
-    EVA->>DB: INSERT evaluations ... ON CONFLICT (backtest_run_id, evaluator_version) DO NOTHING
-    EVA->>RNK: StrategyEvaluated
-    Note over EVA,RNK: Qua EVENT. Evaluator KHÔNG gọi RankingService.update() (đề bài §34)
+    DP->>DB: OutboxDispatcher claim event (pending, next_attempt_at <= now)
+    DP->>EVA: deliver BacktestCompleted
+    Note over DP,EVA: Worker là process RIÊNG nên event đi qua outbox,<br/>KHÔNG qua in-process dispatcher (§5.7.1, §5.7.2)
+    EVA->>DB: INSERT event_consumptions(evaluator) + evaluations<br/>ON CONFLICT DO NOTHING — cùng transaction
+    EVA->>DB: INSERT domain_events StrategyEvaluated (pending)
+    DP->>RNK: deliver StrategyEvaluated
+    Note over DP,RNK: Qua EVENT. Evaluator KHÔNG gọi RankingService.update() (đề bài §34)
     RNK->>DB: SELECT score thứ K hiện tại
     alt score > entry thứ K
-        RNK->>DB: INSERT leaderboard_entries (APPEND, không UPDATE)
-        RNK->>HUB: LeaderboardUpdated
+        RNK->>DB: INSERT event_consumptions(ranking)<br/>+ leaderboard_entries (APPEND, không UPDATE)
+        RNK->>HUB: LeaderboardUpdated qua POST /internal/events
         HUB->>U: leaderboard tự cập nhật (không refresh trang)
         RNK->>SRS: best_score cải thiện → reset non_improving_count
     else không vào Top-K
         RNK->>SRS: non_improving_count += 1
     end
+    DP->>DB: mọi handler đã ack → dispatch_status=delivered
 
     SRS->>DB: UPDATE status=completed, stop_reason='max_candidates'
     SRS->>HUB: SearchRunFinished
@@ -1950,7 +2392,7 @@ class MACDStrategy:
 | Leaky Bucket           | Output smooth                          | Không cho burst hợp lệ                      | Loại — user mở dashboard cần burst 5 request cùng lúc |
 | **Token Bucket** ✅     | Cho burst nhỏ + giới hạn long-term, O(1) memory | Cần atomic op khi shared             | **Chọn**                                 |
 
-MVP: in-memory token bucket trong Go (1 instance API). Phase 6 khi scale ngang: chuyển sang Redis + Lua script atomic. Interface `RateLimiter` không đổi.
+MVP: in-memory token bucket trong Go (1 instance API). Khi scale ngang API: chuyển sang Redis + Lua script atomic (điều kiện ở §12.0). Interface `RateLimiter` không đổi.
 
 **Vì sao quota quan trọng hơn rate limit ở hệ thống này**
 
@@ -1958,7 +2400,7 @@ Rate limit chặn 5 `POST /search-runs`/phút. Nhưng **một** search run hợp
 
 **Outbound rate limit — cái dễ bị quên**
 
-Binance dùng hệ thống **weight**: `/api/v3/klines` với `limit=1000` tốn weight 2, giới hạn 1200 weight/phút/IP. Vượt → `429`, tiếp tục vượt → **`418` và ban IP tạm thời**. Nghĩa là một backfill loop không kiểm soát có thể làm hệ thống mất market data hoàn toàn trong nhiều phút. Vì vậy `BinanceAdapter` có token bucket **outbound** theo weight, và mọi call đi qua nó. Khi có nhiều worker (Phase 6), bucket này phải shared (Redis) — nếu không, 4 worker × 1200 weight = ban chắc chắn.
+Binance dùng hệ thống **weight**: `/api/v3/klines` với `limit=1000` tốn weight 2, giới hạn 1200 weight/phút/IP. Vượt → `429`, tiếp tục vượt → **`418` và ban IP tạm thời**. Nghĩa là một backfill loop không kiểm soát có thể làm hệ thống mất market data hoàn toàn trong nhiều phút. Vì vậy `BinanceAdapter` có token bucket **outbound** theo weight, và mọi call đi qua nó. Khi chạy nhiều worker, bucket này phải shared (Redis) — nếu không, 4 worker × 1200 weight = ban chắc chắn. Đây là điều kiện (b) ở §12.0 khiến Redis trở thành bắt buộc.
 
 ### 8.3 Bảo vệ khả năng scale — Job Queue với contract cố định (§32.5 Performance, §43)
 
@@ -1968,13 +2410,13 @@ Binance dùng hệ thống **weight**: `/api/v3/klines` với `limit=1000` tốn
 
 ```mermaid
 flowchart LR
-    subgraph Now["MVP — 1 worker"]
+    subgraph Now["Phase 3 — 1 worker (bắt buộc)"]
         E1["ExperimentService"] -->|"INSERT backtest_jobs"| Q1[("PostgreSQL<br/>backtest_jobs")]
         Q1 -->|"FOR UPDATE<br/>SKIP LOCKED"| W1["Worker"]
         W1 -->|"trades, evaluations"| Q1
     end
 
-    subgraph Phase6["Phase 6 — N worker, CÙNG contract"]
+    subgraph ScaleOut["Scale out — N worker, CÙNG contract"]
         E2["ExperimentService<br/><i>0 dòng thay đổi</i>"] -->|"INSERT backtest_jobs"| Q2[("PostgreSQL<br/>backtest_jobs")]
         Q2 --> WA["Worker 1"]
         Q2 --> WB["Worker 2"]
@@ -1991,8 +2433,8 @@ flowchart LR
         BR --> WW["Worker × N"]
     end
 
-    Now -.->|"docker compose --scale worker=4"| Phase6
-    Phase6 -.->|"đổi 1 adapter:<br/>PostgresJobDispatcher →<br/>BrokerJobDispatcher"| Later
+    Now -.->|"docker compose --scale worker=4"| ScaleOut
+    ScaleOut -.->|"đổi 1 adapter:<br/>PostgresJobDispatcher →<br/>BrokerJobDispatcher"| Later
 ```
 
 **Điều gì không đổi qua cả 3 giai đoạn**
@@ -2006,10 +2448,25 @@ flowchart LR
 
 Đề bài yêu cầu giải thích *"công nghệ đó giải quyết vấn đề kiến trúc nào?"* (§38). Câu trả lời cho queue: nó giải quyết vấn đề **long-running CPU-bound work không được chiếm HTTP request và phải song song hoá được**. Câu trả lời cho việc *chưa* dùng broker: PostgreSQL `SKIP LOCKED` đã giải quyết đúng vấn đề đó với 0 service thêm vào; broker chỉ cần khi throughput vượt khả năng của một PostgreSQL — và điều đó phải **đo** rồi mới kết luận.
 
-**Cơ chế claim job (SQL thật)**
+#### 8.3.1 Lease token — quy tắc retry và take-over duy nhất
+
+Đây là section chuẩn cho retry backtest. Mọi tài liệu khác (`specs/experiment.md`, `specs/search-loop.md`) tham chiếu về đây thay vì mô tả lại.
+
+**Vấn đề cần giải quyết chính xác.** Lease là *heuristic*: nó dựa trên đồng hồ và heartbeat, nên sẽ có lúc sai. Ba tình huống trông giống nhau từ phía DB nhưng cần ba phản ứng khác nhau:
+
+| Tình huống | Thực tế | Phản ứng đúng |
+| ---------- | ------- | ------------- |
+| **(a) Duplicate active worker** | Worker 1 vẫn sống (GC pause dài, network partition ngắn) nhưng lease đã hết hạn; Worker 2 claim được | Worker 2 **tiếp quản**. Worker 1 phải **tự dừng** khi phát hiện mất lease, và mọi ghi của nó bị từ chối. |
+| **(b) Retry sau lease expiry thật** | Worker 1 đã chết (OOM-kill, container killed) | Worker 2 **tiếp quản** và chạy lại từ đầu. |
+| **(c) Job đã hoàn thành** | Run đã `completed`; job bị claim lại do lỗi logic hoặc can thiệp tay | Worker 2 **không chạy lại**, đọc kết quả và đánh job `completed`. |
+
+Phân biệt (a) với (b) là **không thể** và cũng **không cần** — cả hai đều dẫn tới cùng một hành động: worker claim được lease mới là chủ sở hữu duy nhất. Điều cần thiết là mọi ghi phải được **guard bằng lease token**, để worker cũ trong ca (a) không ghi đè kết quả của worker mới.
+
+**Cơ chế: `lease_token` mới mỗi lần claim.**
 
 ```sql
--- Worker claim job: atomic, không race, không chờ nhau
+-- Worker claim job: atomic, không race, không chờ nhau.
+-- gen_random_uuid() sinh lease_token MỚI cho mỗi lượt claim — đây là chìa khoá.
 WITH claimed AS (
     SELECT id
     FROM backtest_jobs
@@ -2020,16 +2477,79 @@ WITH claimed AS (
     LIMIT 1
 )
 UPDATE backtest_jobs j
-SET status = 'leased',
-    leased_by = $1,
+SET status           = 'leased',
+    leased_by        = $1,
+    lease_token      = gen_random_uuid(),
     lease_expires_at = now() + interval '120 seconds',
-    attempt = j.attempt + 1
+    attempt          = j.attempt + 1
 FROM claimed c
 WHERE j.id = c.id
-RETURNING j.id, j.experiment_id, j.attempt, j.max_attempts;
+RETURNING j.id, j.experiment_id, j.lease_token, j.attempt, j.max_attempts;
 ```
 
-**Heartbeat**: worker gia hạn `lease_expires_at` mỗi 30 s trong lúc chạy job dài. Nếu worker chết, heartbeat dừng, lease hết hạn sau ≤ 120 s, job được worker khác nhận với `attempt += 1`. Sau `max_attempts` (3) → `status='failed'`, `last_error` ghi rõ, và **candidate được đánh `failed` chứ không treo `queued` mãi**.
+Worker giữ `lease_token` trong bộ nhớ. **Mọi** câu UPDATE sau đó — heartbeat, ghi kết quả, đánh completed/failed — đều có `AND lease_token = $token`. Đó là toàn bộ ý tưởng: token là bằng chứng "tôi là chủ lượt claim hiện tại", và nó **đổi** mỗi lần job được claim lại nên worker cũ không thể giả mạo.
+
+**Bốn thao tác được guard**
+
+```sql
+-- 1. Heartbeat: gia hạn lease. Thất bại (0 row) = đã mất job → worker PHẢI dừng ngay.
+UPDATE backtest_jobs
+SET lease_expires_at = now() + interval '120 seconds'
+WHERE id = $1 AND lease_token = $2 AND status = 'leased';
+
+-- 2. Tiếp quản run: chỉ chủ lease hiện tại được ghi worker_id/lease_token lên run.
+--    Không INSERT rồi bắt UNIQUE violation — dùng UPSERT có điều kiện tường minh.
+INSERT INTO backtest_runs (experiment_id, status, worker_id, lease_token, attempt, started_at)
+VALUES ($1, 'running', $2, $3, $4, now())
+ON CONFLICT (experiment_id) DO UPDATE
+SET status      = 'running',
+    worker_id   = EXCLUDED.worker_id,
+    lease_token = EXCLUDED.lease_token,
+    attempt     = EXCLUDED.attempt,
+    started_at  = now(),
+    error_code  = NULL,
+    error_detail = NULL
+WHERE backtest_runs.status IN ('queued','running','failed')   -- KHÔNG tiếp quản run đã completed
+RETURNING id, status;
+
+-- 3. Ghi kết quả: guard bằng lease_token trên CẢ run và job, trong CÙNG transaction.
+UPDATE backtest_runs
+SET status = 'completed', duration_ms = $3, candles_read = $4,
+    signals_count = $5, finished_at = now()
+WHERE experiment_id = $1 AND lease_token = $2 AND status = 'running';
+
+UPDATE backtest_jobs
+SET status = 'completed', completed_at = now(), lease_token = NULL, lease_expires_at = NULL
+WHERE experiment_id = $1 AND lease_token = $2;
+
+-- 4. Nhả lease khi fail còn attempt: về queued, KHÔNG tăng attempt lần nữa (claim đã tăng).
+UPDATE backtest_jobs
+SET status = 'queued', leased_by = NULL, lease_token = NULL,
+    lease_expires_at = NULL, last_error = $3
+WHERE id = $1 AND lease_token = $2;
+```
+
+Ba điều mà `WHERE ... lease_token = $2` chặn được, và không có cách nào khác chặn:
+
+- Worker cũ trong ca (a) hoàn thành backtest sau khi mất lease → UPDATE khớp **0 row** → nó biết mình đã mất job, log WARN, **không** ghi gì, thoát. Không có kết quả nào bị ghi đè.
+- `ON CONFLICT ... WHERE status IN ('queued','running','failed')` chặn ca (c): run đã `completed` thì UPSERT không match → `RETURNING` rỗng → worker đọc run hiện có, đánh job `completed`, **không chạy lại engine**. Đây là chỗ tiết kiệm CPU thật khi job bị claim lại sau khi đã xong.
+- Heartbeat khớp 0 row là **tín hiệu dừng bắt buộc**, không phải cảnh báo. Worker phải abort vòng lặp backtest tại nhịp heartbeat tiếp theo, không chạy tiếp cho hết.
+
+**Điều kiện nhất quán quan trọng.** `backtest_runs.lease_token` luôn bằng `backtest_jobs.lease_token` của lượt claim đang chạy. Khi job hoàn thành, `backtest_jobs.lease_token` được set `NULL` nhưng `backtest_runs.lease_token` **giữ nguyên** — nó là vết của lượt claim đã tạo ra kết quả này, thuộc provenance (§4.2). Đây là lý do trường này nằm trên cả hai bảng chứ không chỉ trên job.
+
+**Vì sao không chỉ dựa vào UNIQUE violation như phương án trước.** Bắt `UNIQUE (experiment_id)` violation rồi "bỏ job" trộn ba tình huống trên thành một phản ứng duy nhất, và phản ứng đó **sai cho ca (b)**: worker 1 đã chết để lại một row `status='running'` mồ côi; worker 2 bắt UNIQUE violation rồi bỏ job → run treo `running` vĩnh viễn, `SearchRunService` đếm mãi không đủ `candidates_tested`, search run không bao giờ đạt stop condition. Với `lease_token` + UPSERT có điều kiện, ca (b) là đường bình thường: tiếp quản, chạy lại, ghi kết quả.
+
+**Heartbeat**: worker gia hạn `lease_expires_at` mỗi **30 s**, lease dài **120 s**. Tỉ lệ 4:1 cho phép mất ba nhịp liên tiếp (GC pause, DB chậm tức thời) mà job không bị thu hồi oan. Nếu worker chết, heartbeat dừng, lease hết hạn sau ≤ 120 s, job được worker khác claim với `attempt += 1` và `lease_token` mới. Sau `max_attempts` (3) → `status='failed'`, `last_error` ghi rõ, `backtest_runs.status='failed'`, và **candidate được đánh `failed` chứ không treo `queued` mãi**.
+
+**Bất biến kiểm chứng được**
+
+| # | Bất biến | Cách kiểm |
+| - | -------- | --------- |
+| I1 | Không có hai `backtest_runs` row cho cùng `experiment_id` | `UNIQUE (experiment_id)` |
+| I2 | Không có job nào ở `leased` quá `lease_expires_at + 120 s` | Query giám sát; alert nếu có (§8.4) |
+| I3 | Không có run nào ở `running` mà job tương ứng đã `completed`/`failed` | Query nhất quán chạy trong test tích hợp |
+| I4 | Kết quả trên `backtest_runs` luôn của lượt claim cuối cùng thành công | `lease_token` khớp giữa run và lượt claim |
+| I5 | Worker mất lease không ghi được gì | Test: force expire lease giữa job, xác nhận UPDATE khớp 0 row |
 
 **Priority**: experiment tạo tay có `priority=100`, search candidate có `priority=200` (số nhỏ = ưu tiên cao). Lý do: user đang ngồi chờ kết quả một backtest cụ thể không nên bị xếp sau 500 candidate của một search run chạy nền.
 
@@ -2297,7 +2817,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 - **Quyết định**: `POST /experiments` **luôn** ghi job và trả `202 { run_id }`. Không có chế độ "chạy inline nếu nhỏ".
 - **Vì sao không có fast path inline**: hai code path (inline cho nhỏ, async cho lớn) nghĩa là hai chỗ có thể lệch nhau về xử lý lỗi, về ghi `backtest_runs`, về publish event. Bug ở path ít dùng sẽ không được phát hiện. Một path duy nhất đắt hơn ~500 ms cho backtest nhỏ nhưng đúng ở mọi trường hợp.
-- **Hệ quả tích cực**: chuyển sang multi-worker không cần đổi gì ở API, vì API đã async từ đầu. Nếu MVP làm inline rồi Phase 6 mới đổi sang async, thì đó là một breaking change ở public contract.
+- **Hệ quả tích cực**: chuyển sang multi-worker không cần đổi gì ở API, vì API đã async từ đầu. Nếu MVP làm inline rồi sau mới đổi sang async, thì đó là một breaking change ở public contract.
 - **Đánh đổi**: UI phải xử lý trạng thái pending (polling hoặc WebSocket) ngay từ MVP, không được hiển thị kết quả ngay. Chấp nhận — vì đó là hành vi đúng của hệ thống khi có dữ liệu thật.
 
 ### ADR-007: `next_candle_open` là fill policy mặc định
@@ -2313,7 +2833,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Quyết định**: `GET /api/v1/markets/chart-overlays?symbol&timeframe&strategy=rsi@1.0.0&config_hash=...` trả series đã tính. Realtime delta qua `ChartOverlayUpdated` với cùng `config_hash`.
 - **Vì sao**: ba lý do ở §3.2 — tránh hai nguồn chân lý cho cùng một indicator, overlay của backtest result *bắt buộc* từ backend (cần fill policy + position state), và tránh phải implement mỗi strategy 2 lần (Python + TypeScript).
 - **Vì sao có `config_hash` trong khoá subscription**: RSI(14,30,70) và RSI(21,30,70) là hai series khác nhau trên cùng `(symbol, timeframe)`. Không có `config_hash` thì Panel 1 (RSI 14) sẽ nhận cả delta của Panel 2 (RSI 21) và vẽ sai.
-- **Đánh đổi**: mỗi lần user đổi param là một round-trip. Bù lại: `config_hash` là khoá cache tự nhiên (Phase 6), và tính đúng quan trọng hơn tiết kiệm một round-trip.
+- **Đánh đổi**: mỗi lần user đổi param là một round-trip. Bù lại: `config_hash` là khoá cache tự nhiên (nếu thêm Redis), và tính đúng quan trọng hơn tiết kiệm một round-trip.
 
 ### ADR-009: `code_fingerprint` để thực thi versioning của strategy
 
@@ -2321,19 +2841,20 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Vì sao**: yêu cầu §36 (*"không nên overwrite kết quả cũ; Experiment #122 luôn biết chính xác nó đã sử dụng strategy nào"*) chỉ là quy ước nếu không có cơ chế cưỡng chế. Dev sửa `rsi.py` mà quên bump version là chuyện sẽ xảy ra, và khi xảy ra thì provenance sai âm thầm — loại lỗi tệ nhất vì không có triệu chứng.
 - **Đánh đổi**: refactor cosmetic (đổi tên biến, thêm comment) cũng đổi fingerprint và gây fail startup. Giảm nhẹ bằng cách normalise source trước khi hash (strip comment và docstring, chuẩn hoá whitespace) — vẫn bắt được mọi thay đổi logic.
 
-### ADR-010: PostgreSQL là store duy nhất bắt buộc; Redis là tuỳ chọn Phase 6
+### ADR-010: PostgreSQL là store duy nhất bắt buộc; Redis là tuỳ chọn có điều kiện
 
 - **Quyết định**: MVP không có Redis. Cache overlay, rate-limit shared, và outbound weight bucket dùng in-memory trong process.
 - **Vì sao**: với 1 instance API và 1 worker, in-memory cho đúng hành vi cần. Redis chỉ trở nên **cần thiết** khi có > 1 process cần chia sẻ state — và đó là điều kiện chính xác để thêm nó, không sớm hơn.
 - **Vì sao Redis không bao giờ là nguồn sự thật**: khác với hệ thống đăng ký chỗ ngồi (nơi Redis `DECR` là cơ chế chống race), ở đây không có counter nào cần atomic cross-process. Mọi thứ cần tính đúng đều là dữ liệu bất biến trong PostgreSQL. Redis chỉ cache thứ tính lại được.
-- **Đánh đổi**: khi scale ngang API, rate limit per-instance sẽ cho phép tổng thông lượng cao hơn ngưỡng cấu hình (N instance × ngưỡng). Chấp nhận ở MVP; Phase 6 chuyển sang Redis + Lua.
+- **Đánh đổi**: khi scale ngang API, rate limit per-instance sẽ cho phép tổng thông lượng cao hơn ngưỡng cấu hình (N instance × ngưỡng). Chấp nhận khi chạy 1 instance API; nếu scale ngang thì chuyển sang Redis + Lua (điều kiện ở §12.0).
 
 ### ADR-011: Go làm public boundary, Python làm domain
 
-- **Quyết định**: giữ topology 3 deployable. Go: HTTP/WebSocket edge, auth, RBAC, rate limit, validation, fan-out. Python: toàn bộ domain.
+- **Quyết định**: giữ topology hiện có — **3 code artifact, 4 loại runtime workload** (§1.3.1). Go: HTTP/WebSocket edge, auth, RBAC, rate limit, validation, fan-out. Python: toàn bộ domain (API server + worker, cùng codebase). Ranh giới và ownership chi tiết ở §1.2.
 - **Vì sao không gộp hết vào Python (FastAPI)**: fan-out WebSocket cho nhiều panel × nhiều client là I/O-bound concurrency — chỗ Go mạnh nhất (goroutine, không GIL). Python asyncio làm được nhưng khi Python cũng chạy backtest CPU-bound thì GIL và CPU contention sẽ làm WebSocket loop bị đói. Tách ra nghĩa là backtest nặng không ảnh hưởng độ trễ realtime.
-- **Vì sao không gộp hết vào Go**: mất numpy/pandas cho indicator và mất hệ sinh thái ML cho sentiment. Viết lại indicator library trong Go là công việc lớn không mang lại giá trị kiến trúc nào.
+- **Vì sao không gộp hết vào Go**: mất numpy/pandas cho indicator và mất hệ sinh thái ML cho sentiment. Viết lại indicator library trong Go là công việc lớn không mang lại giá trị kiến trúc nào — và tệ hơn, nó tạo **hai** implementation của cùng một indicator (§1.2.2 lý do 2).
 - **Đánh đổi**: một network hop nội bộ (~1–3 ms trên cùng host) và contract phải giữ đồng bộ giữa hai ngôn ngữ. Giảm nhẹ bằng contract test ở boundary Go↔Python chạy trong CI.
+- **Xem thêm**: ADR-015 giải thích vì sao topology này **không** phải microservice-per-module và cách gọi tên đúng từng lớp.
 
 ### ADR-012: Leaderboard append-only tham chiếu evaluation
 
@@ -2354,6 +2875,24 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Quyết định**: giới hạn cứng ở boundary — 1000 nến/response, 20.000 nến/experiment, 500 candidate/run, 2 concurrent run/user, 8–16 subscription/connection, 1 MiB body.
 - **Vì sao**: mỗi giới hạn tương ứng một cách hệ thống có thể bị hạ. `from=2017&timeframe=1m` là 4.7M nến — đủ để OOM Python process. `max_candidates=100000` là 5,5 giờ worker. Không giới hạn nghĩa là một request hợp lệ về mặt cú pháp có thể làm sập hệ thống.
 - **Đánh đổi**: user muốn backtest 5 năm dữ liệu 1m phải chia nhiều experiment. Ngưỡng nằm trong `user_quotas` nên nâng được cho từng user khi có nhu cầu thật.
+
+### ADR-015: Polyglot multi-process topology, không phải một monolith duy nhất và cũng không microservice-per-module
+
+- **Bối cảnh**: hệ thống có 3 code artifact và 4 loại runtime workload (§1.3.1). Cách gọi "Layered Modular Monolith" cho *toàn hệ thống* là sai vì có nhiều deployable; nhưng gọi nó là "microservices" cũng sai vì 6 module domain nằm cùng một process.
+- **Quyết định**: gọi đúng từng lớp — **Next.js là presentation layer**, **Go là edge service / BFF**, **Python Strategy Lab là Modular Monolith + Hexagonal domain core**, **Worker là workload thứ hai của cùng domain core**. Không có nhãn duy nhất cho toàn hệ thống, và cố gán một nhãn duy nhất là nguồn của chính sự nhầm lẫn này.
+- **Vì sao ranh giới process không trùng ranh giới module domain**: Go/Python là ranh giới **kỹ thuật** — I/O-bound fan-out tách khỏi CPU-bound computation (§1.2.2 lý do 3). Nếu ranh giới process trùng ranh giới domain thì Market Data, Strategy, Experiment, Search, Ranking, News phải là 6 service — và §32 không có driver nào đòi hỏi điều đó.
+- **Vì sao không microservice-per-module**: xem §1.1. Ngắn gọn: thêm service discovery + distributed tracing + eventual consistency giữa 6 module mà không giải quyết driver nào; đề bài §38 nói rõ không cộng điểm cho việc đó.
+- **Vì sao không gộp tất cả thành 1 process**: mất tách CPU/IO (backtest 40 s làm đói WebSocket loop), và một public surface phải kiêm cả edge concerns lẫn domain — chính là God Service (§9.1).
+- **Đánh đổi**: một network hop nội bộ Go↔Python (1–3 ms trên cùng host), contract phải giữ đồng bộ giữa hai ngôn ngữ, và người đọc tài liệu phải nắm bốn nhãn thay vì một. Giảm nhẹ: contract test ở boundary Go↔Python chạy trong CI, và §1.2 là section chuẩn để mọi tài liệu khác tham chiếu về.
+
+### ADR-016: `POST /internal/events` là protocol duy nhất cho Python → Go, không WebSocket nội bộ
+
+- **Bối cảnh**: Python cần đẩy `ChartOverlayUpdated`, `LeaderboardUpdated`, `SearchProgressUpdated` sang Go để Go fan-out theo subscription. Hai phương án: mở một WebSocket nội bộ Python→Go và giữ nó, hoặc POST HTTP mỗi batch event.
+- **Quyết định**: **HTTP POST `/internal/events`**, batch tới 64 event, internal bearer token, idempotency theo `event_id`, retry 3 lần với backoff `[0.2s, 1s, 3s]`, circuit breaker sau 20 fail liên tiếp. Chi tiết contract ở §5.8.
+- **Vì sao không WebSocket nội bộ**: (a) một connection dài giữa hai service tạo **stateful coupling** — cần reconnect logic, heartbeat, và xử lý "connection còn mở nhưng peer đã restart", tức là viết lại đúng những thứ HTTP + retry đã cho miễn phí; (b) không có ack per-message trong WebSocket thô, nên muốn biết Go đã nhận chưa thì phải tự định nghĩa một protocol ack — lúc đó nó là RPC trên WebSocket, phức tạp hơn HTTP mà không hơn gì; (c) `readyz` của Go và Python bị ràng buộc lẫn nhau qua trạng thái connection, dễ dẫn tới một service restart kéo service kia xuống.
+- **Vì sao HTTP là đủ**: các event này đều **best-effort có chủ ý** — mọi thông tin đi qua đường này đã hoặc sẽ được persist trong PostgreSQL (§5.8.2). Mất một frame realtime không làm dữ liệu sai; client phát hiện gap qua `seq` và refetch REST. Đường nào **không** được mất event thì đi outbox, không đi đường này (§5.7.1).
+- **Vì sao có `Idempotency-Key` và ring buffer `event_id` ở Go**: retry của Python có thể tới sau khi Go đã xử lý thành công nhưng response bị mất. Không dedup thì một frame overlay được fan-out hai lần và client vẽ trùng.
+- **Đánh đổi**: overhead HTTP header cho mỗi batch (bù bằng batch 64 event) và độ trễ cao hơn WebSocket một chút (~1 ms). Chấp nhận: đơn giản hơn hẳn và không tạo trạng thái chung giữa hai service.
 
 ---
 
@@ -2421,11 +2960,11 @@ Thêm vào: 1 row `market_pairs` với `provider='okx'`. `candles.provider` đã
 
 | Bước | Số backtest | Thay đổi                                                        | Code đổi                          |
 | ---- | ----------- | --------------------------------------------------------------- | --------------------------------- |
-| 1    | ~100        | 1 worker container                                              | —                                 |
+| 1    | ~100        | 1 replica của workload `worker` (đã có từ Phase 3)              | —                                 |
 | 2    | ~10.000     | `docker compose up --scale worker=8`                            | **0 dòng**                        |
 | 3    | ~100.000    | `BrokerJobDispatcher` + partition `candles` theo tháng + index tuning | **1 adapter** (`JobDispatcher`) |
 
-Cái làm bước 2 thành "0 dòng": `FOR UPDATE SKIP LOCKED` đã là competing-consumer từ đầu, `lease_expires_at` đã xử lý worker chết từ đầu, evaluation đã idempotent từ đầu. Không có gì phải "chuẩn bị cho multi-worker" vì nó đã đúng cho multi-worker ngay từ 1 worker.
+Cái làm bước 2 thành "0 dòng": `FOR UPDATE SKIP LOCKED` đã là competing-consumer từ đầu, `lease_token` + `lease_expires_at` đã xử lý worker chết và duplicate active worker từ đầu (§8.3.1), event đã đi qua transactional outbox nên cross-process delivery không phải thêm mới (§5.7), và evaluation đã idempotent từ đầu. Không có gì phải "chuẩn bị cho multi-worker" vì nó đã đúng cho multi-worker ngay từ 1 worker — đây chính là lý do Worker là workload bắt buộc từ Phase 3 chứ không phải tính năng thêm sau (§12.0).
 
 Cái không đổi qua cả 3 bước: `ExperimentSnapshot`, `BacktestJob` shape, event payload, public API, `BacktestEngine.run()`.
 
@@ -2441,7 +2980,7 @@ News là một job độc lập, chạy theo scheduler, ghi vào `news_items`. J
 
 Cái duy nhất bị ảnh hưởng: `NewsSentimentStrategy` sẽ nhận `ctx.news_sentiment` với dữ liệu cũ (hoặc `None` nếu không có gì). Backtest **technical-only** không đọc field đó nên chạy bình thường.
 
-→ Kiểm chứng: demo S8 (`docker stop` news/sentiment, chart vẫn chạy). Chi tiết: §1.4, §6.4.
+→ Kiểm chứng: demo S8 (`docker stop` news/sentiment, chart vẫn chạy). Chi tiết: §1.5, §6.4.
 
 ### 11.6 Nếu Sentiment Model thay đổi thì Strategy Engine có bị ảnh hưởng không?
 
@@ -2527,6 +3066,29 @@ Bốn cơ chế làm điều này đáng tin, không chỉ "có API trả về":
 
 ## 12. Roadmap và Demo script
 
+### 12.0 Target Architecture so với Delivery Roadmap
+
+Hai khái niệm này bị trộn vào nhau là nguồn mâu thuẫn thường gặp nhất trong tài liệu kiến trúc, nên tách bạch trước:
+
+| | **Target Architecture** | **Delivery Roadmap** |
+| --- | --- | --- |
+| Trả lời câu | Hệ thống *được thiết kế* như thế nào? | Ta *xây* nó theo thứ tự nào? |
+| Nằm ở | §1–§11 của tài liệu này | §12.1 |
+| Thay đổi khi | Có quyết định kiến trúc mới (thêm/sửa ADR) | Ước lượng thời gian, ưu tiên demo thay đổi |
+| Ví dụ | "Worker là process riêng, giao tiếp qua job queue trên PostgreSQL" | "Worker được xây ở Phase 3" |
+
+Quy tắc đọc: **§1–§11 mô tả trạng thái đích, không mô tả trạng thái tại một phase.** Khi §1.3 nói "Backtest Worker là workload riêng", đó là kiến trúc — không phải "sẽ có ở phase nào". Ngược lại, khi §12.1 nói "Phase 3: Worker container", đó là thời điểm xây, không phải một quyết định kiến trúc mới.
+
+**Ba thành phần có điều kiện, chốt một lần ở đây**
+
+| Thành phần | Thuộc Target Architecture? | Có ở Phase nào | Điều kiện |
+| --- | --- | --- | --- |
+| **Backtest Worker** (1 replica) | **Có** — process riêng, không tuỳ chọn | **Phase 3** | Không điều kiện. Job queue + worker là kiến trúc bắt buộc từ ADR-005/ADR-006, vì `POST /experiments` **luôn** async. |
+| **Multi-worker** (N replica) | **Có** — cùng contract, chỉ đổi `--scale` | **Phase 6** (chứng minh) | Không cần benchmark để *được phép* scale; Phase 6 chỉ là lúc **đo** để chứng minh cho demo S10. |
+| **Redis** | **Không bắt buộc** — cache + shared state, tuỳ chọn | **Phase 6, có điều kiện** | Chỉ thêm khi benchmark cho thấy một trong hai: (a) `overlay_compute_seconds` p95 > 300 ms và recompute là bottleneck đo được; (b) chạy > 1 worker **và** outbound weight bucket per-process gây `429` từ Binance. Xem ADR-010. |
+
+Nói cách khác: **Worker không phải "tính năng Phase 6", và Redis không phải "sẽ có ở Phase 6"**. Worker là bắt buộc và có từ Phase 3 với đúng 1 replica; Redis là tuỳ chọn và chỉ xuất hiện nếu số đo ở Phase 6 chứng minh cần.
+
 ### 12.1 Bảy phase
 
 Điểm khởi đầu thực tế: repo hiện có `web (Next.js) → api (Go) → ai (FastAPI)` với một endpoint `POST /api/v1/ai/predict` proxy tới một stub trả `{label:"neutral", score:0.5, model:"stub-v0"}`. **Chưa có** database, chưa có WebSocket, chưa có bất kỳ code domain nào (candle, indicator, strategy, backtest, news). Roadmap bắt đầu từ đúng chỗ đó.
@@ -2534,13 +3096,13 @@ Bốn cơ chế làm điều này đáng tin, không chỉ "có API trả về":
 | Phase | Kết quả                                                                                            | Bằng chứng hoàn thành                                                            |
 | ----- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | **0. Nền** | Thêm PostgreSQL + Alembic vào compose. Chuẩn hoá error envelope, request ID, structured log, `/healthz` vs `/readyz`. Siết CORS về allowlist. Bỏ publish port `ai` ra host trong profile production. | `docker compose up` → migration chạy, readiness đúng; contract test error envelope |
-| **1. Market vertical slice** | `BinanceAdapter` (REST + WSS), `candles`, `stream_checkpoints`, `market_datasets`. WebSocket hub trong Go. **1 chart panel** realtime. | Test reconnect + backfill: ngắt 60 s → 0 nến thiếu. UI hiện badge STALE.          |
+| **1. Market vertical slice** | `BinanceAdapter` (REST + WSS), `candles`, `stream_checkpoints`, `market_datasets`. WebSocket hub trong Go + `POST /internal/events`. **1 chart panel** realtime. | Test reconnect + backfill: ngắt 60 s → 0 nến thiếu. UI hiện badge STALE.          |
 | **2. Multi-chart + Strategy plugin** | 4 panel độc lập. Registry + 4 strategy (MA, RSI, BB, SR). `IndicatorLibrary`. `GET /chart-overlays`. | Demo S1 (đổi Chart 1 không re-render Chart 2–4) + demo S3 (thêm MACD, 0 dòng sửa core) |
-| **3. Experiment + Backtest** | `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`. Worker container. `202 + run_id`. | Demo S5: fixture 200 nến có kết quả tính tay → khớp chính xác, chạy 2 lần giống nhau |
+| **3. Experiment + Backtest + Worker** | `experiments`, `backtest_jobs` (có `lease_token`), `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`. `domain_events` + `event_consumptions` + `OutboxDispatcher`. **Worker workload với 1 replica** (bắt buộc, không tuỳ chọn — §12.0). `202 + run_id`. | Demo S5: fixture 200 nến có kết quả tính tay → khớp chính xác, chạy 2 lần giống nhau. AC-05b/c/d (lease take-over) và AC-14b (outbox không mất event) pass. |
 | **4. Composite + Search + Leaderboard** | `SignalCombiner` (majority + weighted). `RandomSearchGenerator`. `search_runs` với stop condition. Leaderboard Top-K + provenance API. | Demo S6 (pause/resume/cancel) + demo S7 (provenance đầy đủ)                       |
 | **5. News + Sentiment** | `news_sources` allowlist, `RssNewsAdapter`, `news_items`, `sentiment_results` (thay stub `predictor.py` bằng model thật), `NewsSentimentStrategy`. | Demo S8: stop sentiment → chart + backtest technical vẫn chạy, news hiện `unavailable` |
-| **6. Scale proof + Replaceability** | `DomainGuidedGenerator`. Đo throughput 1 vs 4 worker. Thêm Redis **chỉ nếu** số đo chứng minh cần. | Demo S4 (đổi generator) + demo S10 (≥ 3× khi scale 4 worker)                       |
-| **7. Hardening** | Load test bounded input, security review (SSRF, CORS, JWT), hoàn thiện metrics, tập demo. | 10/10 demo S1–S10 chạy liên tục từ compose sạch trong < 120 s startup             |
+| **6. Scale proof + Replaceability** | `DomainGuidedGenerator`. **Đo** throughput 1 vs 4 worker (`--scale worker=4`, 0 dòng code đổi). Thêm Redis **chỉ nếu** số đo thoả điều kiện ở §12.0. | Demo S4 (đổi generator) + demo S10 (≥ 3× khi scale 4 worker). Nếu không thêm Redis: ghi lại số đo và kết luận "chưa cần" — đó cũng là một kết quả hợp lệ. |
+| **7. Hardening** | Load test bounded input, security review (SSRF, CORS, JWT, internal event token), hoàn thiện metrics, tập demo. | 10/10 demo S1–S10 chạy liên tục từ compose sạch trong < 120 s startup             |
 
 Thứ tự này có một nguyên tắc: **mỗi phase kết thúc bằng một vertical slice chạy được**, không phải một tầng hoàn thành. Phase 1 có 1 chart chạy thật (không phải "xong tầng data access"). Lý do: nếu phase cuối mới ghép, mọi giả định sai về contract sẽ lộ ra đúng lúc không còn thời gian.
 
@@ -2586,16 +3148,16 @@ Bước 16–18 là phần quan trọng nhất của demo. Bước 1–15 chứn
 | §25–§26 Visualization + Trade Detail          | `specs/chart-overlay.md`, `specs/visualization.md`         | demo bước 9–10        |
 | §27–§28 News Crawler + provider abstraction   | `design.md` §6.4 · `specs/news.md`                         | demo bước 13          |
 | §29–§30 Sentiment + Sentiment as Strategy     | `specs/sentiment.md`                                       | demo bước 15          |
-| §31 Kiến trúc tổng thể                        | `design.md` §1, §2, §3                                     | —                     |
+| §31 Kiến trúc tổng thể                        | `design.md` §1 (style + Service Boundary & Ownership), §2, §3 | —                  |
 | §32.1 Modifiability                           | §8.1, ADR-002                                              | **S3**                |
-| §32.2 Scalability                             | §8.3, ADR-005                                              | **S10**               |
-| §32.3 Realtime                                | §6.1, ADR-001                                              | **S2**                |
-| §32.4 Reliability                             | §1.4, §6.1                                                 | **S8, S9**            |
-| §32.5 Performance                             | §8.3                                                       | **S10**               |
-| §32.6 Maintainability                         | §5.1 bảng seam, ADR-004                                    | **S4**                |
+| §32.2 Scalability                             | §8.3, ADR-005, ADR-015                                     | **S10**               |
+| §32.3 Realtime                                | §6.1, §5.8, ADR-001, ADR-016                               | **S2**                |
+| §32.4 Reliability                             | §1.5, §5.7, §6.1, §8.3.1                                   | **S8, S9**            |
+| §32.5 Performance                             | §8.3, §8.3.1                                               | **S10**               |
+| §32.6 Maintainability                         | §1.2 (ownership), §5.1 bảng seam, ADR-004                  | **S4**                |
 | §32.7 Observability                           | §8.4                                                       | **S6**                |
 | §33 Luồng hoàn chỉnh 9 bước                   | §6.3                                                       | demo bước 6–9         |
-| §34 Event-driven vocabulary                   | §5.6                                                       | —                     |
+| §34 Event-driven vocabulary                   | §5.6 (danh sách) · §5.7 (delivery: outbox vs in-process) · §5.8 (`/internal/events`) | AC-14b |
 | §35 Database (6 nhóm dữ liệu)                 | §4.1, §4.2                                                 | —                     |
 | §36 Strategy Version + Reproducibility        | §4.2, ADR-009                                              | **S7**, demo bước 12  |
 | §37 MVP tối thiểu                             | `proposal.md` §4.1                                         | S1–S10                |
@@ -2612,11 +3174,11 @@ Bước 16–18 là phần quan trọng nhất của demo. Bước 1–15 chứn
 
 ## 13. Phụ lục — Cấu trúc thư mục source code đề xuất
 
-Cấu trúc dưới đây **giữ nguyên** 3 deployable đã có trong repo và mở rộng vào bên trong, không phải viết lại từ đầu.
+Cấu trúc dưới đây **giữ nguyên** 3 code artifact đã có trong repo (`web/`, `server/`, `ai/`) và mở rộng vào bên trong, không phải viết lại từ đầu. Workload `worker` dùng lại artifact `ai/` với entrypoint khác (§1.3.1).
 
 ```text
 CryptoBot/
-├── docker-compose.yml            # + postgres, + worker (redis ở Phase 6)
+├── docker-compose.yml            # + postgres, + worker (redis tuỳ chọn, §12.0)
 ├── docker-compose.prod.yml       # override: KHÔNG publish port ai/postgres ra host
 ├── Makefile                      # dev, down, test, migrate, seed, lint, arch-test
 ├── .env.example
