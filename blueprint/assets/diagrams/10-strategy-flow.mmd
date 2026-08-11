@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant EXS as ExperimentService
+    participant REG as StrategyRegistry
+    participant IND as IndicatorLibrary
+    participant MA as MAStrategy
+    participant RSI as RSIStrategy
+    participant SR as SupportResistanceStrategy
+    participant CMB as WeightedVoteCombiner
+
+    EXS->>REG: resolve(candidate.children)
+    REG-->>EXS: [MAStrategy@1.0.0, RSIStrategy@1.0.0, SupportResistanceStrategy@1.0.0]
+    Note over REG: Lookup trong dict, KHÔNG có if/elif theo tên.<br/>Nếu strategy_id không tồn tại → lỗi ở tầng validate,<br/>không phải nhánh else âm thầm.
+
+    EXS->>EXS: union input_requirements của tất cả children
+    EXS->>IND: precompute(candles, {sma:[20,50], rsi:[14], sr:[80]})
+    IND-->>EXS: indicators aligned với candles (None ở vùng warm-up)
+
+    loop mỗi nến t từ warm_up_end tới cuối
+        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, indicators, params)
+        EXS->>MA: analyze(ctx)
+        MA-->>EXS: Signal(BUY, evidence={ma20:118050, ma50:117800})
+        EXS->>RSI: analyze(ctx)
+        RSI-->>EXS: Signal(SELL, evidence={rsi:72.4})
+        EXS->>SR: analyze(ctx)
+        SR-->>EXS: Signal(BUY, evidence={nearest_support:117500})
+        EXS->>CMB: combine([(spec,sig)...], policy=weighted_vote@0.3)
+        CMB->>CMB: score = 1×0.2 + (−1)×0.3 + 1×0.5 = 0.4
+        CMB-->>EXS: Signal(BUY, confidence=0.4)
+    end

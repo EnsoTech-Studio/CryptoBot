@@ -1,0 +1,124 @@
+flowchart LR
+    subgraph Ext["NGUỒN NGOÀI"]
+        direction TB
+        BN_R["Binance REST<br/>/api/v3/klines"]
+        BN_W["Binance WSS<br/>@kline_5m"]
+        NEWS["RSS / News API<br/><i>allowlist</i>"]
+    end
+
+    subgraph Client["CLIENT — chỉ render"]
+        direction TB
+        P1["Chart Panel 1<br/>BTCUSDT 5m"]
+        P2["Chart Panel 2<br/>BTCUSDT 15m"]
+        P3["Chart Panel 3<br/>1h"]
+        P4["Chart Panel 4<br/>4h"]
+        LB_UI["Leaderboard<br/>+ Trade Table"]
+        SR_UI["Search Control<br/>+ Progress"]
+        NW_UI["News + Sentiment"]
+    end
+
+    subgraph GoAPI["PUBLIC API — Go"]
+        direction TB
+        MW["Middleware chain<br/>requestID → CORS → ratelimit<br/>→ auth → RBAC → validate"]
+        REST["REST handlers"]
+        WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(symbol,timeframe,strategy,config_hash)</i>"]
+    end
+
+    subgraph LabBox["STRATEGY LAB — Python"]
+        direction TB
+
+        subgraph MD["① Market Data Module"]
+            MDA["BinanceAdapter<br/>normalize → Candle"]
+            MDS["MarketService<br/>reconnect · backfill · de-dup"]
+            OVL["OverlayCalculator<br/><i>indicator + signal</i>"]
+        end
+
+        subgraph SE["② Strategy Engine"]
+            REG["StrategyRegistry"]
+            STR["Strategy plugins"]
+            CMB["SignalCombiner"]
+        end
+
+        subgraph EX["③ Experiment Module"]
+            EXS["ExperimentService<br/><i>tạo snapshot bất biến</i>"]
+            BTE["BacktestEngine"]
+            EVA["Evaluator"]
+        end
+
+        subgraph SS["④ Search Module"]
+            GEN["CandidateGenerator<br/><i>Random | DomainGuided</i>"]
+            SRS["SearchRunService<br/><i>stop condition · pause/resume</i>"]
+        end
+
+        subgraph RK["⑤ Ranking Module"]
+            RNK["RankingService<br/><i>score policy v1</i>"]
+            TOPK["Leaderboard Top-K"]
+        end
+
+        subgraph NS["⑥ News Module"]
+            NWC["NewsCollector<br/><i>chỉ collect</i>"]
+            SNT["SentimentAnalyzer<br/><i>chỉ classify</i>"]
+        end
+
+        BUS{{"In-process Event Dispatcher<br/><i>CandleClosed · StrategyGenerated<br/>BacktestQueued/Started/Completed/Failed<br/>StrategyEvaluated · LeaderboardUpdated<br/>NewsCollected · SentimentAnalyzed</i>"}}
+    end
+
+    subgraph WK["BACKTEST WORKER × N"]
+        W1["Worker<br/>poll → run → publish"]
+    end
+
+    DB[("PostgreSQL<br/>candles · strategy_versions<br/>experiments · backtest_jobs<br/>trades · equity_points<br/>evaluations · leaderboard_entries<br/>news_items · sentiment_results")]
+
+    BN_W -->|"kline tick"| MDA
+    BN_R -->|"backfill nến thiếu"| MDA
+    MDA --> MDS
+    MDS -->|"upsert nến đã đóng"| DB
+    MDS --> BUS
+    BUS -->|"CandleClosed"| OVL
+    OVL -->|"ChartOverlayUpdated<br/>+ config_hash"| WSHUB
+    MDS -->|"candle delta"| WSHUB
+    WSHUB -->|"chỉ panel khớp<br/>subscription"| P1
+    WSHUB --> P2
+    WSHUB --> P3
+    WSHUB --> P4
+
+    SR_UI -->|"POST /search-runs"| MW --> REST
+    REST --> SRS
+    SRS --> GEN
+    GEN -->|"CandidateStrategy<br/><i>bất biến</i>"| SRS
+    SRS -->|"dedup theo candidate_hash"| EXS
+    P1 -->|"POST /experiments"| MW
+    REST --> EXS
+    EXS -->|"snapshot + INSERT backtest_jobs"| DB
+    EXS --> REG --> STR
+    STR --> CMB
+    DB -->|"FOR UPDATE SKIP LOCKED"| W1
+    W1 -->|"cùng BacktestEngine"| BTE
+    BTE -->|"trades · equity_points"| DB
+    BTE --> EVA
+    EVA -->|"StrategyEvaluated"| BUS
+    BUS --> RNK --> TOPK
+    TOPK -->|"leaderboard_entries"| DB
+    TOPK -->|"LeaderboardUpdated"| WSHUB --> LB_UI
+    SRS -->|"progress snapshot"| WSHUB --> SR_UI
+
+    NEWS --> NWC
+    NWC -->|"NewsItem chuẩn hoá"| DB
+    NWC -->|"NewsCollected"| BUS
+    BUS --> SNT
+    SNT -->|"sentiment + model_version"| DB
+    DB --> NW_UI
+    DB -->|"aggregate theo giờ"| STR
+
+    classDef ext fill:#e8e8e8,stroke:#999,color:#000
+    classDef client fill:#dbeafe,stroke:#3b82f6,color:#000
+    classDef go fill:#cffafe,stroke:#06b6d4,color:#000
+    classDef py fill:#fef3c7,stroke:#f59e0b,color:#000
+    classDef wk fill:#fce7f3,stroke:#ec4899,color:#000
+    classDef db fill:#dcfce7,stroke:#22c55e,color:#000
+    class BN_R,BN_W,NEWS ext
+    class P1,P2,P3,P4,LB_UI,SR_UI,NW_UI client
+    class MW,REST,WSHUB go
+    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS py
+    class W1 wk
+    class DB db

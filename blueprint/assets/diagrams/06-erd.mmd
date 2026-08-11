@@ -1,0 +1,31 @@
+erDiagram
+    USERS ||--o{ SEARCH_RUNS : owns
+    USERS ||--o{ EXPERIMENTS : owns
+    USERS ||--|| USER_QUOTAS : limited_by
+
+    MARKET_PAIRS ||--o{ CANDLES : has
+    MARKET_PAIRS ||--o{ STREAM_CHECKPOINTS : tracked_by
+    CANDLES }o--|| MARKET_DATASETS : "snapshot as"
+
+    STRATEGY_DEFINITIONS ||--o{ STRATEGY_VERSIONS : versions
+    STRATEGY_VERSIONS ||--o{ EXPERIMENTS : "selected by"
+
+    SEARCH_RUNS ||--o{ SEARCH_CANDIDATES : generates
+    SEARCH_RUNS ||--o{ SEARCH_ACTIONS : "controlled by"
+    SEARCH_CANDIDATES ||--o| EXPERIMENTS : becomes
+
+    MARKET_DATASETS ||--o{ EXPERIMENTS : "runs on"
+    EXPERIMENTS ||--|| BACKTEST_JOBS : "queued as"
+    EXPERIMENTS ||--|| BACKTEST_RUNS : executes
+    BACKTEST_RUNS ||--o{ TRADES : produces
+    BACKTEST_RUNS ||--o{ RUN_SIGNALS : records
+    BACKTEST_RUNS ||--o{ EQUITY_POINTS : records
+    BACKTEST_RUNS ||--|| EVALUATIONS : "measured by"
+
+    EVALUATIONS ||--o{ LEADERBOARD_ENTRIES : "ranked as"
+    SCORE_POLICIES ||--o{ LEADERBOARD_ENTRIES : "scored by"
+    MARKET_DATASETS ||--o{ LEADERBOARD_ENTRIES : "scoped to"
+
+    NEWS_SOURCES ||--o{ NEWS_ITEMS : provides
+    NEWS_SOURCES ||--o{ NEWS_COLLECTION_JOBS : "collected by"
+    NEWS_ITEMS ||--o{ SENTIMENT_RESULTS : "classified by"

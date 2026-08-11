@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant BN as Binance WSS
+    participant AD as BinanceAdapter
+    participant MS as MarketService
+    participant CK as stream_checkpoints
+    participant RE as Binance REST
+    participant DB as candles
+    participant HUB as WS Hub
+    participant UI as Chart Panel
+
+    Note over AD,BN: Trạng thái bình thường
+    BN->>AD: kline x=true, close_time=T1
+    AD->>MS: CandleClosed(T1)
+    MS->>DB: UPSERT ON CONFLICT DO UPDATE
+    MS->>CK: last_closed_at = T1, is_stale = false
+
+    Note over BN,AD: ❌ Mất kết nối tại T1+30s
+    BN--xAD: connection closed
+    AD->>MS: StreamDisconnected
+    MS->>CK: is_stale = true, reconnect_count += 1
+    MS->>HUB: StreamStale(symbol, timeframe, last_closed_at=T1)
+    HUB->>UI: badge "STALE · cập nhật lần cuối T1"
+    Note over UI: Nến lịch sử VẪN render từ DB.<br/>Backtest trên dataset đã có VẪN chạy.
+
+    loop Reconnect: backoff 1s → 2s → 4s → ... → cap 30s (+ jitter)
+        AD->>BN: reconnect
+    end
+    BN-->>AD: ✅ connected tại T1+120s
+
+    Note over AD,RE: BACKFILL — bù khoảng đã mất
+    AD->>CK: đọc last_closed_at = T1
+    AD->>RE: GET /api/v3/klines?symbol&interval&startTime=T1&limit=1000
+    RE-->>AD: [nến T2, T3, ..., Tn]
+    AD->>MS: CandleClosed × n (theo đúng thứ tự thời gian)
+    MS->>DB: UPSERT — PK (provider,symbol,timeframe,close_time) tự de-dup
+    Note over DB: Chồng lấp với nến đã có → DO UPDATE, KHÔNG tạo nến trùng.<br/>Vì vậy backfill an toàn để retry bao nhiêu lần cũng được.
+    MS->>CK: last_closed_at = Tn, is_stale = false
+    MS->>HUB: StreamRecovered
+    HUB->>UI: bỏ badge STALE, render nến bù

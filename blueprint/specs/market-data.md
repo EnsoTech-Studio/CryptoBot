@@ -159,7 +159,7 @@ Khi tạo experiment hoặc search run:
 | Symbol không tồn tại trên Binance                   | `422 unknown_symbol` (validate trước khi gọi, đối chiếu `market_pairs`)                                        |
 | `to > now()`                                        | Clamp về `now()`, log DEBUG; không lỗi                                                                        |
 | Số nến yêu cầu vượt 20.000                          | `422 dataset_too_large` kèm `max_candles` và `suggested_ranges`                                                |
-| Nhiều worker cùng backfill một khoảng               | UPSERT idempotent → không hại. Phase 6: shared `WeightLimiter` (Redis) để tổng weight không vượt ngưỡng        |
+| Nhiều worker cùng backfill một khoảng               | UPSERT idempotent → không hại. Khi chạy > 1 worker: shared `WeightLimiter` (Redis) để tổng weight không vượt ngưỡng — điều kiện (b) ở `design.md` §12.0        |
 | Timezone: Binance trả ms epoch UTC                  | Chuẩn hoá tất cả sang `TIMESTAMPTZ` UTC ở biên adapter. **Không** có datetime naive ở bất kỳ đâu               |
 
 ## Ràng buộc

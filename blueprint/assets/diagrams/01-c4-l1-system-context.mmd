@@ -1,0 +1,26 @@
+flowchart TB
+    Researcher["👤 Researcher<br/><i>Phân tích, chạy backtest,<br/>đọc leaderboard</i>"]
+    Operator["👤 Operator<br/><i>Theo dõi & điều khiển<br/>search loop</i>"]
+    Developer["👤 Strategy Developer<br/><i>Viết strategy plugin mới</i>"]
+
+    subgraph SystemBoundary["🔷 Crypto Strategy Lab (hệ thống đang thiết kế)"]
+        System["<b>Crypto Strategy Lab</b><br/>Nền tảng phân tích, kết hợp và<br/>đánh giá chiến lược giao dịch crypto.<br/><br/><i>SIMULATION ONLY —<br/>không đặt lệnh, không giữ API key sàn<br/>(ranh giới nhóm chọn, proposal §4.3)</i>"]
+    end
+
+    Binance["🌐 Binance<br/><i>Sàn giao dịch</i><br/>REST klines + WebSocket stream<br/><b>read-only, public endpoint</b>"]
+    NewsSrc["🌐 News Sources<br/><i>RSS feeds, News API</i><br/><b>allowlist cấu hình server-side</b>"]
+
+    Researcher -->|"HTTPS: xem chart, tạo experiment,<br/>đọc leaderboard/trades/news"| System
+    Operator -->|"HTTPS: pause/resume/cancel run,<br/>đọc metrics & progress"| System
+    Developer -.->|"Thêm file strategy plugin<br/>+ deploy (không qua UI)"| System
+
+    System -->|"HTTPS REST<br/>lấy nến lịch sử"| Binance
+    System <-->|"WSS<br/>nhận kline realtime"| Binance
+    System -->|"HTTPS<br/>thu thập tin tức"| NewsSrc
+
+    classDef person fill:#08427b,stroke:#052e56,color:#fff
+    classDef system fill:#1168bd,stroke:#0b4884,color:#fff
+    classDef external fill:#999,stroke:#6b6b6b,color:#fff
+    class Researcher,Operator,Developer person
+    class System system
+    class Binance,NewsSrc external

@@ -6,7 +6,7 @@
 
 Module sở hữu ba bảng với ba vòng đời khác nhau: `experiments` là **snapshot ghi một lần, không bao giờ UPDATE**; `backtest_jobs` là **queue có trạng thái thay đổi liên tục**; `backtest_runs` là **vết của một lần thực thi**. Việc tách ba bảng không phải là chuẩn hoá cho đẹp: snapshot phải bất biến để provenance đáng tin, queue phải mutable để lease/retry hoạt động, và run phải riêng để ghi được `worker_id`, `duration_ms`, `error_code` — những thứ thuộc về *lần chạy* chứ không thuộc về *định nghĩa thí nghiệm*. Trách nhiệm code: `ExperimentService` (Python, `ai/`) tạo snapshot và enqueue; `worker` (cùng image Python, entrypoint `python -m app.worker`) claim job và gọi `BacktestEngine.run()` (chi tiết ở `specs/backtest.md`); Go API chỉ là public boundary — auth, RBAC, ownership, quota, validate (`specs/auth.md`).
 
-Toàn bộ vòng đời là **bất đồng bộ, không có ngoại lệ** (ADR-006): `POST /api/v1/experiments` luôn ghi job và trả `202 { run_id }`, kể cả khi dataset chỉ có 200 nến và backtest mất 300 ms. Lý do không có fast path inline: hai code path nghĩa là hai chỗ có thể lệch nhau về xử lý lỗi, về việc ghi `backtest_runs`, về việc publish event — và bug ở path ít dùng sẽ không được phát hiện vì không ai chạy nó. Một path duy nhất đắt hơn khoảng **500 ms** cho backtest nhỏ nhưng đúng ở mọi trường hợp. Hệ quả tích cực: chuyển sang multi-worker không cần đổi API, vì API đã async từ đầu; nếu MVP làm inline rồi Phase 6 mới đổi async thì đó là **breaking change ở public contract**. Đánh đổi phải trả: UI buộc phải xử lý trạng thái pending (polling hoặc WebSocket) ngay từ MVP, không được hiển thị kết quả ngay sau khi bấm nút.
+Toàn bộ vòng đời là **bất đồng bộ, không có ngoại lệ** (ADR-006): `POST /api/v1/experiments` luôn ghi job và trả `202 { run_id }`, kể cả khi dataset chỉ có 200 nến và backtest mất 300 ms. Lý do không có fast path inline: hai code path nghĩa là hai chỗ có thể lệch nhau về xử lý lỗi, về việc ghi `backtest_runs`, về việc publish event — và bug ở path ít dùng sẽ không được phát hiện vì không ai chạy nó. Một path duy nhất đắt hơn khoảng **500 ms** cho backtest nhỏ nhưng đúng ở mọi trường hợp. Hệ quả tích cực: chuyển sang multi-worker không cần đổi API, vì API đã async từ đầu; nếu MVP làm inline rồi sau mới đổi async thì đó là **breaking change ở public contract**. Đánh đổi phải trả: UI buộc phải xử lý trạng thái pending (polling hoặc WebSocket) ngay từ MVP, không được hiển thị kết quả ngay sau khi bấm nút.
 
 Queue là một **bảng PostgreSQL**, không phải broker (ADR-005). Điểm quyết định không phải là "đỡ một service" mà là: job và kết quả nằm cùng database nên `INSERT experiments` + `INSERT backtest_jobs` là **một transaction**. Với broker riêng, đó là dual-write giữa DB và broker, và phải thêm Outbox pattern để không mất job. `JobDispatcher` vẫn là port (`design.md` §5.1) để lúc đổi sang broker là đổi một adapter.
 
@@ -81,19 +81,26 @@ backtest_jobs(id UUID PK,
               status job_status DEFAULT 'queued',   -- queued|leased|completed|failed
               priority SMALLINT DEFAULT 100,        -- tạo tay 100 < search candidate 200
               attempt SMALLINT DEFAULT 0, max_attempts SMALLINT DEFAULT 3,
-              leased_by VARCHAR(64), lease_expires_at TIMESTAMPTZ, last_error TEXT,
-              enqueued_at, completed_at);
+              leased_by VARCHAR(64),
+              lease_token UUID,                     -- sinh MỚI mỗi lần claim (design.md §8.3.1)
+              lease_expires_at TIMESTAMPTZ, last_error TEXT,
+              enqueued_at, completed_at,
+              CHECK (status <> 'leased' OR (leased_by IS NOT NULL
+                     AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)));
 CREATE INDEX idx_jobs_claimable ON backtest_jobs(priority, enqueued_at) WHERE status = 'queued';
 CREATE INDEX idx_jobs_expired_lease ON backtest_jobs(lease_expires_at) WHERE status = 'leased';
 
 backtest_runs(id UUID PK,
               experiment_id UUID UNIQUE NOT NULL FK experiments(id) ON DELETE CASCADE,
               status run_status DEFAULT 'queued',   -- queued|running|completed|failed|cancelled
-              worker_id VARCHAR(64), candles_read INT, signals_count INT, duration_ms INT,
+              worker_id VARCHAR(64),
+              lease_token UUID,                     -- token của lượt claim sở hữu run này
+              attempt SMALLINT DEFAULT 0,           -- lượt thực thi thứ mấy
+              candles_read INT, signals_count INT, duration_ms INT,
               error_code VARCHAR(48), error_detail TEXT, started_at, finished_at, created_at);
 ```
 
-> **`experiment_id` UNIQUE trên cả hai bảng là cơ chế chặn double-execution.** Queue có semantics at-least-once: khi lease hết hạn đúng lúc worker 1 vẫn còn sống (GC pause dài, network partition ngắn), worker 2 có thể nhận cùng job. Nhưng chỉ **một** trong hai `INSERT backtest_runs` thành công; worker thua nhận UNIQUE violation, đọc lại row đã có và bỏ qua job. Đây là điểm quan trọng: bảo đảm exactly-once **không** đến từ việc lease "chính xác" — lease là heuristic và sẽ sai — mà đến từ một constraint ở tầng DB. Nếu chỉ dựa vào lease thì bug này chỉ xuất hiện dưới tải và không reproduce được.
+> **`experiment_id` UNIQUE trên cả hai bảng giữ bất biến "một experiment có nhiều nhất một run".** Nhưng UNIQUE violation chỉ là **tín hiệu** "run đã tồn tại", không phải kết luận "bỏ job". Queue có semantics at-least-once và lease là heuristic dựa trên đồng hồ, nên sẽ có lúc hai worker cùng nhận một job. Ai được ghi kết quả do **`lease_token`** quyết định, không do ai INSERT trước. Quy tắc đầy đủ (`lease_token` mới mỗi lần claim, UPSERT có điều kiện, mọi UPDATE guard bằng token, phân biệt duplicate-active-worker với retry-sau-expiry) ở **`design.md` §8.3.1** — spec này tham chiếu về đó thay vì mô tả lại.
 
 Hai index partial giải quyết hai câu truy vấn khác nhau và không thay thế nhau được: `idx_jobs_claimable` làm "lấy job tiếp theo" không full-scan khi bảng có 100K row (`WHERE status='queued'` lọc trước, `ORDER BY priority, enqueued_at` khớp thứ tự index); `idx_jobs_expired_lease` cho sweeper tìm lease hết hạn mà không quét toàn bộ job đã hoàn thành.
 
@@ -152,7 +159,7 @@ sequenceDiagram
 
 > **Đánh đổi phải nêu:** dedup theo nội dung mâu thuẫn với một nhu cầu hợp lệ — chạy lại chính xác cùng một cấu hình để **kiểm chứng determinism** (demo S5: chạy hai lần phải ra cùng con số). Vì vậy có `force=true`: bỏ qua bước 3–5, luôn tạo experiment mới. Không có cờ này thì bài kiểm chứng quan trọng nhất của Reproducibility lại là bài duy nhất hệ thống không cho làm. Cờ này không mở lỗ hổng vì nó vẫn đi qua quota và rate limit.
 
-### C. Worker claim job — `FOR UPDATE SKIP LOCKED`
+### C. Worker claim job — `FOR UPDATE SKIP LOCKED` + `lease_token`
 
 ```sql
 WITH claimed AS (
@@ -164,10 +171,11 @@ WITH claimed AS (
 )
 UPDATE backtest_jobs j
 SET status = 'leased', leased_by = $1,
+    lease_token = gen_random_uuid(),                          -- token MỚI cho mỗi lượt claim
     lease_expires_at = now() + interval '120 seconds',
     attempt = j.attempt + 1
 FROM claimed c WHERE j.id = c.id
-RETURNING j.id, j.experiment_id, j.attempt, j.max_attempts;
+RETURNING j.id, j.experiment_id, j.lease_token, j.attempt, j.max_attempts;
 ```
 
 | Cách                              | Vấn đề                                                                                     |
@@ -176,6 +184,8 @@ RETURNING j.id, j.experiment_id, j.attempt, j.max_attempts;
 | `UPDATE ... RETURNING` không lock | Race: hai worker cùng đọc `status='queued'` rồi cùng UPDATE → **một job chạy hai lần**      |
 | Advisory lock                     | Được, nhưng phải tự quản lý key space và tự viết cơ chế phát hiện worker chết               |
 | **`FOR UPDATE SKIP LOCKED`** ✅    | Worker 2 **bỏ qua** row đang bị lock và nhận row tiếp theo ngay — đúng semantics competing consumer |
+
+`lease_token` là thứ làm việc tiếp quản an toàn: worker giữ token trong bộ nhớ và **mọi** UPDATE sau đó (heartbeat, ghi kết quả, đánh completed/failed) đều có `AND lease_token = $token`. Worker mất lease → UPDATE khớp 0 row → nó biết và dừng, không ghi đè kết quả của worker mới. Chi tiết SQL của cả bốn thao tác được guard, ba tình huống take-over, và 5 bất biến kiểm chứng được: **`design.md` §8.3.1**.
 
 Worker rỗi polling mỗi **500 ms** với backoff tới 2 s khi queue trống liên tục. Broker cho push và không có latency này; với backtest kéo dài 2–40 s thì 500 ms là dưới 2% và không đáng thêm một service (ADR-005).
 
@@ -189,30 +199,32 @@ sequenceDiagram
     participant ENG as BacktestEngine
     participant EVA as Evaluator
 
-    W->>DB: claim job, SKIP LOCKED
-    DB-->>W: job_id, experiment_id, attempt 1 of 3
-    W->>DB: INSERT backtest_runs status running, worker_id, started_at
-    Note over W,DB: UNIQUE experiment_id vi phạm → worker khác đã chạy.<br/>Worker này bỏ job, KHÔNG chạy lại engine.
+    W->>DB: claim job, SKIP LOCKED → nhận lease_token T
+    DB-->>W: job_id, experiment_id, lease_token T, attempt 1 of 3
+    W->>DB: UPSERT backtest_runs (status=running, worker_id, lease_token=T)<br/>WHERE status IN (queued, running, failed)
+    Note over W,DB: 0 row trả về = run đã completed →<br/>đọc kết quả cũ, đánh job completed, KHÔNG chạy engine.
     W->>DB: SELECT snapshot và nến của market_dataset_id
-    W->>DB: BacktestStarted qua domain_events
+    W->>DB: INSERT domain_events BacktestStarted (outbox, pending)
     par Vòng lặp backtest
         W->>ENG: run snapshot, candles
         ENG-->>W: trades, signals, equity points
     and Heartbeat mỗi 30 giây
-        W->>DB: UPDATE lease_expires_at = now + 120s WHERE leased_by = self
+        W->>DB: UPDATE lease_expires_at = now + 120s<br/>WHERE id = job AND lease_token = T
+        Note over W,DB: 0 row = ĐÃ MẤT LEASE →<br/>worker abort ngay, không ghi gì.
     end
     W->>DB: BEGIN
     W->>DB: INSERT trades, run_signals, equity_points theo batch
-    W->>DB: UPDATE backtest_runs status completed, duration_ms, candles_read, signals_count
-    W->>DB: UPDATE backtest_jobs status completed, completed_at
+    W->>DB: UPDATE backtest_runs status=completed<br/>WHERE experiment_id = E AND lease_token = T
+    W->>DB: UPDATE backtest_jobs status=completed, lease_token=NULL<br/>WHERE experiment_id = E AND lease_token = T
+    W->>DB: INSERT domain_events BacktestCompleted (outbox, pending)
     W->>DB: COMMIT
-    W->>EVA: BacktestCompleted backtest_run_id, trade_count, duration_ms
-    Note over W,EVA: Worker KHÔNG tính metric.<br/>Evaluator là consumer riêng, xem specs/evaluation.md
+    Note over W,EVA: Worker KHÔNG gọi Evaluator trực tiếp và KHÔNG<br/>dùng in-process dispatcher (worker là process riêng).<br/>Event đi qua transactional outbox — design.md §5.7.
+    EVA->>DB: OutboxDispatcher giao BacktestCompleted → Evaluator handler
 ```
 
-Heartbeat gia hạn `lease_expires_at` mỗi **30 s** trong lúc chạy job dài, với lease dài **120 s**. Tỉ lệ 4:1 cho phép mất ba nhịp heartbeat liên tiếp (GC pause, DB chậm tức thời) mà job vẫn không bị thu hồi oan. `UPDATE ... WHERE leased_by = self` là điều kiện bắt buộc: nếu job đã bị worker khác claim thì heartbeat này phải **thất bại**, để worker cũ biết mình đã mất job và dừng lại thay vì tiếp tục tính rồi ghi kết quả trùng.
+Heartbeat gia hạn `lease_expires_at` mỗi **30 s** trong lúc chạy job dài, với lease dài **120 s**. Tỉ lệ 4:1 cho phép mất ba nhịp heartbeat liên tiếp (GC pause, DB chậm tức thời) mà job vẫn không bị thu hồi oan. `WHERE lease_token = T` là điều kiện bắt buộc: nếu job đã bị worker khác claim thì `lease_token` đã đổi, heartbeat khớp **0 row**, và worker cũ phải dừng ngay thay vì tiếp tục tính rồi ghi kết quả ghi đè worker mới (`design.md` §8.3.1).
 
-Kết quả và trạng thái được ghi trong **một** transaction. Nếu tách, sẽ có cửa sổ mà `backtest_runs.status='completed'` nhưng `trades` chưa có row — và API `GET /experiments/{id}/trades` trả mảng rỗng cho một run đã xong.
+Kết quả, trạng thái và outbox event được ghi trong **một** transaction. Nếu tách, sẽ có cửa sổ mà `backtest_runs.status='completed'` nhưng `trades` chưa có row — và API `GET /experiments/{id}/trades` trả mảng rỗng cho một run đã xong. Nếu event nằm ngoài transaction thì có trạng thái "kết quả đã ghi nhưng `BacktestCompleted` mất" → Evaluator không bao giờ chạy → candidate treo mãi.
 
 ### E. Worker chết, lease hết hạn, cạn `max_attempts`
 
@@ -224,18 +236,20 @@ sequenceDiagram
     participant W2 as Worker 2
     participant SRS as SearchRunService
 
-    W1->>DB: claim job J, attempt 1, lease tới T+120s
-    W1->>DB: heartbeat tại T+30s và T+60s
+    W1->>DB: claim job J, attempt 1, lease_token T1, lease tới T+120s
+    W1->>DB: heartbeat tại T+30s và T+60s (WHERE lease_token = T1)
     Note over W1: ✕ container bị OOM-kill tại T+75s
     Note over DB: heartbeat dừng, lease vẫn tới T+180s
     W2->>DB: claim, điều kiện leased AND lease_expires_at nhỏ hơn now
     Note over W2,DB: Trước T+180s: KHÔNG nhận được J.<br/>Đây là cái giá của lease: trễ tối đa 120 s.
-    W2->>DB: tại T+185s claim J thành công, attempt 2
-    W2->>DB: INSERT backtest_runs
-    Note over W2,DB: Row đã tồn tại từ W1 với status running →<br/>UPDATE về running, worker_id = w2, KHÔNG tạo row thứ hai
+    W2->>DB: tại T+185s claim J thành công, attempt 2, lease_token T2 (MỚI)
+    W2->>DB: UPSERT backtest_runs, WHERE status IN (queued, running, failed)
+    Note over W2,DB: Row mồ côi của W1 đang ở running →<br/>UPSERT tiếp quản: worker_id=w2, lease_token=T2, attempt=2.<br/>KHÔNG tạo row thứ hai, KHÔNG bỏ job.
     W2->>W2: chạy lại từ đầu, backtest là hàm thuần nên an toàn
-    W2->>DB: UPDATE status completed
+    W2->>DB: UPDATE status completed WHERE lease_token = T2
 ```
+
+Nếu W1 thực ra **chưa chết** (chỉ GC pause dài) và hoàn thành backtest tại T+200s, nó sẽ `UPDATE ... WHERE lease_token = T1` — nhưng token hiện tại là T2, nên UPDATE khớp **0 row**. W1 log WARN, không ghi gì, thoát. Kết quả của W2 không bị ghi đè. Đây là ca (a) *duplicate active worker* ở `design.md` §8.3.1, và nó được xử lý bằng cùng một cơ chế với ca worker chết thật — không cần phân biệt hai ca.
 
 Sau `max_attempts = 3`, job chuyển `status='failed'` với `last_error` ghi rõ, `backtest_runs.status='failed'` với `error_code`, và **candidate tương ứng được đánh `failed`** thay vì treo `queued` mãi — nếu bỏ bước cuối, `SearchRunService` sẽ đếm mãi không đủ `candidates_tested` và search run không bao giờ đạt stop condition (`specs/search-loop.md`).
 
@@ -279,7 +293,7 @@ Không có cạnh `failed → queued`: retry là việc của **job** (`attempt 
 
 Decimate equity xuống 2000 điểm không phải để "nhẹ mạng" mà vì một run 20.000 nến có 20.000 điểm equity, trong khi chart rộng nhất chỉ có khoảng 2000 pixel ngang — phần còn lại là byte không ai thấy được. Downsample giữ điểm min/max trong mỗi bucket để **không làm mất hình dạng drawdown**; lấy mẫu đều đơn giản có thể bỏ đúng điểm đáy và làm biểu đồ đẹp hơn thực tế.
 
-Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestStarted` / `BacktestCompleted` / `BacktestFailed` (publisher Worker). Consumer chi tiết ở `design.md` §5.6. Worker **không** gọi `Evaluator.evaluate()` trực tiếp — nó publish `BacktestCompleted` (đề bài §34).
+Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestStarted` / `BacktestCompleted` / `BacktestFailed` (publisher Worker). Consumer chi tiết ở `design.md` §5.6. Worker **không** gọi `Evaluator.evaluate()` trực tiếp (đề bài §34) **và cũng không** dùng in-process dispatcher: worker là process riêng nên event pipeline đi qua **transactional outbox** trên `domain_events`, ghi cùng transaction với kết quả (`design.md` §5.7).
 
 ## Kịch bản lỗi
 
@@ -291,8 +305,9 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 | `from=2017-01-01`, `timeframe=1m` | Chính là ca trên: 4,7 triệu nến, đủ OOM Python process. Chặn ở Go **và** ở Python (ADR-014) |
 | Process chết sau `INSERT experiments`, trước `INSERT backtest_jobs` | Không xảy ra: cùng transaction, chưa COMMIT thì cả hai bị rollback |
 | Hai request `POST /experiments` giống nhau đồng thời | Cả hai qua dedup check (chưa có row `completed`) → hai experiment. Chấp nhận: dedup là tối ưu CPU, không phải khoá tính đúng đắn. Muốn chặt hơn thì client gửi `force=false` và retry sau khi run đầu xong |
-| Lease hết hạn khi worker 1 vẫn sống | Worker 2 claim, `INSERT backtest_runs` gặp `UNIQUE experiment_id` → nhận biết và bỏ job. Heartbeat của worker 1 thất bại vì `leased_by` đã đổi → worker 1 dừng, không ghi kết quả |
-| Worker bị OOM-kill giữa job | Heartbeat dừng → lease hết hạn sau ≤ 120 s → job về `queued`, `attempt += 1`. Trễ tối đa 120 s là cái giá đã biết của lease-based recovery |
+| Lease hết hạn khi worker 1 vẫn sống (duplicate active worker) | Worker 2 claim với `lease_token` **mới**; UPSERT `backtest_runs` tiếp quản run. Worker 1 hoàn thành sau đó nhưng mọi UPDATE của nó có `WHERE lease_token = T1` → khớp **0 row** → log WARN và thoát, không ghi đè kết quả của worker 2. Heartbeat của worker 1 cũng khớp 0 row nên nó biết mất lease từ trước (`design.md` §8.3.1) |
+| Worker bị OOM-kill giữa job | Heartbeat dừng → lease hết hạn sau ≤ 120 s → worker khác claim với `lease_token` mới, `attempt += 1`; UPSERT tiếp quản row `running` mồ côi (**không** bỏ job — nếu bỏ thì run treo `running` vĩnh viễn). Trễ tối đa 120 s là cái giá đã biết của lease-based recovery |
+| Job bị claim lại sau khi run đã `completed` | UPSERT có `WHERE status IN ('queued','running','failed')` → không match → `RETURNING` rỗng → worker đọc kết quả có sẵn, đánh job `completed`, **không** chạy lại engine |
 | Job fail 3 lần liên tiếp | `backtest_jobs.status='failed'` + `last_error`; `backtest_runs.status='failed'` + `error_code`; candidate đánh `failed`; `SearchRunService` tăng `candidates_failed` và có thể chạm `max_failure_rate` |
 | Strategy plugin có vòng lặp vô hạn | Deadline trên `analyze()` → `error_code='strategy_timeout'`, job **không** retry (không retryable), search run tiếp tục. Một plugin xấu không được phép giết cả run |
 | Plugin ném `ZeroDivisionError` / `IndexError` | Catch ở biên gọi, log kèm `strategy_id@version`, `error_code='strategy_error'`, worker **không** crash |
@@ -354,7 +369,10 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 - [ ] AC-02: Test static `grep -rn "UPDATE experiments" ai/app/` → **0** khớp; `grep -rn "run_backtest" server/` → 0 khớp (Go không chạy domain).
 - [ ] AC-03: Kill process Python giữa lúc `INSERT experiments` và `INSERT backtest_jobs` (inject exception) → `SELECT count(*) FROM experiments` không tăng, `backtest_jobs` không tăng.
 - [ ] AC-04: Chạy 4 worker, enqueue 40 job → `SELECT experiment_id, count(*) FROM backtest_runs GROUP BY 1 HAVING count(*) > 1` trả **0 row**; tổng `trades` bằng đúng tổng của 40 run chạy tuần tự.
-- [ ] AC-05: `SIGKILL` một worker giữa job → trong **≤ 120 s** job đó có `status='queued'`, `attempt=2`; sau đó hoàn thành với `worker_id` khác. Không job nào còn `leased` sau khi queue rỗng.
+- [ ] AC-05: `SIGKILL` một worker giữa job → trong **≤ 120 s** job đó được worker khác claim với `attempt=2` và `lease_token` khác; sau đó hoàn thành với `worker_id` khác. Không job nào còn `leased` sau khi queue rỗng, và **không** run nào còn `running`.
+- [ ] AC-05b: **Duplicate active worker.** Force expire lease của worker 1 giữa job (`UPDATE backtest_jobs SET lease_expires_at = now() - interval '1s'`) trong lúc nó vẫn đang chạy → worker 2 claim và hoàn thành. Khi worker 1 chạy xong: mọi UPDATE của nó khớp **0 row**, log có `WARN lease_lost`, và `backtest_runs.lease_token` bằng token của worker 2. `duration_ms` là của worker 2, không bị worker 1 ghi đè.
+- [ ] AC-05c: **Take-over run mồ côi.** `SIGKILL` worker giữa job để lại `backtest_runs.status='running'` → worker sau claim và **UPSERT tiếp quản** (không bỏ job): `worker_id` đổi, `attempt=2`, run kết thúc `completed`. Không có run nào treo `running` sau khi queue rỗng (bất biến I3).
+- [ ] AC-05d: **Job claim lại sau khi run đã `completed`.** Đưa job về `queued` bằng tay sau khi run `completed` → worker claim, UPSERT khớp 0 row, job được đánh `completed` mà `BacktestEngine.run()` **không** được gọi (đếm bằng counter/spy), `duration_ms` và `trades` không đổi.
 - [ ] AC-06: Inject lỗi khiến một job fail 3 lần → `backtest_jobs.status='failed'`, `last_error` khác NULL, `search_candidates.status='failed'`, và search run vẫn đạt được stop condition.
 - [ ] AC-07: Enqueue 10 job `priority=200` rồi 1 job `priority=100` → job `priority=100` được claim **trước** cả 10 job kia.
 - [ ] AC-08: `POST /experiments` hai lần với payload giống hệt, chờ lần đầu `completed` → lần hai trả `200` với **cùng** `run_id` và `reused: true`; `count(*) FROM experiments` chỉ tăng 1.
@@ -364,4 +382,5 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 - [ ] AC-12: `GET /experiments/{id}` ngay sau khi tạo → `200` với `status="queued"`, `result=null`; sau khi worker xong → `200` với `status="completed"` và đầy đủ provenance (strategy version, dataset `content_hash`, `fee_bps`, `fill_policy`, `evaluator_version`).
 - [ ] AC-13: `GET /experiments/{id}/equity` của run 20.000 nến → **≤ 2000** điểm, và giá trị `max_drawdown` tính từ chuỗi đã decimate lệch **< 0,1** điểm phần trăm so với chuỗi gốc.
 - [ ] AC-14: Publish `BacktestCompleted` hai lần cho cùng run → `count(*) FROM evaluations WHERE backtest_run_id=$1` bằng **1**; `leaderboard_entries` không có row trùng.
+- [ ] AC-14b: **Outbox không mất event.** `SIGKILL` process Python ngay sau khi worker COMMIT kết quả (trước khi dispatcher chạy) → sau restart, `domain_events` vẫn có row `BacktestCompleted` với `dispatch_status='pending'`, dispatcher giao nó, và `evaluations` có đúng 1 row. Không có kết quả nào tồn tại mà thiếu evaluation (`design.md` §5.7).
 - [ ] AC-15: Chạy search run 40 candidate với 1 worker rồi với 4 worker trên cùng dataset → thời gian giảm **≥ 3×**, `git diff` giữa hai lần chạy **rỗng**.

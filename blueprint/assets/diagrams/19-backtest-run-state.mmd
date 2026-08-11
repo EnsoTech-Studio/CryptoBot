@@ -1,0 +1,17 @@
+stateDiagram-v2
+    [*] --> queued : INSERT cùng transaction với job
+    queued --> running : worker claim và ghi started_at
+    running --> completed : trades và equity đã COMMIT
+    running --> failed : lỗi engine hoặc cạn max_attempts
+    queued --> cancelled : search run bị cancel trước khi chạy
+    running --> cancelled : OPERATOR hoặc owner cancel search run
+    completed --> [*]
+    failed --> [*]
+    cancelled --> [*]
+
+    note right of completed
+        3 state terminal.
+        Không có đường quay lại queued
+        từ bất kỳ state terminal nào.
+        Mọi lệnh tới đây bị reject 409.
+    end note

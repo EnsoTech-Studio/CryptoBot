@@ -304,7 +304,7 @@ Im lặng hiển thị nến cũ như thể mới là kịch bản tệ nhất: 
 
 **Hiệu năng**
 
-- `GET /chart-overlays` 1000 nến, 1 strategy đơn: p95 **< 400 ms** (cache miss). Cache hit (Phase 6, khoá `symbol|tf|strategy@ver|config_hash|range`): p95 **< 80 ms**.
+- `GET /chart-overlays` 1000 nến, 1 strategy đơn: p95 **< 400 ms** (cache miss). Cache hit (nếu thêm Redis — §12.0; khoá `symbol|tf|strategy@ver|config_hash|range`): p95 **< 80 ms**.
 - `CandleClosed` → frame `overlay_delta` rời WS Hub: p95 **< 300 ms**. Tổng tick Binance → pixel: p95 **< 1.5 s**, trong đó tick → hub < 500 ms.
 - Frame `overlay_delta` ≤ **4 KB**; frame `candle` provisional ≤ **256 B**.
 - 4 panel × 30 phút chạy liên tục: bộ nhớ tab tăng ≤ **50 MB** (client giữ tối đa 1000 nến + overlay/panel, cắt bớt theo cửa sổ trượt).

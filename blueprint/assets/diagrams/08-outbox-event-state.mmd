@@ -1,0 +1,16 @@
+stateDiagram-v2
+    [*] --> pending : INSERT cùng transaction với domain state
+    pending --> claimed : dispatcher claim (attempt += 1)
+    claimed --> delivered : mọi handler đã ghi event_consumptions
+    claimed --> pending : handler fail, còn attempt → backoff qua next_attempt_at
+    claimed --> pending : claim_expires_at < now() (dispatcher chết)
+    claimed --> dead : cạn max_attempts
+    dead --> pending : can thiệp thủ công sau khi sửa nguyên nhân
+    delivered --> [*]
+
+    note right of dead
+        dead KHÔNG bị xoá.
+        Payload + last_error giữ lại.
+        Metric outbox_dead_events > 0
+        là một alert (§8.4).
+    end note
