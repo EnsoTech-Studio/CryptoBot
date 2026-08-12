@@ -564,7 +564,7 @@ flowchart LR
 
 - `NewsCollector` chỉ collect và chuẩn hoá. Nó **không** import model ML, **không** biết BERT tồn tại.
 - `SentimentAnalyzer` chỉ classify. Nó nhận `NewsItem` đã lưu, ghi `sentiment_results` với `model_version`.
-- `NewsSentimentStrategy` đọc **aggregate theo cửa sổ thời gian** từ DB qua repository port — như mọi strategy khác, qua `AnalysisContext`, không query SQL trực tiếp.
+- `NewsSentimentStrategy` đọc **aggregate theo cửa sổ thời gian** từ DB qua repository port — như mọi strategy khác, qua `AnalysisContext`, không query SQL trực tiếp. Nó khai báo `family="information"` (nhóm thứ 5 của đề bài §17), nên `DomainGuidedGenerator` đưa được nó vào search space mà không cần rule riêng.
 - Bảo mật: `ApprovedNewsSource` là **cấu hình server**, không nhận URL từ browser. Chống SSRF chi tiết ở `specs/news.md`.
 - Cam kết: **sentiment down → chart và backtest technical vẫn 100%**.
 
@@ -904,11 +904,20 @@ CREATE TABLE experiments (
     fill_policy          fill_policy_enum     NOT NULL DEFAULT 'next_candle_open',
     position_policy      position_policy_enum NOT NULL DEFAULT 'long_only',
     open_position_at_end VARCHAR(24) NOT NULL DEFAULT 'close_at_last_candle',
+    -- Risk policy: SL/TP là MVP vì chart phải vẽ được chúng (specs/backtest.md §C1).
+    -- NULL = không có SL/TP → vị thế chỉ đóng bằng signal hoặc end_of_sample.
+    stop_loss_pct        NUMERIC(6,3),
+    take_profit_pct      NUMERIC(6,3),
+    intrabar_priority    VARCHAR(20) NOT NULL DEFAULT 'stop_loss_first'
+                         CHECK (intrabar_priority IN ('stop_loss_first','take_profit_first')),
     evaluator_version    VARCHAR(24) NOT NULL,
     search_candidate_id  UUID REFERENCES search_candidates(id),  -- NULL nếu tạo tay
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (fee_bps >= 0 AND slippage_bps >= 0),
-    CHECK (initial_capital > 0)
+    CHECK (initial_capital > 0),
+    -- 0% nghĩa là đóng ngay lúc vào lệnh; ≥ 100% là mức giá ≤ 0
+    CHECK (stop_loss_pct   IS NULL OR (stop_loss_pct   > 0 AND stop_loss_pct < 100)),
+    CHECK (take_profit_pct IS NULL OR take_profit_pct > 0)
 );
 CREATE INDEX idx_experiments_owner ON experiments(owner_id, created_at DESC);
 CREATE INDEX idx_experiments_hash  ON experiments(candidate_hash, market_dataset_id);
@@ -980,8 +989,18 @@ CREATE TABLE trades (
     pnl_absolute     NUMERIC(24,8),
     pnl_percent      NUMERIC(12,6),
     exit_reason      VARCHAR(32),   -- 'signal'|'stop_loss'|'take_profit'|'end_of_sample'
+    -- Mức SL/TP chốt tại entry, KHÔNG tính lại mỗi nến (điều chỉnh động là trailing stop).
+    -- Đây là nguồn dữ liệu cho overlay_type 'stop_loss'/'take_profit' — vẽ thành ĐƯỜNG NGANG
+    -- từ entry_time tới exit_time, không phải một điểm (specs/visualization.md).
+    sl_price         NUMERIC(24,8),
+    tp_price         NUMERIC(24,8),
     UNIQUE (backtest_run_id, sequence_no),
-    CHECK (exit_time IS NULL OR exit_time >= entry_time)
+    CHECK (exit_time IS NULL OR exit_time >= entry_time),
+    CHECK (exit_reason IS NULL
+           OR exit_reason IN ('signal','stop_loss','take_profit','end_of_sample')),
+    -- exit_reason='stop_loss' bắt buộc phải có mức đã chốt → chặn việc gán reason không có dữ liệu
+    CHECK (exit_reason <> 'stop_loss'   OR sl_price IS NOT NULL),
+    CHECK (exit_reason <> 'take_profit' OR tp_price IS NOT NULL)
 );
 CREATE INDEX idx_trades_run ON trades(backtest_run_id, sequence_no);
 
@@ -1333,18 +1352,132 @@ class AnalysisContext:
     timeframe: Timeframe
     candles: Sequence[Candle]         # nến tới thời điểm t — KHÔNG có nến tương lai
     index: int                        # vị trí nến hiện tại; candles[index] là "bây giờ"
-    indicators: Mapping[str, Sequence[float | None]]  # đã tính sẵn, aligned với candles
+    indicators: IndicatorView         # causal view — chặn truy cập > index (xem dưới)
     news_sentiment: NewsSentimentWindow | None        # aggregate đã tính, None nếu không có
     params: Mapping[str, Any]         # đã validate theo parameters_schema
 ```
 
-Ba điều `AnalysisContext` **cố ý không có**:
+Bốn điều `AnalysisContext` **cố ý không có**:
 
 1. **Không có DB session / repository.** Strategy không query được gì. Dữ liệu nó cần phải được `MarketService` hoặc `NewsService` chuẩn bị trước và đưa vào.
 2. **Không có HTTP client.** Strategy không gọi được Binance, không gọi được API nào.
-3. **Không có nến sau `index`.** Slice `candles[:index+1]` được đảm bảo ở tầng gọi. Đây là lớp phòng thủ thứ nhất chống look-ahead bias (R3); lớp thứ hai là fill policy (§6.3).
+3. **Không có nến sau `index`.** Slice `candles[:index+1]` được đảm bảo ở tầng gọi.
+4. **Không có giá trị indicator sau `index`.** Đây là lỗ hổng dễ bỏ sót nhất và được xử lý riêng ở §5.2.1.
 
 Hệ quả kiểm chứng được: **file `strategies/rsi.py` import được và test được trong môi trường không có PostgreSQL, không có network.** Nếu một lúc nào đó nó không còn như vậy, tức là contract đã bị vi phạm — và điều đó phát hiện được bằng một unit test chạy trong CI.
+
+#### 5.2.1 `IndicatorView` — cắt nến là chưa đủ
+
+Cắt `candles[:index+1]` chặn được việc strategy đọc **nến** tương lai. Nhưng nếu `indicators` là `Mapping[str, Sequence[float]]` chứa **toàn bộ** mảng đã precompute cho cả dataset, thì lỗ hổng vẫn còn nguyên:
+
+```python
+def analyze(self, ctx: AnalysisContext) -> Signal:
+    # candles bị cắt — dòng này IndexError, đúng như thiết kế
+    # future_close = ctx.candles[ctx.index + 1].close
+
+    # nhưng indicators thì không — dòng này TRẢ VỀ GIÁ TRỊ THẬT
+    future_rsi = ctx.indicators["rsi_14"][ctx.index + 1]        # ✕ look-ahead
+    tomorrow   = ctx.indicators["sma_20"][ctx.index + 5]        # ✕ look-ahead
+    the_end    = ctx.indicators["sma_20"][-1]                   # ✕ nến cuối dataset
+    return Signal("BUY" if future_rsi < 30 else "HOLD")         # kết quả hoàn hảo giả tạo
+```
+
+`rsi_14[t+1]` được tính từ `close[t+1]`, nên đọc nó tương đương đọc giá tương lai. Lỗ hổng này **tệ hơn** việc đọc nến trực tiếp vì nó không gây lỗi, không để lại dấu vết, và kết quả trả về "hợp lý" — chỉ là Return cao bất thường mà không ai giải thích được từ đâu.
+
+**Quyết định: `indicators` là một causal view, không phải mảng thô.**
+
+```python
+class LookAheadError(RuntimeError):
+    """Strategy cố đọc dữ liệu ở thời điểm > index. Đây là bug của plugin."""
+
+
+class CausalSeries:
+    """View read-only của một chuỗi indicator, chặn cứng tại `index`.
+
+    Không copy dữ liệu: giữ tham chiếu tới mảng gốc và chỉ chặn ở __getitem__.
+    Đây là lý do không dùng cách đơn giản hơn (slice từng indicator mỗi nến):
+    slice tạo bản copy O(n), làm vòng lặp thành O(n²) — với 20.000 nến ×
+    4 indicator là ~800M phép copy phần tử.
+    """
+
+    __slots__ = ("_data", "_index", "_name")
+
+    def __init__(self, data: Sequence[float | None], index: int, name: str):
+        self._data, self._index, self._name = data, index, name
+
+    def __len__(self) -> int:
+        return self._index + 1                      # strategy "thấy" đúng t+1 phần tử
+
+    def __getitem__(self, i: int | slice):
+        if isinstance(i, slice):
+            start, stop, step = i.indices(self._index + 1)   # clamp về [0, index]
+            return self._data[start:stop:step]
+        if i < 0:
+            i += self._index + 1                    # [-1] = phần tử tại index, KHÔNG phải cuối dataset
+        if not 0 <= i <= self._index:
+            raise LookAheadError(
+                f"{self._name}[{i}] vượt index hiện tại {self._index}. "
+                f"Strategy chỉ được đọc dữ liệu tới thời điểm hiện tại."
+            )
+        return self._data[i]
+
+    def __iter__(self):
+        return iter(self._data[: self._index + 1])
+
+
+class IndicatorView(Mapping[str, CausalSeries]):
+    """Bọc dict indicator đã precompute, trả CausalSeries cho mọi key."""
+
+    __slots__ = ("_raw", "_index")
+
+    def __init__(self, raw: Mapping[str, Sequence[float | None]], index: int):
+        self._raw, self._index = raw, index
+
+    def __getitem__(self, name: str) -> CausalSeries:
+        try:
+            return CausalSeries(self._raw[name], self._index, name)
+        except KeyError:
+            # Lỗi tường minh: chỉ ra ngay là plugin thiếu khai báo input_requirements
+            raise UnknownIndicatorError(
+                f"'{name}' chưa được precompute. Thêm nó vào input_requirements "
+                f"của strategy. Đang có: {sorted(self._raw)}"
+            ) from None
+
+    def __iter__(self): return iter(self._raw)
+    def __len__(self):  return len(self._raw)
+```
+
+Bốn chi tiết trong đoạn code trên đáng giải thích, vì mỗi cái đóng một đường lách:
+
+| Chi tiết | Đường lách nó chặn |
+| -------- | ------------------ |
+| `__len__` trả `index + 1` | `series[len(series) - 1]` là cách rất tự nhiên để viết "phần tử cuối". Nếu `len` trả độ dài thật của dataset thì dòng đó đọc nến cuối cùng của toàn bộ backtest |
+| `i < 0` quy về `index + 1 + i` | `series[-1]` phải là **giá trị hiện tại**, không phải cuối dataset. Đây là cách lách phổ biến nhất và trông vô hại nhất |
+| `slice` dùng `i.indices(index + 1)` | `series[:]` và `series[t:t+10]` bị clamp về `[0, index]` thay vì trả dữ liệu tương lai. Strategy tính stddev trên `series[-20:]` vẫn chạy đúng |
+| `__iter__` chỉ tới `index + 1` | `max(series)` / `sum(series)` / `list(series)` không quét được vùng tương lai |
+
+`AnalysisContext.__post_init__` bọc mảng thô một lần:
+
+```python
+def __post_init__(self):
+    if not isinstance(self.indicators, IndicatorView):
+        object.__setattr__(self, "indicators", IndicatorView(self.indicators, self.index))
+```
+
+**Đánh đổi.** Mỗi lần đọc indicator giờ đi qua một lời gọi Python thay vì index trực tiếp: ~100 ns thay vì ~30 ns. Với 20.000 nến × 3 strategy × 4 lần đọc/nến ≈ 240.000 lời gọi ≈ **24 ms cho cả run** — nằm trong ngân sách `< 100 µs/nến`. Nếu về sau đo được đây là bottleneck thật, có một lối thoát không phá contract: `IndicatorView` kiểm tra `sys.flags.optimized` và trả mảng thô ở chế độ `-O` cho **run tin cậy** (candidate của search run nội bộ), vẫn giữ view cho plugin mới. Nhưng đó là tối ưu hoá cần số đo, không phải mặc định.
+
+> **Vì sao không chọn cách đơn giản hơn — slice từng indicator mỗi nến.** `{k: v[:t+1] for k, v in indicators.items()}` đúng về ngữ nghĩa và không cần class mới. Nhưng nó tạo bản copy ở **mỗi** nến: 20.000 nến × 4 indicator × trung bình 10.000 phần tử ≈ 800 triệu phép copy. Vòng lặp trở thành O(n²) và một backtest 20.000 nến sẽ mất hàng chục giây chỉ để copy mảng. Đây là ví dụ của việc lựa chọn "ít code nhất" và "đúng nhất" không trùng nhau — và khi chúng không trùng, ràng buộc hiệu năng có số đo cụ thể sẽ quyết định.
+
+Lớp phòng thủ chống look-ahead vì thế có **ba** tầng, không phải hai:
+
+| Tầng | Cơ chế | Chặn gì |
+| ---- | ------ | ------- |
+| 1 | `candles[:index+1]` | Đọc nến tương lai → `IndexError` |
+| 2 | `IndicatorView` / `CausalSeries` | Đọc indicator tương lai → `LookAheadError` |
+| 3 | `fill_policy = next_candle_open` (§6.3, ADR-007) | Giao dịch tại giá chưa biết lúc quyết định |
+
+Cả ba đều có acceptance test riêng: `specs/backtest.md` AC-04, AC-05, AC-05b, AC-05c.
+
 
 `NewsSentimentWindow` là aggregate đã tính, không phải danh sách news thô:
 
@@ -1387,7 +1520,7 @@ class CandidateStrategy:
     generation_meta: Mapping[str, Any]  # với domain-guided: rule nào đã áp dụng
 ```
 
-`generation_meta` trả lời yêu cầu §17 của đề bài: *"Domain knowledge được đưa vào quá trình search như thế nào?"* — với `DomainGuidedGenerator`, meta ghi rõ `{"rule": "one_of_each_family", "families": ["trend","momentum","structure"]}`. Không có field này thì "domain-guided" chỉ là một cái tên.
+`generation_meta` trả lời yêu cầu §17 của đề bài: *"Domain knowledge được đưa vào quá trình search như thế nào?"* — với `DomainGuidedGenerator`, meta ghi rõ `{"rule": "required_families_plus_optional", "families_required": ["trend","momentum","structure"], "families_optional": ["volatility","information"], "chosen": {...}}`. Không có field này thì "domain-guided" chỉ là một cái tên. Vì sao `information` (news sentiment) và `volatility` là **tuỳ chọn** chứ không bắt buộc: xem `specs/search-loop.md` §E.
 
 ### 5.4 Composite snapshot — policy là dữ liệu, không phải code
 
@@ -1493,6 +1626,8 @@ Quy tắc **không thương lượng** ở boundary:
 | `SearchRunFinished`     | SearchRunService     | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | search_run_id, stop_reason, totals |
 | `NewsCollected`         | NewsCollector        | SentimentAnalyzer                 | **In-proc** (`lab`)                     | news_item_id, source_key, title_hash |
 | `SentimentAnalyzed`     | SentimentAnalyzer    | (chỉ persist)                     | **In-proc** (`lab`)                     | news_item_id, label, score, model_version |
+
+> **Chuỗi `BacktestCompleted → Evaluator → StrategyEvaluated → Ranking` là tuần tự, không fan-out.** `Ranking` **không** nằm trong cột Consumer của `BacktestCompleted`, và đó là chủ ý: nó cần `evaluation.score` để so với Top-K, mà score chỉ tồn tại sau khi `Evaluator` chạy xong. Cho cả hai subscribe cùng một event sẽ buộc `Ranking` tự polling xem `evaluations` đã có chưa — tức là tái tạo việc chờ event bằng polling, trong một handler. Số handler mong đợi của từng `event_type` ở §5.7.5.
 
 Mọi event có envelope chung:
 
@@ -1636,7 +1771,9 @@ Chỉ khi **mọi** handler của `event_type` đã có row trong `event_consump
 UPDATE domain_events
 SET dispatch_status = 'delivered', delivered_at = now(), claimed_by = NULL, claim_expires_at = NULL
 WHERE event_id = $1
-  AND (SELECT count(*) FROM event_consumptions WHERE event_id = $1) = $2;  -- $2 = số handler mong đợi
+  AND (SELECT count(*) FROM event_consumptions WHERE event_id = $1) = $2;
+-- $2 = len(HANDLERS[event.event_type]) — tính từ registry lúc startup, KHÔNG viết tay.
+-- Bảng expected_handlers theo event_type ở §5.7.5; hiện mọi event có đúng 1 handler.
 ```
 
 Nếu một handler fail: event về `pending` với backoff, `last_error` ghi rõ. Các handler **đã** thành công không chạy lại (đã có `event_consumptions`), chỉ handler còn thiếu được thử lại.
@@ -1661,6 +1798,17 @@ async def on_handler_failure(conn, event, err):
 
 #### 5.7.5 Bốn kịch bản, đọc theo sequence diagram
 
+Trước khi đọc diagram, cần rõ **chuỗi event là tuần tự, không fan-out**:
+
+```text
+Worker  ──BacktestCompleted──►  Evaluator  ──StrategyEvaluated──►  Ranking
+        (1 handler)                        (1 handler)
+```
+
+`BacktestCompleted` có **đúng một** handler đăng ký: `Evaluator`. `Ranking` **không** subscribe event này — nó chờ `StrategyEvaluated`, mà `Evaluator` publish trong cùng transaction với việc ghi `evaluations`. Đây là điều bảng event vocabulary ở §5.6 đã ghi, và diagram dưới đây phải khớp với nó.
+
+> **Vì sao không cho `BacktestCompleted` fan-out tới cả hai.** Nếu `Ranking` nhận trực tiếp `BacktestCompleted`, nó cần `evaluation.score` để so với Top-K — nhưng `Evaluator` có thể **chưa** chạy xong. Hai handler của cùng một event không có thứ tự đảm bảo, nên `Ranking` sẽ phải tự query xem `evaluations` đã có chưa và tự retry nếu chưa: đó là tái tạo lại việc chờ event, bằng polling, trong một handler. Chuỗi tuần tự khiến `Ranking` chạy khi và chỉ khi dữ liệu nó cần đã tồn tại — và `event_consumptions` của mỗi event vẫn có đúng 1 row nên `count = expected_handlers` đơn giản hơn hẳn.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -1671,24 +1819,25 @@ sequenceDiagram
     participant RNK as Ranking handler
 
     rect rgba(200,240,200,0.25)
-    Note over W,RNK: ① Đường thành công
-    W->>DB: BEGIN · trades · runs.status=completed · INSERT event(pending) · COMMIT
+    Note over W,RNK: ① Đường thành công — chuỗi 2 chặng, KHÔNG fan-out
+    W->>DB: BEGIN · trades · runs.status=completed · INSERT BacktestCompleted(pending) · COMMIT
     DP->>DB: claim batch → status=claimed, attempt=1, claim_expires=+60s
-    DP->>EVA: deliver(BacktestCompleted)
-    EVA->>DB: BEGIN · INSERT consumptions(evaluator) · INSERT evaluations · COMMIT
-    DP->>RNK: deliver(BacktestCompleted)
-    RNK->>DB: BEGIN · INSERT consumptions(ranking) · (xét Top-K) · COMMIT
-    DP->>DB: count(consumptions)=2 = số handler → status=delivered, delivered_at=now()
+    DP->>EVA: deliver BacktestCompleted · 1 handler duy nhất
+    EVA->>DB: BEGIN · INSERT consumptions(evaluator) · INSERT evaluations<br/>· INSERT StrategyEvaluated(pending) · COMMIT
+    Note over EVA,DB: Event mới nằm CÙNG transaction với evaluations →<br/>không có evaluation nào không sinh ra event, và ngược lại
+    DP->>DB: count(consumptions)=1 = expected_handlers → BacktestCompleted delivered
+    DP->>DB: claim StrategyEvaluated
+    DP->>RNK: deliver StrategyEvaluated · 1 handler duy nhất
+    RNK->>DB: BEGIN · INSERT consumptions(ranking) · xét Top-K · COMMIT
+    DP->>DB: count(consumptions)=1 → StrategyEvaluated delivered
     end
 
     rect rgba(255,235,200,0.35)
-    Note over DP,RNK: ② Một handler fail → retry chỉ handler đó
-    DP->>EVA: deliver → OK, consumptions(evaluator) đã ghi
-    DP->>RNK: deliver → ✕ RankingService lỗi
-    DP->>DB: status=pending, attempt=2, next_attempt_at=+5s, last_error
-    Note over DP,DB: count(consumptions)=1 ≠ 2 → KHÔNG delivered
-    DP->>EVA: lần 2: INSERT consumptions conflict → bỏ qua, KHÔNG tính lại metric
-    DP->>RNK: lần 2 → OK → count=2 → delivered
+    Note over DP,RNK: ② Handler fail → chỉ chặng đó retry
+    DP->>RNK: deliver StrategyEvaluated → ✕ RankingService lỗi
+    DP->>DB: StrategyEvaluated: status=pending, attempt=2, next_attempt_at=+5s, last_error
+    Note over DP,DB: BacktestCompleted đã delivered từ trước →<br/>Evaluator KHÔNG chạy lại, metric KHÔNG tính lại
+    DP->>RNK: lần 2 → OK → count=1 → delivered
     end
 
     rect rgba(255,215,215,0.4)
@@ -1697,16 +1846,30 @@ sequenceDiagram
     Note over DP: ✕ process chết tại T+10s
     Note over DB: E ở 'claimed' nhưng không ai xử lý
     DP->>DB: dispatcher mới, tại T+61s: điều kiện<br/>claimed AND claim_expires_at < now() → claim lại E
-    Note over DP,DB: Handler đã ack trước khi chết vẫn có consumptions →<br/>không chạy lại. Chỉ handler thiếu được giao.
+    Note over DP,DB: Handler đã ack trước khi chết vẫn có consumptions →<br/>return sớm, không chạy lại tác dụng
     end
 
     rect rgba(215,225,255,0.4)
     Note over W,DB: ④ Duplicate: cùng event giao 2 lần
-    DP->>EVA: deliver(E) lần 1 → INSERT consumptions OK → INSERT evaluations
-    DP->>EVA: deliver(E) lần 2 → INSERT consumptions CONFLICT → return sớm
+    DP->>EVA: deliver E lần 1 → INSERT consumptions OK → INSERT evaluations
+    DP->>EVA: deliver E lần 2 → INSERT consumptions CONFLICT → return sớm
     Note over EVA,DB: Lớp 2: UNIQUE(backtest_run_id, evaluator_version)<br/>chặn ngay cả khi consumptions bị xoá bằng tay (R12)
     end
 ```
+
+> **Chi tiết dễ bỏ sót ở bước 4 của kịch bản ①.** `Evaluator` ghi `evaluations` **và** `INSERT StrategyEvaluated` trong cùng một transaction. Nếu tách ra hai transaction thì có cửa sổ: evaluation đã commit nhưng event chưa → `Ranking` không bao giờ được gọi, và một kết quả hợp lệ vĩnh viễn không lên Leaderboard mà không có lỗi nào để thấy. Đây chính là lý do outbox tồn tại, áp cho chính handler của outbox.
+
+**Bảng `expected_handlers` theo `event_type`** — dispatcher đọc nó để biết `$2` trong câu `UPDATE ... delivered`:
+
+| `event_type`            | Handler                | `expected_handlers` |
+| ----------------------- | ---------------------- | ------------------- |
+| `BacktestCompleted`     | `evaluator`            | **1**               |
+| `BacktestFailed`        | `search_run_service`   | **1**               |
+| `StrategyEvaluated`     | `ranking`              | **1**               |
+| `BacktestStarted`       | `metrics`              | **1**               |
+| `NewsCollected`         | `sentiment_analyzer`   | **1**               |
+
+Mọi event trong outbox hiện có **đúng 1 handler**. Con số này là **dữ liệu cấu hình**, không hard-code trong câu SQL: thêm handler thứ hai cho một event nào đó (ví dụ một `AuditHandler` cho `StrategyEvaluated`) chỉ cần đăng ký nó và cập nhật `expected_handlers` — không sửa dispatcher. Nếu quên cập nhật thì event sẽ được đánh `delivered` khi chỉ 1 trong 2 handler đã chạy, nên registry handler và bảng này phải là **một nguồn duy nhất**: `expected_handlers = len(HANDLERS[event_type])` tính lúc startup, không phải một hằng số viết tay.
 
 #### 5.7.6 Trạng thái của một event
 
@@ -1906,7 +2069,7 @@ sequenceDiagram
     IND-->>EXS: indicators aligned với candles (None ở vùng warm-up)
 
     loop mỗi nến t từ warm_up_end tới cuối
-        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, indicators, params)
+        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, IndicatorView(raw, t), params)
         EXS->>MA: analyze(ctx)
         MA-->>EXS: Signal(BUY, evidence={ma20:118050, ma50:117800})
         EXS->>RSI: analyze(ctx)
@@ -1925,7 +2088,7 @@ sequenceDiagram
 
 2. **Warm-up period được tôn trọng.** MA50 không có giá trị ở nến thứ 10. Indicator trả `None` ở vùng warm-up, và vòng lặp bắt đầu từ `warm_up_end = max(warm_up của mọi child)`. Bỏ qua chi tiết này sẽ tạo trade giả ở đầu dataset — một lỗi rất phổ biến và làm Return sai đáng kể trên dataset ngắn.
 
-3. **`candles[:t+1]` là slice, không phải toàn bộ.** Chống look-ahead ở tầng cấu trúc dữ liệu. Strategy *không thể* đọc nến tương lai vì nó không có chúng trong tay.
+3. **`candles[:t+1]` và `IndicatorView(raw, t)` — cắt cả hai, không chỉ nến.** Precompute cho cả run (điểm 1) và chống look-ahead (điểm 3) kéo về hai hướng ngược nhau: mảng indicator phải tính sẵn cho toàn dataset, nhưng strategy chỉ được thấy tới `t`. `IndicatorView` giải quyết bằng cách bọc mảng gốc trong một view chặn tại `index` — không copy, nên vẫn giữ được lợi ích của precompute. Xem §5.2.1 cho cả 4 đường lách mà view này chặn (`[t+1]`, `[-1]`, `len()`, `slice`).
 
 4. **`child_signals` được ghi lại.** `run_signals.child_signals` lưu `{"ma_cross":"BUY","rsi":"SELL","support_resistance":"BUY","score":0.4}`. Nhờ đó UI trả lời được "vì sao composite này BUY khi RSI nói SELL" mà không cần chạy lại — và đó là điều biến §25 của đề bài (*"phải cho phép người dùng hiểu strategy đã làm gì"*) thành hiện thực.
 
@@ -1998,12 +2161,12 @@ sequenceDiagram
     end
 
     DP->>DB: OutboxDispatcher claim event (pending, next_attempt_at <= now)
-    DP->>EVA: deliver BacktestCompleted
+    DP->>EVA: deliver BacktestCompleted · expected_handlers = 1
     Note over DP,EVA: Worker là process RIÊNG nên event đi qua outbox,<br/>KHÔNG qua in-process dispatcher (§5.7.1, §5.7.2)
-    EVA->>DB: INSERT event_consumptions(evaluator) + evaluations<br/>ON CONFLICT DO NOTHING — cùng transaction
-    EVA->>DB: INSERT domain_events StrategyEvaluated (pending)
-    DP->>RNK: deliver StrategyEvaluated
-    Note over DP,RNK: Qua EVENT. Evaluator KHÔNG gọi RankingService.update() (đề bài §34)
+    EVA->>DB: BEGIN · INSERT event_consumptions(evaluator)<br/>· INSERT evaluations · INSERT StrategyEvaluated (pending) · COMMIT
+    Note over EVA,DB: Cả ba trong CÙNG transaction. Tách ra sẽ có cửa sổ<br/>evaluation đã commit mà event chưa → Ranking không bao giờ chạy.
+    DP->>RNK: deliver StrategyEvaluated · expected_handlers = 1
+    Note over DP,RNK: Ranking KHÔNG subscribe BacktestCompleted — nó cần score,<br/>mà score chỉ có sau khi Evaluator xong (§5.7.5)
     RNK->>DB: SELECT score thứ K hiện tại
     alt score > entry thứ K
         RNK->>DB: INSERT event_consumptions(ranking)<br/>+ leaderboard_entries (APPEND, không UPDATE)
@@ -2355,12 +2518,13 @@ class MACDStrategy:
 | UI                   | Form param sinh từ `parameters_schema` (JSON Schema → form). MACD tự có form đúng |
 | Search space         | `RandomSearchGenerator` đọc `all_definitions()`; MACD tự vào không gian tìm kiếm |
 
-**Bốn ràng buộc để plugin không phá hệ thống** (R7):
+**Năm ràng buộc để plugin không phá hệ thống** (R7):
 
-1. **Sandbox timeout.** `analyze()` chạy với deadline; vượt → `candidate.status='failed'`, `failure_reason='strategy_timeout'`, search run **tiếp tục**. Một strategy có vòng lặp vô hạn không được phép giết cả run.
+1. **Sandbox 3 tầng, có mô hình tin cậy rõ.** Plugin là **trusted code** (thêm bằng commit + deploy, không upload qua UI), nên mục tiêu là *bug không giết được search run*, không phải chống code thù địch. Ba tầng: (a) `SIGALRM` soft deadline 1 s/call — cắt được vòng lặp Python thuần; (b) worker là **supervisor**, backtest chạy trong child process `spawn`, `SIGKILL` sau 90 s — cắt được cả C extension giữ GIL mà tầng (a) bó tay; (c) `lease_expires_at` 120 s — cứu khi cả worker biến mất. Thứ tự `1 s < 90 s < 120 s` là **bắt buộc**: đảo lại sẽ có hai worker chạy cùng một experiment. Chi tiết ở `specs/strategy-registry.md` §C.
 2. **Exception isolation.** `ZeroDivisionError`, `IndexError` trong plugin bị catch ở biên gọi, log kèm `strategy_id@version`, candidate đánh fail. Không propagate lên làm crash worker.
-3. **`warm_up_candles` bắt buộc khai báo.** Engine dùng nó để biết bắt đầu vòng lặp từ đâu. Không khai báo → registry reject lúc startup.
-4. **`code_fingerprint` check.** Sửa code mà quên bump version → **fail fast lúc startup**, không chạy với provenance sai (§4.2).
+3. **`LookAheadError` là lỗi riêng, log ở mức ERROR.** Plugin đọc `indicators[...][index+1]` không chỉ làm fail một candidate — nó chứng tỏ plugin đó đã sinh ra kết quả sai ở mọi lần chạy trước khi `IndicatorView` được thêm. `strategy_lookahead_total` phải luôn bằng 0 (§5.2.1).
+4. **`warm_up_candles` bắt buộc khai báo.** Engine dùng nó để biết bắt đầu vòng lặp từ đâu. Không khai báo → registry reject lúc startup.
+5. **`code_fingerprint` check.** Sửa code mà quên bump version → **fail fast lúc startup**, không chạy với provenance sai (§4.2).
 
 ### 8.2 Bảo vệ tài nguyên — Quota, Rate Limit và Bounded Input
 
@@ -2827,6 +2991,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Tác động số học**: sai lệch này không nhỏ. Với strategy giao dịch thường xuyên trên khung 5m, chênh lệch giữa hai fill policy có thể lật dấu Total Return.
 - **Vì sao vẫn để `same_candle_close` là option**: để so sánh và để chứng minh nhóm hiểu tác động, không phải để dùng làm mặc định.
 - **Kèm theo**: fee và slippage áp trên **mỗi** fill, và `open_position_at_end` ghi rõ vị thế còn mở lúc hết dataset xử lý thế nào (mặc định `close_at_last_candle`). Bỏ qua chi tiết cuối này làm Return sai với strategy ít trade.
+- **Ngoại lệ duy nhất: SL/TP** (ADR-017). Chúng đóng vị thế **ngay trong nến**, không chờ `t+1`, vì là lệnh chờ đã đặt sẵn từ lúc vào vị thế — không phải một quyết định mới.
 
 ### ADR-008: Overlay tính ở backend, frontend chỉ render
 
@@ -2893,6 +3058,17 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Vì sao HTTP là đủ**: các event này đều **best-effort có chủ ý** — mọi thông tin đi qua đường này đã hoặc sẽ được persist trong PostgreSQL (§5.8.2). Mất một frame realtime không làm dữ liệu sai; client phát hiện gap qua `seq` và refetch REST. Đường nào **không** được mất event thì đi outbox, không đi đường này (§5.7.1).
 - **Vì sao có `Idempotency-Key` và ring buffer `event_id` ở Go**: retry của Python có thể tới sau khi Go đã xử lý thành công nhưng response bị mất. Không dedup thì một frame overlay được fan-out hai lần và client vẽ trùng.
 - **Đánh đổi**: overhead HTTP header cho mỗi batch (bù bằng batch 64 event) và độ trễ cao hơn WebSocket một chút (~1 ms). Chấp nhận: đơn giản hơn hẳn và không tạo trạng thái chung giữa hai service.
+
+### ADR-017: Stop Loss / Take Profit là MVP; intrabar ambiguity giải bằng conservative bias
+
+- **Bối cảnh**: đề bài yêu cầu chart visualize được *"điểm Entry, Stop Loss, Take Profit"* (mục Multi-Timeframe Chart), nhưng lại xếp *"Trading: Long/Short, Stop Loss, Take Profit, Trailing Stop, Position Sizing"* vào phần tuỳ chọn. Hai chỗ này nói về hai thứ khác nhau và cần tách ra tường minh, không để mỗi người đọc tự suy.
+- **Quyết định**: `risk_policy` gồm `stop_loss_pct`, `take_profit_pct` (cố định theo % của `entry_price`) và `intrabar_priority` **là MVP**, nằm trong `ExperimentSnapshot` và trong DDL `experiments` (§4.2). Trailing Stop, Position Sizing, Long/Short **không** làm — chúng là seam đã có chỗ trong snapshot. `risk_policy` mặc định `NULL`, nghĩa là một strategy technical thuần vẫn chạy như cũ.
+- **Vì sao SL/TP không thể là extension**: `specs/visualization.md` có contract cho `overlay_type: "stop_loss"` và `"take_profit"`, và bước 9 của demo là *"chart hiện Buy/Sell/Entry/Exit/SL/TP"*. Coi cả SL/TP là extension nghĩa là để hai `overlay_type` vĩnh viễn rỗng và một bước demo không diễn ra được.
+- **Vì sao mức chốt tại entry, không tính lại mỗi nến**: tính lại theo giá hiện tại **là** trailing stop — hành vi khác, thuộc extension. Mức cố định vẽ được thành một **đường ngang** từ `entry_time` đến `exit_time` và giải thích được. Nó cũng là lý do `trades` có `sl_price`/`tp_price` chứ không suy ra từ `%` khi render.
+- **Vấn đề intrabar**: một nến có `low < sl_price` **và** `high > tp_price` thì cả hai đều chạm, nhưng OHLCV **không chứa thứ tự**. Giả định TP trước tạo optimistic bias — mọi nến biến động lớn thành trade thắng, tức là look-ahead bias ở dạng khác. Nội suy từ timeframe nhỏ hơn là đúng nhất nhưng cần nạp thêm dữ liệu 1m cho mọi backtest, phá giới hạn 20.000 nến và làm dataset không còn một `content_hash` duy nhất.
+- **Chọn `stop_loss_first` làm mặc định**: conservative bias — sai theo hướng an toàn. Một strategy trông tốt trong backtest sẽ không tốt hơn thế trong thực tế. Nhưng `intrabar_priority` là **field trong snapshot**, không phải hằng số ẩn, để nhóm chứng minh được tác động của giả định (`specs/backtest.md` AC-17b) và để `diagnostics.intrabar_ambiguous_exits` cho biết kết quả phụ thuộc nó bao nhiêu.
+- **Thứ tự kiểm tra trong nến**: SL/TP kiểm **trước** khi gọi strategy. Lệnh chờ đã tồn tại trên sàn nên một signal mới không hủy được lệnh đã khớp. Đảo thứ tự cho phép `SELL` ở nến `t` che mất SL đã chạm ở chính nến đó, và trade đóng ở `open(t+1)` với giá tốt hơn mức SL.
+- **Đánh đổi còn lại**: gap qua đêm nhảy qua `sl_price` vẫn được fill tại `sl_price` (thực tế khớp ở giá xấu hơn). Đây là giả định lạc quan duy nhất còn lại, đếm bằng `diagnostics.gapped_exits` để không ai tưởng con số là chính xác. Sửa đúng cần dữ liệu tick — ngoài phạm vi.
 
 ---
 
@@ -3142,10 +3318,10 @@ Bước 16–18 là phần quan trọng nhất của demo. Bước 1–15 chứn
 | §12 Strategy Plugin                           | `design.md` §8.1, ADR-002 · `specs/strategy-registry.md`   | **S3**, demo bước 16  |
 | §13–§14 Composite + Weighted Combination      | `design.md` §5.4, ADR-003 · `specs/composite-strategy.md`  | demo bước 6           |
 | §15–§18 Strategy Search Engine                | `design.md` §6.3, ADR-004 · `specs/search-loop.md`         | **S4**, demo bước 17  |
-| §19–§20 Backtesting + metrics (≠ chỉ Profit)  | `design.md` ADR-007 · `specs/backtest.md`, `specs/evaluation.md` | **S5**          |
+| §19–§20 Backtesting + metrics (≠ chỉ Profit)  | `design.md` ADR-007, ADR-017 · `specs/backtest.md`, `specs/evaluation.md` | **S5**   |
 | §21–§22 Leaderboard + Top-K                   | `design.md` §4.1, ADR-012 · `specs/leaderboard.md`         | demo bước 8           |
 | §23–§24 Continuous Loop + Stop Condition      | `design.md` §6.3 · `specs/search-loop.md`                  | **S6**, demo bước 7–8 |
-| §25–§26 Visualization + Trade Detail          | `specs/chart-overlay.md`, `specs/visualization.md`         | demo bước 9–10        |
+| §25–§26 Visualization + Trade Detail (Entry/SL/TP) | `design.md` ADR-017 · `specs/chart-overlay.md`, `specs/visualization.md` | demo bước 9–10 |
 | §27–§28 News Crawler + provider abstraction   | `design.md` §6.4 · `specs/news.md`                         | demo bước 13          |
 | §29–§30 Sentiment + Sentiment as Strategy     | `specs/sentiment.md`                                       | demo bước 15          |
 | §31 Kiến trúc tổng thể                        | `design.md` §1 (style + Service Boundary & Ownership), §2, §3 | —                  |

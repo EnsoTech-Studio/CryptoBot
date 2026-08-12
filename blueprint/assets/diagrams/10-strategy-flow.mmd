@@ -17,7 +17,7 @@ sequenceDiagram
     IND-->>EXS: indicators aligned với candles (None ở vùng warm-up)
 
     loop mỗi nến t từ warm_up_end tới cuối
-        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, indicators, params)
+        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, IndicatorView(raw, t), params)
         EXS->>MA: analyze(ctx)
         MA-->>EXS: Signal(BUY, evidence={ma20:118050, ma50:117800})
         EXS->>RSI: analyze(ctx)

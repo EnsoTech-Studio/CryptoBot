@@ -187,11 +187,28 @@ sharpe_ratio     = (mean(returns) − risk_free_rate) / stddev(returns) × sqrt(
 
 | Timeframe | `periods_per_year` | Cách tính |
 |---|---|---|
+| `1m`  | 525600 | 60 × 24 × 365 |
 | `5m`  | 105120 | 12 × 24 × 365 |
 | `15m` | 35040  | 4 × 24 × 365 |
+| `30m` | 17520  | 2 × 24 × 365 |
 | `1h`  | 8760   | 24 × 365 |
+| `2h`  | 4380   | 12 × 365 |
 | `4h`  | 2190   | 6 × 365 |
 | `1d`  | 365    | 365 |
+
+Bảng này phải phủ **đúng** 8 giá trị của `timeframe_enum` trong `design.md` §4.2 (`1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`). Không phủ đủ thì một backtest hợp lệ ở tầng API và DB sẽ chết ở tầng evaluation với `500 unsupported_timeframe_for_annualization` — một lỗi 5xx cho một input hoàn toàn đúng.
+
+> **Cách chống việc bảng này lệch khỏi enum.** Bảng dẫn xuất từ một hàm, không phải một dict viết tay:
+>
+> ```python
+> _MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30,
+>             "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
+>
+> def periods_per_year(tf: Timeframe) -> int:
+>     return (365 * 24 * 60) // _MINUTES[tf]     # 525600 phút / số phút mỗi nến
+> ```
+>
+> Kèm một test bao phủ enum: `for tf in Timeframe: assert periods_per_year(tf) > 0`. Thêm timeframe mới vào enum mà quên `_MINUTES` → **test fail ở CI**, không phải `500` ở production. Đây là cùng nguyên tắc với `expected_handlers` ở `design.md` §5.7.5: một nguồn sự thật, phần còn lại suy ra.
 
 Crypto giao dịch 24/7 nên dùng 365 ngày, **không** 252 ngày như thị trường chứng khoán. Đây là chi tiết phải ghi rõ vào metadata của `evaluator_version`: đổi 365 → 252 làm mọi Sharpe đổi hệ số `sqrt(252/365) ≈ 0.83`, và nếu không version hoá thì hai con số tính ở hai thời điểm khác nhau bị so sánh với nhau như thể chúng cùng đơn vị. Risk-free rate = 0 trong v1 (ghi rõ trong metadata; đây là một giả định, không phải sự thật).
 
@@ -313,7 +330,7 @@ Sharpe trên fixture này: `returns = [+0.097900, −0.092814, 0.000000, +0.1523
 | Duplicate `BacktestCompleted` cùng `event_id` | `event_consumptions` conflict → bỏ qua, `evaluations` không thêm row |
 | Duplicate với `event_id` khác (worker retry sau lease timeout) | `ON CONFLICT (backtest_run_id, evaluator_version) DO NOTHING` → 1 row duy nhất; log WARN |
 | Recompute với `evaluator_version` đã tồn tại | `ON CONFLICT DO NOTHING` — muốn ghi lại phải bump version. Bảo vệ tính bất biến của số đã publish |
-| `periods_per_year` không xác định cho timeframe lạ | `500 unsupported_timeframe_for_annualization` — **không** mặc định 365 âm thầm, vì đó là một giả định làm sai con số |
+| `periods_per_year` không xác định cho timeframe | **Không thể xảy ra với `timeframe_enum` hiện tại** — bảng ở §Sharpe phủ đủ 8 giá trị và có test bao phủ enum. Nếu vẫn xảy ra (thêm giá trị enum mà quên `_MINUTES`) → `KeyError` fail ngay ở CI, không phải `500` ở production. **Không** mặc định 365 âm thầm, vì đó là giả định làm sai con số |
 | Metric vượt precision `NUMERIC(14,6)` (return > 99.999.999%) | Clamp + log ERROR kèm `backtest_run_id`. Return 8 chữ số là dấu hiệu lỗi engine, không phải strategy giỏi |
 
 ## Ràng buộc
@@ -365,6 +382,9 @@ Sharpe trên fixture này: `returns = [+0.097900, −0.092814, 0.000000, +0.1523
 - [ ] AC-13: `equity_points` rỗng + `trades` có 3 row → `500 inconsistent_backtest_result`, **0 row** thêm vào `evaluations`.
 - [ ] AC-14: Test static: `grep -rn "float(" app/domain/evaluation/` cho **0 kết quả**; mọi annotation trong `Evaluation` là `Decimal | None` hoặc `int`.
 - [ ] AC-15: Benchmark: 500 trade + 20.000 `equity_points` → `evaluate()` hoàn thành **< 400 ms**, và MDD dùng single-pass (đo bằng số lần truy cập `equity_points` = n, không n²).
+- [ ] AC-16: `for tf in Timeframe: assert periods_per_year(tf) > 0` — pass cho **cả 8** giá trị `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`. Thêm một giá trị vào enum mà không thêm vào `_MINUTES` → test **fail**.
+- [ ] AC-17: Chạy backtest thật với `timeframe='30m'` và `timeframe='2h'` (hai giá trị trước đây thiếu trong bảng annualization) → `evaluations.sharpe_ratio` có giá trị (không `NULL` vì lỗi tra bảng, không `500`), và bằng đúng `mean/stddev × sqrt(17520)` / `sqrt(4380)` tương ứng.
+- [ ] AC-18: `periods_per_year('1h') == 8760` và `periods_per_year('1m') == 525600` — kiểm hàm dẫn xuất cho ra đúng các số trong bảng tài liệu (chống việc tài liệu và code trôi khỏi nhau).
 
 ---
 

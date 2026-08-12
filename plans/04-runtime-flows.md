@@ -1,5 +1,8 @@
 # 04 -- Runtime flows
 
+> ⚠️ **ARCHIVED — superseded by [`blueprint/`](../blueprint/README.md).** Bản nháp đầu, chưa xác thực. Không sửa, không dùng làm nguồn. Xem [`plans/README.md`](README.md) để biết quyết định nào đã thay đổi.
+
+
 ## Realtime market-data flow
 
 ```mermaid

@@ -115,7 +115,7 @@ sequenceDiagram
     ENG->>REG: resolve(children)
     REG-->>ENG: [MA, RSI, SR] (dict lookup, 0 nhánh if)
 
-    ENG->>ENG: ctx = AnalysisContext(candles[:t+1], index=t, indicators, params)
+    ENG->>ENG: ctx = AnalysisContext(candles[:t+1], index=t, IndicatorView(raw, t), params)
     ENG->>MA: analyze(ctx)
     MA-->>ENG: Signal(BUY, evidence={ma20:118050, ma50:117800})
     ENG->>RSI: analyze(ctx)

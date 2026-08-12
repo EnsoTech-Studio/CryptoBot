@@ -48,7 +48,7 @@ class AnalysisContext:
     timeframe: Timeframe
     candles: Sequence[Candle]                          # CHỈ tới index — không có nến tương lai
     index: int                                         # candles[index] là "bây giờ"
-    indicators: Mapping[str, Sequence[float | None]]   # đã precompute, aligned với candles
+    indicators: IndicatorView                          # causal view — chặn đọc > index
     news_sentiment: NewsSentimentWindow | None
     params: Mapping[str, Any]                          # đã validate theo parameters_schema
 
@@ -60,16 +60,19 @@ class Signal:
     evidence: Mapping[str, Any] | None = None          # {'rsi': 72.4} → ghi vào run_signals
 ```
 
-**Bốn thứ `AnalysisContext` cố ý KHÔNG có:**
+**Năm thứ `AnalysisContext` cố ý KHÔNG có:**
 
 | Không có                | Nếu có thì sao                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------------- |
 | DB session / repository | Strategy query SQL trực tiếp → anti-pattern §44; và không test được offline           |
 | HTTP client             | Strategy gọi Binance → mỗi strategy tự fetch, rate limit vỡ, backtest không determinism |
 | Nến sau `index`         | Look-ahead bias (R3) — kết quả đẹp giả tạo, toàn bộ Leaderboard vô nghĩa               |
+| **Giá trị indicator sau `index`** | Cùng một look-ahead nhưng **không gây lỗi**: `rsi_14[t+1]` tính từ `close[t+1]`, nên đọc nó tương đương đọc giá tương lai. Đây là lý do `indicators` là `IndicatorView`, không phải `Mapping[str, Sequence[float]]` — xem `design.md` §5.2.1 |
 | Thời gian hệ thống      | `datetime.now()` trong strategy làm backtest không tái lập được                        |
 
 > **Đây là điểm thiết kế quan trọng nhất của file này.** Ranh giới được thực thi bằng **cái mà kiểu dữ liệu không cho phép**, không bằng quy ước. Một dev mới không cần đọc tài liệu để biết không được query DB trong strategy — họ đơn giản là không có session để query.
+
+> **`IndicatorView` chặn bốn đường, không chỉ một.** `ctx.indicators["rsi_14"]` trả về một `CausalSeries`: `[t+1]` → `LookAheadError`; `[-1]` quy về giá trị **tại `index`** chứ không phải cuối dataset; `len()` trả `index + 1` nên `[len(s)-1]` cũng an toàn; `slice` bị clamp về `[0, index]`. Bốn đường này là bốn cách viết tự nhiên mà một plugin vô tình dùng — và cả bốn đều trả về dữ liệu thật nếu view không chặn.
 
 ## Luồng chính
 
@@ -173,32 +176,119 @@ Ba lý do `input_requirements` tồn tại trong metadata thay vì để engine 
 
 ### C. Chạy strategy trong sandbox
 
+Trước khi nói cơ chế, phải nói rõ **mô hình tin cậy**, vì nó quyết định cơ chế nào là đủ:
+
+> **Plugin là trusted code, không phải untrusted input.** Strategy được thêm bằng cách commit file vào `plugins/` rồi deploy — không có đường nào để người dùng upload code qua UI/API (ADR-002; `exec()` trên code do user gửi là RCE). Vì vậy mục tiêu của sandbox **không** phải chống code cố tình phá hoại (điều đó cần seccomp/container per-call, và vô nghĩa khi kẻ tấn công đã có quyền commit). Mục tiêu là: **một plugin có bug không được làm chết cả search run**. Bug thực tế cần chặn là vòng lặp `while` sai điều kiện, đệ quy không đáy, `IndexError`, chia cho 0 — không phải `os.fork()` bomb.
+
+Với mục tiêu đó, có 3 tầng phòng thủ, mỗi tầng chặn một loại bug mà tầng dưới không chặn được:
+
+| Tầng | Cơ chế | Chặn được | **Không** chặn được |
+| ---- | ------ | --------- | ------------------- |
+| 1 | `SIGALRM` soft deadline 1 s / call | Vòng lặp Python thuần, đệ quy sâu, `time.sleep` dài | Vòng lặp bên trong C extension đang giữ GIL |
+| 2 | Supervisor `SIGKILL` child process | **Mọi** thứ tầng 1 bỏ sót, kể cả C loop và deadlock | — |
+| 3 | `backtest_jobs.lease_expires_at` 120 s | Cả worker process biến mất (OOM-kill, container restart) | — |
+
+**Tầng 1 — `SIGALRM` trong process chạy backtest**
+
 ```python
-# app/domain/backtest/engine.py (trích)
-def _safe_analyze(self, strategy: Strategy, ctx: AnalysisContext,
-                  sid: str, ver: str) -> Signal:
+# app/domain/backtest/sandbox.py
+import signal
+from contextlib import contextmanager
+
+class StrategyTimeout(Exception): ...
+
+def _on_alarm(signum, frame):
+    # Python kiểm tra signal giữa các bytecode → exception này CẮT được
+    # `while True: pass`. Nó KHÔNG cắt được C call đang giữ GIL.
+    raise StrategyTimeout()
+
+@contextmanager
+def soft_deadline(seconds: float):
+    prev_handler = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)      # luôn tắt, kể cả khi raise
+        signal.signal(signal.SIGALRM, prev_handler)
+```
+
+Ba giới hạn của tầng này, ghi rõ để không ai tưởng nó là bảo đảm tuyệt đối:
+
+1. **Chỉ hoạt động trên main thread của process** (`signal.signal` raise `ValueError` ở thread khác). Vì vậy backtest **phải** chạy trên main thread của process con — đây là một ràng buộc thiết kế, không phải chi tiết cài đặt.
+2. **Chỉ hoạt động trên Unix.** Container là `python:3.12-slim` (Linux) nên production ổn. Trên Windows dev, `soft_deadline` degrade thành no-op và log WARN một lần lúc startup — tầng 2 vẫn hoạt động, chỉ là timeout thô hơn.
+3. **Không cắt được C extension đang giữ GIL.** `numpy.sort` trên mảng khổng lồ, hay regex catastrophic backtracking, sẽ chạy tới khi xong. Đây chính xác là lý do tầng 2 tồn tại.
+
+**Tầng 2 — worker là supervisor, backtest chạy trong process con**
+
+```python
+# app/worker.py (trích)
+import multiprocessing as mp
+
+HARD_LIMIT_SEC = 90          # < lease 120 s, để supervisor kịp ghi trạng thái
+
+def run_job(job) -> None:
+    ctx = mp.get_context("spawn")             # spawn, không fork: state sạch, deterministic
+    q = ctx.Queue(maxsize=1)
+    child = ctx.Process(target=_child_entry, args=(job.experiment_id, q), daemon=True)
+    child.start()
+    child.join(timeout=HARD_LIMIT_SEC)
+
+    if child.is_alive():
+        child.kill()                          # SIGKILL — không thể bị bắt hay bỏ qua
+        child.join(timeout=5)
+        metrics.strategy_hard_killed()
+        fail_job(job, error_code="backtest_hard_timeout", retryable=False)
+        return
+
+    if child.exitcode != 0:                   # OOM-kill (-9), segfault, exception chưa bắt
+        fail_job(job, error_code=f"worker_child_exit_{child.exitcode}", retryable=True)
+        return
+
+    commit_result(job, q.get_nowait())        # chỉ commit khi child kết thúc sạch
+```
+
+Bốn quyết định trong đoạn này đáng giải thích:
+
+- **`spawn`, không `fork`.** `fork` copy toàn bộ state của supervisor gồm connection pool PostgreSQL — hai process dùng chung socket sẽ làm hỏng protocol theo cách rất khó debug. `spawn` tốn ~200 ms khởi động interpreter, nhưng một backtest mất 2–40 s nên chi phí đó là 0.5–10%.
+- **`HARD_LIMIT_SEC = 90 < lease 120 s.** Thứ tự này là bắt buộc: supervisor phải kịp giết child, ghi `error_code` và `fail_job` **trước khi** lease hết hạn. Nếu ngược lại (`hard_limit > lease`), một worker khác sẽ nhận cùng job trong khi child cũ vẫn đang chạy → hai backtest song song cho một experiment.
+- **`retryable=False` cho `backtest_hard_timeout`.** Timeout do plugin bug thì retry 3 lần chỉ đốt thêm 270 s. Ngược lại `worker_child_exit` (OOM, container bị siết memory) **là** retryable vì lần sau có thể có RAM.
+- **Chỉ commit khi `exitcode == 0`.** Trùng với ràng buộc "không partial commit" ở `specs/backtest.md` — child bị `SIGKILL` không commit được gì, và đó là hành vi đúng.
+
+**Trong process con**, `_safe_analyze` bọc từng lời gọi plugin:
+
+```python
+def _safe_analyze(self, strategy, ctx, sid: str, ver: str) -> Signal:
     started = monotonic()
     try:
-        with deadline(seconds=self.per_call_timeout):     # mặc định 1.0 s
+        with soft_deadline(self.per_call_timeout):        # 1.0 s
             sig = strategy.analyze(ctx)
-    except DeadlineExceeded:
+    except StrategyTimeout:
         self.metrics.strategy_timeout(sid)
         raise StrategyFailure(sid, ver, "strategy_timeout")
+    except LookAheadError as exc:                        # §5.2.1 — bug nghiêm trọng của plugin
+        self.metrics.strategy_lookahead(sid, ver)
+        log.error("strategy_lookahead", strategy=f"{sid}@{ver}", detail=str(exc))
+        raise StrategyFailure(sid, ver, "strategy_lookahead") from exc
     except Exception as exc:                              # ZeroDivisionError, IndexError, ...
         self.metrics.strategy_error(sid, ver)
         log.warning("strategy_raised", strategy=f"{sid}@{ver}",
                     error_type=type(exc).__name__, candle_index=ctx.index)
         raise StrategyFailure(sid, ver, "strategy_exception") from exc
 
-    if sig.action not in ("BUY", "SELL", "HOLD"):          # plugin trả rác
+    if sig.action not in ("BUY", "SELL", "HOLD"):         # plugin trả rác
         raise StrategyFailure(sid, ver, "invalid_signal")
     self.metrics.observe_analyze(sid, monotonic() - started)
     return sig
 ```
 
-`StrategyFailure` được bắt ở tầng worker: `backtest_runs.status='failed'` + `error_code`, `search_candidates.status='failed'` + `failure_reason`. **Search run tiếp tục** với candidate kế tiếp.
+`StrategyFailure` được bắt ở biên vòng lặp backtest: `backtest_runs.status='failed'` + `error_code`, `search_candidates.status='failed'` + `failure_reason`. **Search run tiếp tục** với candidate kế tiếp.
 
-> **Vì sao `per_call_timeout` là 1 giây, không 30 giây.** `analyze()` được gọi một lần **mỗi nến**. Với 20.000 nến, timeout 30 s/call nghĩa là một plugin xấu có thể chạy 166 giờ trước khi bị dừng. 1 giây/call vẫn rất rộng cho một hàm chỉ đọc vài phần tử mảng, và giới hạn thiệt hại tổng ở mức chấp nhận được. Ngoài ra job có `lease_expires_at` 120 s làm lớp phòng thủ thứ hai.
+> **Vì sao `per_call_timeout` là 1 giây, không 30 giây.** `analyze()` được gọi một lần **mỗi nến**. Với 20.000 nến, timeout 30 s/call nghĩa là một plugin xấu có thể chạy 166 giờ trước khi bị dừng — và tầng 2 sẽ giết nó ở giây thứ 90 mà không ai biết candidate nào có vấn đề. 1 giây/call vẫn rất rộng cho một hàm chỉ đọc vài phần tử mảng, và nó cho `error_code='strategy_timeout'` **kèm `strategy_id`** thay vì một cái `backtest_hard_timeout` mù.
+
+> **Chi phí của `setitimer`.** Đặt và tắt itimer là 2 syscall mỗi lời gọi `analyze()`. Với 20.000 nến × 3 child = 120.000 syscall ≈ **60–120 ms cho cả run** (2–40 s). Chấp nhận được. Nếu về sau đo được đây là bottleneck: đặt deadline **một lần cho cả nến** (bao cả 3 child) thay vì mỗi child — mất khả năng chỉ ra child nào timeout, nên chỉ làm khi có số đo.
+
+**Tầng 3** là `lease_expires_at` đã có ở `specs/experiment.md`: nếu cả worker process biến mất (OOM-kill toàn container, node restart) thì không ai ghi được `fail_job`, và lease hết hạn sau ≤ 120 s đưa job về `queued` với `attempt += 1`.
 
 ### D. Thêm strategy mới — toàn bộ diff (demo S3)
 
@@ -266,9 +356,15 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 | Client gửi `version` không tồn tại cho strategy có tồn tại          | `422 unknown_strategy_version` kèm các version khả dụng                                                   |
 | Param sai kiểu / ngoài min-max                                      | `422` với `field` chỉ đúng param sai (validate bằng `parameters_schema`)                                  |
 | `analyze()` raise `ZeroDivisionError`                               | Catch tại `_safe_analyze` → candidate `failed`, `failure_reason='strategy_exception'`. **Search run tiếp tục** |
-| `analyze()` vòng lặp vô hạn                                         | `DeadlineExceeded` sau 1 s → candidate `failed`, `failure_reason='strategy_timeout'`. Worker **không** chết |
+| `analyze()` có `while True: pass` (Python thuần)                    | Tầng 1: `SIGALRM` sau 1 s → `StrategyTimeout` → candidate `failed`, `failure_reason='strategy_timeout'`. Worker **không** chết |
+| `analyze()` treo trong C extension giữ GIL (numpy khổng lồ, regex backtracking) | Tầng 1 **không** cắt được. Tầng 2: supervisor `SIGKILL` child sau 90 s → `error_code='backtest_hard_timeout'`, `retryable=False`. Worker supervisor vẫn sống |
+| Child process bị OOM-kill (`exitcode = -9`)                          | `error_code='worker_child_exit_-9'`, `retryable=True` — lần sau có thể có RAM. Khác với `hard_timeout` (không retry) |
+| Cả worker process biến mất (container restart, node down)             | Tầng 3: `lease_expires_at` hết sau ≤ 120 s → job về `queued`, `attempt += 1` (`specs/experiment.md`) |
+| Backtest chạy trên thread không phải main thread                      | `signal.signal` raise `ValueError` → fail fast lúc khởi tạo sandbox. Đây là ràng buộc thiết kế: backtest **phải** ở main thread của process con |
+| Chạy trên Windows (dev)                                              | `soft_deadline` degrade thành no-op + log WARN **một lần** lúc startup. Tầng 2 vẫn hoạt động → timeout thô hơn (90 s) nhưng không mất bảo đảm |
 | `analyze()` trả `"buy"` (chữ thường) hoặc `None`                    | `invalid_signal` → candidate `failed`. Không tự sửa thành `BUY` (che lỗi của plugin)                     |
 | `analyze()` cố `ctx.candles[ctx.index + 5]`                         | `IndexError` — vì slice chỉ tới `index`. Look-ahead bị chặn ở tầng dữ liệu                                |
+| `analyze()` cố `ctx.indicators["rsi_14"][ctx.index + 1]`            | `LookAheadError` → `failure_reason='strategy_lookahead'` + log **ERROR** (không WARN). Đây là bug làm sai kết quả, không chỉ làm fail một candidate (`design.md` §5.2.1) |
 | `analyze()` cố gán `ctx.params["period"] = 99`                      | `FrozenInstanceError`/`TypeError` — `AnalysisContext` là frozen, `params` là Mapping read-only            |
 | Plugin import `sqlalchemy` hoặc `httpx`                             | `tests/architecture/test_module_boundaries.py` **fail CI**                                                |
 | Plugin file có syntax error                                         | Fail startup ở `import_module` — fail fast, không chạy với 4/5 strategy                                    |
@@ -279,36 +375,41 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 **Tính đúng đắn**
 
 - `analyze()` phải là **pure function**: cùng `AnalysisContext` → cùng `Signal`. Không I/O, không random không seed, không `datetime.now()`. Đây là điều kiện để backtest chạy 2 lần cho kết quả byte-identical.
-- `AnalysisContext` là `frozen=True`; `candles` và `indicators` là read-only sequence. Strategy không sửa được input.
-- `candles` được slice `[:index+1]` ở tầng gọi — bảo đảm bằng code, không bằng quy ước.
+- `AnalysisContext` là `frozen=True`; `candles` là read-only sequence; `indicators` là `IndicatorView` (chặn đọc > `index`).
+- `candles` được slice `[:index+1]` và `indicators` được bọc `IndicatorView(raw, index)` ở tầng gọi — bảo đảm bằng code, không bằng quy ước.
 - `strategy_versions` là **append-only**. Row đã được experiment tham chiếu không bao giờ UPDATE.
 - `code_fingerprint = sha256(normalise(source_of_class))`. `normalise` strip comment/docstring và chuẩn hoá whitespace.
+- **Thứ tự bắt buộc giữa các timeout**: `per_call_timeout` (1 s) < `HARD_LIMIT_SEC` (90 s) < `lease_expires_at` (120 s). Đảo thứ tự bất kỳ cặp nào sẽ tạo cửa sổ hai worker chạy cùng một experiment.
 
 **Hiệu năng**
 
 - `resolve()` là dict lookup: **O(1)**, < 1 µs.
 - Indicator precompute **một lần** cho cả run, không tính trong `analyze()`.
 - `analyze()` một nến: **< 100 µs** cho strategy đơn (mục tiêu; đo bằng `strategy_analyze_seconds`).
-- Sandbox timeout mỗi call: **1.0 s** (cấu hình được).
+- Soft deadline mỗi call (`SIGALRM`): **1.0 s** (cấu hình được). Overhead 2 syscall/call ≈ 60–120 ms cho cả run 20.000 nến × 3 child.
+- Hard limit của child process: **90 s** — phải nhỏ hơn `lease_expires_at` 120 s.
+- `spawn` một child: ~**200 ms** khởi động interpreter, tức 0.5–10% của một backtest 2–40 s.
 - Startup registry (5 plugin): **< 200 ms**.
 
 **Khả năng mở rộng**
 
 - Thêm strategy = **1 file** trong `plugins/`. Kiểm chứng bằng `git diff --stat` (demo S3).
-- Thêm strategy family mới = mở rộng enum `family` + cập nhật rule của `DomainGuidedGenerator`. Không đụng registry.
+- Thêm strategy family mới = mở rộng enum `family` (Python `Literal` + DB `CHECK`) + cập nhật rule của `DomainGuidedGenerator`. Không đụng registry. Trước khi thêm, kiểm tra 5 family hiện có đã đủ chưa — `news_sentiment` thuộc `information`, không cần family riêng (`specs/sentiment.md` §D).
 - `parameters_schema` là JSON Schema → UI sinh form tự động, không cần code UI cho từng strategy.
 - SMC/Wyckoff cắm được vào `family="structure"` mà không cần contract mới (đề bài §11).
 
 **Bảo mật**
 
-- **Không** có cơ chế upload code strategy qua UI/API. `exec()` trên code do user gửi là RCE. Strategy thêm bằng code + deploy (lý do `Strategy Developer` nối nét đứt ở C4 Level 1, `design.md` §2.1).
-- Plugin không có network/DB access → một plugin độc hại không exfiltrate được dữ liệu.
+- **Mô hình tin cậy: plugin là trusted code.** Không có cơ chế upload code strategy qua UI/API (`exec()` trên code do user gửi là RCE). Strategy thêm bằng code + deploy — lý do `Strategy Developer` nối nét đứt ở C4 Level 1 (`design.md` §2.1). Sandbox ở §C vì thế nhắm vào **bug**, không nhắm vào code cố tình phá hoại; chống code thù địch cần seccomp/container per-call và vô nghĩa khi kẻ tấn công đã có quyền commit.
+- Plugin không có network/DB access trong `AnalysisContext` → một plugin lỗi không exfiltrate được dữ liệu qua context. (Nó vẫn `import` được thư viện bất kỳ — chặn việc đó là việc của `test_module_boundaries.py` ở CI, không của runtime.)
 - `evidence` trong `Signal` được serialize vào `run_signals.child_signals` — validate là JSON-serializable, giới hạn kích thước 4 KB/signal để plugin không làm phình DB.
 
 **Quan sát được**
 
 - `strategy_analyze_errors_total{strategy_id,version}` counter
-- `strategy_timeout_total{strategy_id}` counter
+- `strategy_timeout_total{strategy_id}` counter — tầng 1 (`SIGALRM`)
+- `strategy_hard_killed_total` counter — tầng 2 (`SIGKILL` child); tăng nghĩa là có plugin mà tầng 1 không chặn được
+- `strategy_lookahead_total{strategy_id,version}` counter — **phải luôn bằng 0**; khác 0 là bug làm sai kết quả, cần alert
 - `strategy_analyze_seconds{strategy_id}` histogram
 - Log khi plugin lỗi có: `strategy_id@version`, `error_type`, `candle_index`, `correlation_id`
 
@@ -320,7 +421,10 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 - [ ] AC-04: Sau AC-01, UI render form MACD với 3 field đúng `min`/`max`/`default` từ `parameters_schema`, **không** có code UI riêng cho MACD.
 - [ ] AC-05: `grep -rE '(strategy_id|strategy)\s*==\s*["'"'"']' app/ --include=*.py` chỉ khớp trong `plugins/` và `tests/`.
 - [ ] AC-06: `test_strategy_purity.py` — patch `socket.socket` để raise, unset `DATABASE_URL` → cả 5 strategy vẫn `analyze()` thành công.
-- [ ] AC-07: Tạo plugin `_evil.py` với `while True: pass` trong `analyze()` → candidate đánh `failed` với `failure_reason='strategy_timeout'` trong ≤ 2 s; worker vẫn sống; search run chạy tiếp candidate sau.
+- [ ] AC-07: Tạo plugin `_evil_pyloop.py` với `while True: pass` trong `analyze()` → tầng 1 bắt: candidate `failed` với `failure_reason='strategy_timeout'` trong **≤ 2 s**; `strategy_timeout_total{strategy_id="_evil_pyloop"}` tăng 1; worker vẫn sống; search run chạy tiếp candidate sau.
+- [ ] AC-07b: Tạo plugin `_evil_cloop.py` treo trong C extension giữ GIL (ví dụ `re.match` catastrophic backtracking, hoặc `numpy.sort` mảng 10⁹ phần tử) → tầng 1 **không** bắt được; tầng 2 `SIGKILL` child trong **≤ 95 s**; job `failed` với `error_code='backtest_hard_timeout'`, `retryable=False`, `attempt` **không** tăng lên 3; `strategy_hard_killed_total` tăng 1; **worker supervisor vẫn sống** và nhận job tiếp theo.
+- [ ] AC-07c: Kiểm thứ tự timeout bằng config: `per_call_timeout < HARD_LIMIT_SEC < lease_ttl`. Đặt `HARD_LIMIT_SEC=150` (> lease 120) → app **fail startup** với thông báo nêu rõ cả 3 giá trị. (Không có kiểm tra này thì đảo thứ tự sẽ tạo cửa sổ hai worker chạy cùng một experiment mà không có triệu chứng.)
+- [ ] AC-07d: `kill -9` child process từ bên ngoài giữa lúc backtest → supervisor thấy `exitcode = -9`, job `failed` với `retryable=True`, và bảng `trades` có **0 row** cho run đó (không partial commit).
 - [ ] AC-08: Tạo plugin raise `ZeroDivisionError` → candidate `failed` với `strategy_exception`; log có `strategy_id@version` và `candle_index`.
 - [ ] AC-09: Sửa 1 dòng logic trong `rsi.py` giữ nguyên version → startup **fail** với message chứa `rsi@1.0.0` và chữ "bump version".
 - [ ] AC-10: Thêm comment vào `rsi.py` (không đổi logic) → startup **thành công**.
@@ -328,4 +432,6 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 - [ ] AC-12: `POST /experiments` với `strategy_id="nonexistent"` → `422 unknown_strategy`, response có danh sách strategy khả dụng, **không** có stack trace.
 - [ ] AC-13: `POST /experiments` với `rsi` và `period=1` (dưới `minimum: 2`) → `422` với `field="parameters.period"`.
 - [ ] AC-14: Plugin thử `ctx.candles[ctx.index + 1]` → `IndexError` (chứng minh không có nến tương lai trong context).
+- [ ] AC-14b: Plugin thử `ctx.indicators["rsi_14"][ctx.index + 1]` → `LookAheadError`; `[-1]` trả giá trị tại `index`; `len(series) == index + 1`; `series[:]` có đúng `index + 1` phần tử (bốn đường lách ở `design.md` §5.2.1 đều bị chặn).
+- [ ] AC-14c: Plugin đọc indicator chưa khai báo trong `input_requirements` → `UnknownIndicatorError` liệt kê các indicator đang có, **không** phải `KeyError` trần.
 - [ ] AC-15: `test_module_boundaries.py` — thêm `import httpx` vào một plugin → CI **fail**.

@@ -1,5 +1,8 @@
 # 06 -- Architecture decisions and roadmap
 
+> ⚠️ **ARCHIVED — superseded by [`blueprint/`](../blueprint/README.md).** Bản nháp đầu, chưa xác thực. Không sửa, không dùng làm nguồn. Xem [`plans/README.md`](README.md) để biết quyết định nào đã thay đổi.
+
+
 ## ADR-001 -- Use backend-mediated WebSocket for normalized realtime data
 
 **Decision:** Binance is reached only by a market-data adapter. The backend publishes normalized candle events to the dashboard through WebSocket (or SSE if only server-to-client flow is required).

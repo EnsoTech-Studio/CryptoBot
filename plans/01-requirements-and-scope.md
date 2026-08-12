@@ -1,5 +1,8 @@
 # 01 -- Requirements and scope
 
+> ⚠️ **ARCHIVED — superseded by [`blueprint/`](../blueprint/README.md).** Bản nháp đầu, chưa xác thực. Không sửa, không dùng làm nguồn. Xem [`plans/README.md`](README.md) để biết quyết định nào đã thay đổi.
+
+
 ## Product statement
 
 Crypto Strategy Lab lets a user inspect Binance market data, combine independent analysis strategies, simulate them on historical candles, compare the results, and improve the search without rewriting the system. The project is assessed primarily as **software architecture**, not as proof that a trading rule earns money. [PDF pp. 2, 43, 53--54]

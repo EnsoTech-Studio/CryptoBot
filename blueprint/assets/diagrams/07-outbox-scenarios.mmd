@@ -7,24 +7,25 @@ sequenceDiagram
     participant RNK as Ranking handler
 
     rect rgba(200,240,200,0.25)
-    Note over W,RNK: ① Đường thành công
-    W->>DB: BEGIN · trades · runs.status=completed · INSERT event(pending) · COMMIT
+    Note over W,RNK: ① Đường thành công — chuỗi 2 chặng, KHÔNG fan-out
+    W->>DB: BEGIN · trades · runs.status=completed · INSERT BacktestCompleted(pending) · COMMIT
     DP->>DB: claim batch → status=claimed, attempt=1, claim_expires=+60s
-    DP->>EVA: deliver(BacktestCompleted)
-    EVA->>DB: BEGIN · INSERT consumptions(evaluator) · INSERT evaluations · COMMIT
-    DP->>RNK: deliver(BacktestCompleted)
-    RNK->>DB: BEGIN · INSERT consumptions(ranking) · (xét Top-K) · COMMIT
-    DP->>DB: count(consumptions)=2 = số handler → status=delivered, delivered_at=now()
+    DP->>EVA: deliver BacktestCompleted · 1 handler duy nhất
+    EVA->>DB: BEGIN · INSERT consumptions(evaluator) · INSERT evaluations<br/>· INSERT StrategyEvaluated(pending) · COMMIT
+    Note over EVA,DB: Event mới nằm CÙNG transaction với evaluations →<br/>không có evaluation nào không sinh ra event, và ngược lại
+    DP->>DB: count(consumptions)=1 = expected_handlers → BacktestCompleted delivered
+    DP->>DB: claim StrategyEvaluated
+    DP->>RNK: deliver StrategyEvaluated · 1 handler duy nhất
+    RNK->>DB: BEGIN · INSERT consumptions(ranking) · xét Top-K · COMMIT
+    DP->>DB: count(consumptions)=1 → StrategyEvaluated delivered
     end
 
     rect rgba(255,235,200,0.35)
-    Note over DP,RNK: ② Một handler fail → retry chỉ handler đó
-    DP->>EVA: deliver → OK, consumptions(evaluator) đã ghi
-    DP->>RNK: deliver → ✕ RankingService lỗi
-    DP->>DB: status=pending, attempt=2, next_attempt_at=+5s, last_error
-    Note over DP,DB: count(consumptions)=1 ≠ 2 → KHÔNG delivered
-    DP->>EVA: lần 2: INSERT consumptions conflict → bỏ qua, KHÔNG tính lại metric
-    DP->>RNK: lần 2 → OK → count=2 → delivered
+    Note over DP,RNK: ② Handler fail → chỉ chặng đó retry
+    DP->>RNK: deliver StrategyEvaluated → ✕ RankingService lỗi
+    DP->>DB: StrategyEvaluated: status=pending, attempt=2, next_attempt_at=+5s, last_error
+    Note over DP,DB: BacktestCompleted đã delivered từ trước →<br/>Evaluator KHÔNG chạy lại, metric KHÔNG tính lại
+    DP->>RNK: lần 2 → OK → count=1 → delivered
     end
 
     rect rgba(255,215,215,0.4)
@@ -33,12 +34,12 @@ sequenceDiagram
     Note over DP: ✕ process chết tại T+10s
     Note over DB: E ở 'claimed' nhưng không ai xử lý
     DP->>DB: dispatcher mới, tại T+61s: điều kiện<br/>claimed AND claim_expires_at < now() → claim lại E
-    Note over DP,DB: Handler đã ack trước khi chết vẫn có consumptions →<br/>không chạy lại. Chỉ handler thiếu được giao.
+    Note over DP,DB: Handler đã ack trước khi chết vẫn có consumptions →<br/>return sớm, không chạy lại tác dụng
     end
 
     rect rgba(215,225,255,0.4)
     Note over W,DB: ④ Duplicate: cùng event giao 2 lần
-    DP->>EVA: deliver(E) lần 1 → INSERT consumptions OK → INSERT evaluations
-    DP->>EVA: deliver(E) lần 2 → INSERT consumptions CONFLICT → return sớm
+    DP->>EVA: deliver E lần 1 → INSERT consumptions OK → INSERT evaluations
+    DP->>EVA: deliver E lần 2 → INSERT consumptions CONFLICT → return sớm
     Note over EVA,DB: Lớp 2: UNIQUE(backtest_run_id, evaluator_version)<br/>chặn ngay cả khi consumptions bị xoá bằng tay (R12)
     end

@@ -1,5 +1,8 @@
 # 02 -- Target architecture
 
+> ⚠️ **ARCHIVED — superseded by [`blueprint/`](../blueprint/README.md).** Bản nháp đầu, chưa xác thực. Không sửa, không dùng làm nguồn. Xem [`plans/README.md`](README.md) để biết quyết định nào đã thay đổi.
+
+
 ## Architecture in one paragraph
 
 Keep the existing **Next.js web app + Go public API + Python domain service**. Treat Python as a modular monolith for the strategy lab: the modules communicate through in-process ports/events first, while the public boundary stays in Go. PostgreSQL persists experiment facts. A queue and separate workers are a scale-out deployment of the same job contract, not an MVP prerequisite.

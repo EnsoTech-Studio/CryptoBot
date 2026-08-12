@@ -73,6 +73,10 @@ Marker ở đây khác marker của `specs/chart-overlay.md`. Live overlay có `
 
 > `line_until` cho `stop_loss`/`take_profit`: hai mức này là **đường ngang tồn tại trong khoảng thời gian vị thế mở**, không phải một điểm. Vẽ chúng như điểm đơn lẻ làm mất thông tin quan trọng nhất — giá đã đi sát mức nào bao lâu trước khi chạm.
 
+> **`price` của `stop_loss`/`take_profit` đọc trực tiếp từ `trades.sl_price` / `trades.tp_price`**, không tính lại từ `entry_price × (1 ± pct)` khi render. Hai lý do: (a) mức đã chốt tại entry là **fact** đã ghi, tính lại là suy diễn — và sẽ lệch nếu công thức đổi; (b) nếu về sau có trailing stop thì mức thay đổi theo thời gian và không công thức nào suy ra được từ `entry_price`. Nguồn của hai cột này: `specs/backtest.md` §C1, `design.md` ADR-017.
+
+> **Khi `experiments.stop_loss_pct` và `take_profit_pct` đều `NULL`** (không đặt `risk_policy`), mảng `executions` chỉ có `entry` và `exit`; UI **ẩn** toggle `SL/TP` thay vì hiện một checkbox không có dữ liệu. Đây là ADR-013 ở tầng UI: không vẽ thứ không tồn tại, và cũng không giả vờ nó tồn tại rồi để trống.
+
 ### `GET /api/v1/experiments/{id}/trades` (Owner, ≤ 200/page)
 
 ```json

@@ -45,7 +45,12 @@ Queue là một **bảng PostgreSQL**, không phải broker (ADR-005). Điểm q
     "slippage_bps": 5,
     "fill_policy": "next_candle_open",
     "position_policy": "long_only",
-    "open_position_at_end": "close_at_last_candle"
+    "open_position_at_end": "close_at_last_candle",
+    "risk_policy": {
+      "stop_loss_pct": 2.0,
+      "take_profit_pct": 5.0,
+      "intrabar_priority": "stop_loss_first"
+    }
   },
   "evaluator_version": "1.0.0",
   "created_at": "2026-08-11T09:14:22Z"
@@ -67,10 +72,16 @@ experiments(id UUID PK, owner_id FK users, strategy_version_id UUID NOT NULL FK 
             fill_policy fill_policy_enum DEFAULT 'next_candle_open',   -- next_candle_open|same_candle_close
             position_policy position_policy_enum DEFAULT 'long_only',  -- long_only|long_short
             open_position_at_end VARCHAR(24) DEFAULT 'close_at_last_candle',
+            -- Risk policy: SL/TP là MVP (design.md ADR-017). NULL = không có SL/TP.
+            stop_loss_pct NUMERIC(6,3), take_profit_pct NUMERIC(6,3),
+            intrabar_priority VARCHAR(20) NOT NULL DEFAULT 'stop_loss_first'
+                              CHECK (intrabar_priority IN ('stop_loss_first','take_profit_first')),
             evaluator_version VARCHAR(24) NOT NULL,
             search_candidate_id UUID FK search_candidates(id),         -- NULL nếu tạo tay
             created_at,
-            CHECK (fee_bps >= 0 AND slippage_bps >= 0), CHECK (initial_capital > 0));
+            CHECK (fee_bps >= 0 AND slippage_bps >= 0), CHECK (initial_capital > 0),
+            CHECK (stop_loss_pct   IS NULL OR (stop_loss_pct > 0 AND stop_loss_pct < 100)),
+            CHECK (take_profit_pct IS NULL OR take_profit_pct > 0));
 CREATE INDEX idx_experiments_owner ON experiments(owner_id, created_at DESC);
 CREATE INDEX idx_experiments_hash  ON experiments(candidate_hash, market_dataset_id);
 ```
@@ -152,7 +163,7 @@ sequenceDiagram
 
 1. Tính `candidate_hash = sha256(canonical_json(candidate_definition))`. Canonical hoá: sort key, chuẩn hoá số, UTF-8 NFC — nếu không thì `{"a":1,"b":2}` và `{"b":2,"a":1}` cho hai hash khác nhau và dedup vô hiệu một cách âm thầm.
 2. Tra `idx_experiments_hash` theo `(candidate_hash, market_dataset_id)`.
-3. Lọc tiếp trên **toàn bộ** execution config (`initial_capital`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`) và `evaluator_version`. Khác một field nào trong nhóm này là một thí nghiệm khác — `fee_bps=10` và `fee_bps=30` cho hai Total Return khác nhau, nên không được coi là trùng.
+3. Lọc tiếp trên **toàn bộ** execution config (`initial_capital`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`, `stop_loss_pct`, `take_profit_pct`, `intrabar_priority`) và `evaluator_version`. Khác một field nào trong nhóm này là một thí nghiệm khác — `fee_bps=10` và `fee_bps=30` cho hai Total Return khác nhau, và `stop_loss_pct=2` với `=5` cho hai bộ trade hoàn toàn khác, nên không được coi là trùng.
 4. Nếu tìm thấy và `backtest_runs.status = 'completed'` → trả `200` với `run_id` cũ, không tạo job. Endpoint trở thành idempotent theo nội dung và tiết kiệm CPU worker.
 5. Nếu tìm thấy nhưng run đang `queued`/`running` → trả `202` với `run_id` đang chạy, cũng không tạo job thứ hai.
 6. Nếu run cũ `failed` → **tạo mới**. Một lần chạy lỗi không phải là kết quả, và người dùng có quyền thử lại.

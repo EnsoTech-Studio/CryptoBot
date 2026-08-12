@@ -62,12 +62,12 @@ sequenceDiagram
     end
 
     DP->>DB: OutboxDispatcher claim event (pending, next_attempt_at <= now)
-    DP->>EVA: deliver BacktestCompleted
+    DP->>EVA: deliver BacktestCompleted · expected_handlers = 1
     Note over DP,EVA: Worker là process RIÊNG nên event đi qua outbox,<br/>KHÔNG qua in-process dispatcher (§5.7.1, §5.7.2)
-    EVA->>DB: INSERT event_consumptions(evaluator) + evaluations<br/>ON CONFLICT DO NOTHING — cùng transaction
-    EVA->>DB: INSERT domain_events StrategyEvaluated (pending)
-    DP->>RNK: deliver StrategyEvaluated
-    Note over DP,RNK: Qua EVENT. Evaluator KHÔNG gọi RankingService.update() (đề bài §34)
+    EVA->>DB: BEGIN · INSERT event_consumptions(evaluator)<br/>· INSERT evaluations · INSERT StrategyEvaluated (pending) · COMMIT
+    Note over EVA,DB: Cả ba trong CÙNG transaction. Tách ra sẽ có cửa sổ<br/>evaluation đã commit mà event chưa → Ranking không bao giờ chạy.
+    DP->>RNK: deliver StrategyEvaluated · expected_handlers = 1
+    Note over DP,RNK: Ranking KHÔNG subscribe BacktestCompleted — nó cần score,<br/>mà score chỉ có sau khi Evaluator xong (§5.7.5)
     RNK->>DB: SELECT score thứ K hiện tại
     alt score > entry thứ K
         RNK->>DB: INSERT event_consumptions(ranking)<br/>+ leaderboard_entries (APPEND, không UPDATE)

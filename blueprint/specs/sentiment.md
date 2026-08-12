@@ -155,7 +155,7 @@ Bốn quyết định nằm trong query này:
 class NewsSentimentStrategy:
     def definition(self) -> StrategyDefinition:
         return StrategyDefinition(
-            strategy_id="news_sentiment", version="1.0.0", family="sentiment",
+            strategy_id="news_sentiment", version="1.0.0", family="information",
             parameters_schema={
                 "window_sec":  {"type": "int",   "enum": [1800, 3600, 14400], "default": 3600},
                 "buy_above":   {"type": "float", "min": 0.1, "max": 1.0, "default": 0.7},
@@ -183,11 +183,13 @@ class NewsSentimentStrategy:
 
 Rule khớp đề bài §30: avg sentiment 1 giờ > 0.7 → BUY, < −0.7 → SELL, còn lại HOLD.
 
+> **`family="information"`, không phải `"sentiment"`.** Đề bài §17 phân nhóm domain là Trend / Momentum / Volatility / Structure / **Information**, và News Sentiment nằm ở nhóm Information. Contract `StrategyDefinition.family` (`specs/strategy-registry.md`) và `CHECK (family IN (...))` trên `strategy_definitions` (`design.md` §4.2) đều chỉ nhận đúng 5 giá trị đó — khai báo `family="sentiment"` sẽ bị registry reject lúc startup và DB reject lúc INSERT metadata. Lý do đặt tên theo **vai trò trong quyết định** (thông tin ngoài giá) chứ không theo **kỹ thuật cài đặt** (sentiment analysis): một `OnChainFlowStrategy` hay `FundingRateStrategy` tương lai cũng thuộc nhóm này mà không cần thêm family mới, và `DomainGuidedGenerator` không phải sửa rule.
+
 `min_items` là tham số quan trọng nhất và dễ bị bỏ nhất. Không có nó, **một** tin duy nhất `POSITIVE score=0.95` làm `avg_score=0.95 > 0.7` → BUY. Đó là quyết định giao dịch dựa trên một bài viết mà model tình cờ tự tin — nhiễu, không phải tín hiệu. Với `min_items=3`, ngưỡng chỉ kích hoạt khi có đồng thuận.
 
 `w.model_version` đi vào `evidence` → được ghi vào `run_signals.child_signals` → trả lời được "tín hiệu BUY này do model nào sinh ra" ba tháng sau, cùng cơ chế provenance với strategy version (`design.md` §11.8).
 
-Ba thứ strategy này **không** có: DB session, HTTP client, nến sau `index`. Hệ quả kiểm chứng được: `news_sentiment.py` import và test được trong môi trường không có PostgreSQL và không có network — cùng tiêu chuẩn với `rsi.py` (`design.md` §5.2, `tests/architecture/test_strategy_purity.py`).
+Bốn thứ strategy này **không** có: DB session, HTTP client, nến sau `index`, và giá trị indicator sau `index` (`ctx.indicators` là `IndicatorView` — `design.md` §5.2.1). Hệ quả kiểm chứng được: `news_sentiment.py` import và test được trong môi trường không có PostgreSQL và không có network — cùng tiêu chuẩn với `rsi.py` (`design.md` §5.2, `tests/architecture/test_strategy_purity.py`).
 
 ### E. Đổi model — vì sao kết quả cũ không bị ghi đè
 

@@ -70,9 +70,11 @@ class SearchHistory:
 { "seed": 42, "attempt": 137, "rejected_duplicates": 18 }
 
 // DomainGuidedGenerator
-{ "rule": "one_of_each_family",
+{ "rule": "required_families_plus_optional",
   "families_required": ["trend", "momentum", "structure"],
-  "chosen": { "trend": "ma_cross", "momentum": "rsi", "structure": "support_resistance" },
+  "families_optional": ["volatility", "information"],
+  "chosen": { "trend": "ma_cross", "momentum": "rsi",
+              "structure": "support_resistance", "information": "news_sentiment" },
   "rejected_reason_counts": { "same_family_twice": 24, "already_tested": 11 } }
 ```
 
@@ -269,7 +271,8 @@ class RandomSearchGenerator:
 **`DomainGuidedGenerator`** (đề bài §17) — cùng interface, khác rule:
 
 ```python
-FAMILY_RULE = ["trend", "momentum", "structure"]     # mỗi composite lấy 1 từ mỗi nhóm
+REQUIRED_FAMILIES = ["trend", "momentum", "structure"]   # mỗi composite lấy 1 từ mỗi nhóm
+OPTIONAL_FAMILIES = ["volatility", "information"]        # thêm 0..1 nhóm, nếu space có
 
 @register_generator
 class DomainGuidedGenerator:
@@ -279,22 +282,28 @@ class DomainGuidedGenerator:
         rejected = Counter()
         for _ in range(limit * 10):            # bounded, không while True
             chosen = {}
-            for fam in FAMILY_RULE:
+            for fam in REQUIRED_FAMILIES:
                 pool = by_family.get(fam, [])
                 if not pool:
                     rejected["family_unavailable"] += 1
                     break
                 chosen[fam] = rng.choice(pool)
-            if len(chosen) < len(FAMILY_RULE):
+            if len(chosen) < len(REQUIRED_FAMILIES):
                 continue
+            # Nhóm tuỳ chọn: chỉ thêm nếu space có và cardinality còn chỗ
+            extras = [f for f in OPTIONAL_FAMILIES if by_family.get(f)]
+            if extras and len(chosen) < space.cardinality[1] and rng.random() < 0.5:
+                fam = rng.choice(extras)
+                chosen[fam] = rng.choice(by_family[fam])
             spec = self._build(chosen, space, rng)
             h = canonical_hash(spec)
             if h in history.tested_hashes:
                 rejected["already_tested"] += 1
                 continue
             yield CandidateStrategy(spec, h, "domain_guided@1.0.0",
-                                    {"rule": "one_of_each_family",
-                                     "families_required": FAMILY_RULE,
+                                    {"rule": "required_families_plus_optional",
+                                     "families_required": REQUIRED_FAMILIES,
+                                     "families_optional": OPTIONAL_FAMILIES,
                                      "chosen": chosen,
                                      "rejected_reason_counts": dict(rejected)})
 ```
@@ -302,6 +311,8 @@ class DomainGuidedGenerator:
 Đổi generator = 1 dòng config `SEARCH_GENERATOR=domain_guided`. `BacktestEngine`, `Evaluator`, `RankingService`, UI: **0 dòng** (demo S4).
 
 Điểm khác biệt về chất lượng: `DomainGuidedGenerator` tránh sinh `MA10 + MA20 + MA50` (3 strategy cùng nhóm trend, tương quan cao, không thêm thông tin) — đúng ví dụ đề bài §17 nêu.
+
+> **Vì sao `information` nằm ở nhóm tuỳ chọn, không phải bắt buộc.** Nếu `REQUIRED_FAMILIES` chứa `information` thì mọi candidate đều phải có `news_sentiment` — và search sẽ **dừng hoàn toàn** khi news pipeline chết hoặc khi user chỉ muốn tìm tổ hợp technical. Nhưng nếu `information` không xuất hiện ở đâu cả thì bước 15 của demo (*"thêm SentimentStrategy vào search space"*) không làm được với generator này, và `family="information"` trở thành một giá trị enum không ai dùng. Nhóm tuỳ chọn giải quyết cả hai: sentiment vào được search space khi có, và vắng nó không chặn gì. Cùng lý do áp cho `volatility` (Bollinger) — nó là nhóm thứ 4 của đề bài §17 nhưng rule "1 trend + 1 momentum + 1 structure" không có chỗ cho nó.
 
 ## Kịch bản lỗi
 
@@ -385,7 +396,9 @@ class DomainGuidedGenerator:
 - [ ] AC-12: `RESEARCHER` A gọi `pause` trên run của B → `403`. `OPERATOR` gọi → `200`, `search_actions.actor_id` = operator.
 - [ ] AC-13: Chạy 2 run với cùng `seed=42` và cùng space → **cùng chuỗi `candidate_hash` theo đúng thứ tự**.
 - [ ] AC-14: Chạy run không truyền `seed` → `search_runs.seed` có giá trị; chạy lại với seed đó ra cùng chuỗi.
-- [ ] AC-15: Đổi `SEARCH_GENERATOR=domain_guided`, chạy lại → mọi candidate có đúng 1 strategy từ mỗi nhóm trend/momentum/structure; `generation_meta.rule='one_of_each_family'`; `git diff` cho thấy **0 dòng** đổi ở backtest/evaluator/leaderboard.
+- [ ] AC-15: Đổi `SEARCH_GENERATOR=domain_guided`, chạy lại → mọi candidate có đúng 1 strategy từ **mỗi** nhóm trend/momentum/structure; `generation_meta.rule='required_families_plus_optional'`; `git diff` cho thấy **0 dòng** đổi ở backtest/evaluator/leaderboard.
+- [ ] AC-15b: Với `space.strategy_ids` chứa `news_sentiment` (`family='information'`) và `cardinality=[3,4]` → có ít nhất 1 candidate trong 40 lần sinh chứa `news_sentiment`, và `generation_meta.chosen` ghi nó dưới key `information`.
+- [ ] AC-15c: Với `space.strategy_ids` **không** chứa strategy nào thuộc `information` → generator vẫn sinh đủ `max_candidates`, `rejected_reason_counts` không có `family_unavailable` cho nhóm tuỳ chọn (nhóm tuỳ chọn vắng mặt không phải lỗi).
 - [ ] AC-16: Kill process `SearchRunService` giữa run → trong ≤ 6 phút sweeper đưa run về `queued` và nó tiếp tục từ `candidates_generated` hiện tại (không chạy lại từ 0).
 - [ ] AC-17: Một candidate có strategy timeout → `candidates_failed=1`, run tiếp tục và hoàn thành đủ `max_candidates`.
 - [ ] AC-18: `cancel` khi có 12 job `queued` → job `queued` thành `cancelled` trong ≤ 5 s; job đang `leased` hoàn thành bình thường; không có job treo `leased`.

@@ -146,13 +146,14 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 **Strategy & Combination**
 
 - Strategy registry theo Plugin Architecture; ≥ 4 strategy đơn lẻ: `MAStrategy`, `RSIStrategy`, `BollingerStrategy`, `SupportResistanceStrategy`.
-- `NewsSentimentStrategy` là strategy thứ 5, dùng đúng contract — chứng minh kiến trúc không giới hạn ở Technical Analysis.
+- `NewsSentimentStrategy` là strategy thứ 5, dùng đúng contract, khai báo `family="information"` — chứng minh kiến trúc không giới hạn ở Technical Analysis.
 - Composite strategy với ≥ 2 combination policy: `majority_vote` và `weighted_vote` (policy lưu trong snapshot, không hard-code).
 
 **Experiment & Search**
 
-- `ExperimentSnapshot` bất biến: candidate definition + dataset version + execution assumptions (fee, slippage, fill policy) + evaluator version.
-- Backtest engine chronological, fill ở `next_candle_open`, không look-ahead.
+- `ExperimentSnapshot` bất biến: candidate definition + dataset version + execution assumptions (fee, slippage, fill policy, **risk policy**) + evaluator version.
+- Backtest engine chronological, fill ở `next_candle_open`, không look-ahead (3 tầng phòng thủ: nến, indicator view, fill policy).
+- **Stop Loss / Take Profit** cố định theo % của `entry_price`, kèm `intrabar_priority` để giả định "SL hay TP chạm trước" là tường minh chứ không ẩn trong code. Đây là **MVP** vì chart phải vẽ được SL/TP theo yêu cầu đề bài — xem `design.md` ADR-017.
 - Evaluator tách khỏi backtester: Total Return, Win Rate, Max Drawdown, Number of Trades, Profit Factor, Sharpe Ratio.
 - `RandomSearchGenerator` (bắt buộc) + `DomainGuidedGenerator` (chứng minh replaceability, dùng phân nhóm Trend/Momentum/Volatility/Structure/Information).
 - Search run có **stop condition bắt buộc**: max candidate / max duration / max non-improving; hỗ trợ pause/resume/cancel idempotent.
@@ -184,7 +185,7 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 | Kafka, RabbitMQ, CQRS, Event Sourcing, microservice per module | Đề bài nói rõ: **không cộng điểm vì dùng công nghệ phức tạp**. Chỉ thêm khi có vấn đề kiến trúc cụ thể. |
 | Multi-exchange (OKX/Bybit) thật                       | Chỉ chứng minh bằng port `MarketDataProvider` + 1 adapter fixture trong test.                     |
 | Multi-coin, multi-asset ở MVP                         | Schema đã có `market_pairs`; MVP demo BTCUSDT.                                                    |
-| Long/Short, Trailing Stop, Position Sizing nâng cao   | MVP `long_only`; `position_policy` là field trong snapshot nên mở rộng được.                      |
+| Long/Short, Trailing Stop, Position Sizing nâng cao   | MVP `long_only` + SL/TP cố định theo % (`design.md` ADR-017). Trailing stop cần lịch sử mức SL trong `trades`; sizing cần `sizing_policy` — cả hai là seam đã có chỗ trong snapshot, không implement. |
 | Mobile app                                            | Dashboard là desktop-first (4 chart cùng lúc).                                                     |
 | Hạ tầng production (auto-scaling, multi-region, CDN)  | Chạy Docker Compose 1 node.                                                                       |
 
@@ -243,11 +244,11 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | --- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | R1  | **Binance WebSocket disconnect** (mạng, rate limit, maintenance)                  | Mất nến → chart sai, backtest sai                               | Reconnect exponential backoff (capped) + ghi `last_closed_at` + **backfill REST** khoảng thiếu + de-dup theo `(provider, symbol, timeframe, close_time)` | `specs/market-data.md`          |
 | R2  | **Binance REST rate limit** (weight-based, 1200/phút)                             | 429/418 → ban IP tạm thời                                       | Token bucket **outbound** theo weight + cache nến đã đóng vào PostgreSQL + không refetch dữ liệu đã có       | `specs/market-data.md`          |
-| R3  | **Look-ahead bias** trong backtest                                                | Kết quả đẹp giả tạo → toàn bộ Leaderboard vô nghĩa               | Fill ở `next_candle_open`; indicator chỉ đọc nến `≤ t`; fixture test có kết quả kỳ vọng tính bằng tay        | `specs/backtest.md`             |
+| R3  | **Look-ahead bias** trong backtest                                                | Kết quả đẹp giả tạo → toàn bộ Leaderboard vô nghĩa               | **3 tầng**: (a) `candles[:t+1]` → `IndexError`; (b) `IndicatorView` causal → `LookAheadError` khi đọc `indicators[t+1]`, `[-1]`, `len()`, slice vượt `t`; (c) fill ở `next_candle_open`. Kèm fixture test có kết quả kỳ vọng tính bằng tay | `design.md` §5.2.1 · `specs/backtest.md` |
 | R4  | **Search space nổ tổ hợp** (4 strategy × nhiều param → hàng vạn candidate)        | Chạy vô hạn, đốt CPU, treo hệ thống                             | Stop condition bắt buộc (candidate/duration/no-improvement) + dedup theo `candidate_hash` + quota per-principal | `specs/search-loop.md`          |
 | R5  | **Backtest chiếm HTTP request** (10.000 nến × 3 strategy có thể mất > 30 s)        | Timeout, connection pool cạn, UI treo                           | `POST /experiments` trả `202 + run_id` ngay; thực thi qua job record; UI polling/stream tiến trình           | `specs/experiment.md`           |
 | R6  | **Kết quả Leaderboard không tái lập được**                                        | Không bảo vệ được đồ án: "+18.2% từ đâu ra?"                    | Snapshot bất biến append-only: strategy version + params + dataset version + fee/slippage + evaluator version | `specs/leaderboard.md`          |
-| R7  | **Strategy plugin lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết                                        | Strategy chạy trong sandbox có timeout; exception → `candidate.status = failed` + `failure_reason`, run tiếp | `specs/strategy-registry.md`    |
+| R7  | **Strategy plugin lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết                                        | Sandbox **3 tầng**: `SIGALRM` 1 s/call → supervisor `SIGKILL` child process 90 s → job lease 120 s. Exception → `candidate.status = failed` + `failure_reason`, run tiếp | `specs/strategy-registry.md`    |
 | R8  | **News provider chết hoặc trả HTML rác**                                          | Pipeline news dừng                                              | Job news độc lập; failure chỉ ảnh hưởng job đó; chart/backtest technical không phụ thuộc                     | `specs/news.md`                 |
 | R9  | **SSRF qua news source** (nếu cho phép nhập URL)                                  | Đọc được metadata service nội bộ / port scan                    | `ApprovedNewsSource` là **server config**, không nhận URL từ browser; allowlist HTTPS origin + chặn private/loopback IP sau mỗi redirect/DNS | `specs/news.md` §Bảo mật        |
 | R10 | **Sentiment model đổi version** → kết quả cũ không so được với mới                | Backtest có sentiment mất tính so sánh                          | `model_version` là phần của snapshot; đổi model = dataset mới, không ghi đè kết quả cũ                        | `specs/sentiment.md`            |

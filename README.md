@@ -12,6 +12,16 @@ Luồng request mẫu:
 Browser (Next.js) -> Go API :8080 -> Python AI :8000
 ```
 
+## Tài liệu thiết kế
+
+| Thư mục | Trạng thái | Nội dung |
+| ------- | ---------- | -------- |
+| **[`blueprint/`](blueprint/README.md)** | ✅ **Nguồn sự thật** | Tài liệu thiết kế kiến trúc đầy đủ: proposal, design (13 section, 17 ADR), 14 spec tính năng, sơ đồ render sẵn |
+| `plans/` | ⚠️ Archived | Bản nháp đầu tiên, đã bị `blueprint/` thay thế. Giữ để tra cứu lịch sử — [xem những gì đã đổi](plans/README.md) |
+| `requirements.html` | Tham chiếu | Đề bài đã chuyển sang HTML, dùng để truy vết yêu cầu |
+
+Bắt đầu đọc ở [`blueprint/README.md`](blueprint/README.md) — nó có index và mapping từ từng yêu cầu đề bài tới tài liệu tương ứng.
+
 ## Chạy bằng Docker Compose
 
 ```powershell

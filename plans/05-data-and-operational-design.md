@@ -1,5 +1,8 @@
 # 05 -- Data and operational design
 
+> ⚠️ **ARCHIVED — superseded by [`blueprint/`](../blueprint/README.md).** Bản nháp đầu, chưa xác thực. Không sửa, không dùng làm nguồn. Xem [`plans/README.md`](README.md) để biết quyết định nào đã thay đổi.
+
+
 ## Persistence model
 
 PostgreSQL is the only required stateful component for the target architecture. Start with normalized records for important query paths and JSON snapshots only where the schema is intentionally extensible.

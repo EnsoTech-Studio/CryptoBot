@@ -71,7 +71,7 @@ Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/
    | 7   | Kiểm soát truy cập: RBAC + ownership, Defense in Depth 4 lớp |
    | 8   | 4 cơ chế bảo vệ: Plugin Registry, Quota/Rate limit, Job Queue (+ **lease token** §8.3.1), Observability |
    | 9   | 5 anti-pattern đề bài + 3 bổ sung, kèm test kiểm chứng |
-   | 10  | **16 ADR**                                     |
+   | 10  | **17 ADR**                                     |
    | 11  | **Trả lời 8 câu hỏi kiến trúc trung tâm**      |
    | 12  | **Target Architecture vs Delivery Roadmap** (§12.0) + 7 phase + Demo script 18 bước + Truy vết yêu cầu |
    | 13  | Phụ lục: cấu trúc thư mục source code          |
@@ -103,7 +103,7 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | 1. Source Code                     | `design.md` §13 (cấu trúc thư mục đề xuất)                        |
 | 2. README (Install/Run/Architecture/Demo) | `README.md` gốc repo + `design.md` §12.2                   |
 | 3. Architecture Document           | `design.md` §1–§8 (System Context, Container, Component, Data Flow, Realtime Flow, Strategy Flow, Search/Backtest Flow) |
-| 4. Architectural Decisions         | `design.md` §10 — **16 ADR**                                      |
+| 4. Architectural Decisions         | `design.md` §10 — **17 ADR**                                      |
 | 5. Demo                            | `design.md` §12.2 — 18 bước                                       |
 
 ### Module chức năng
@@ -157,7 +157,8 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Frontend tính RSI (2 nguồn chân lý)                | Overlay **do backend tính**, frontend chỉ render                       | `specs/chart-overlay.md`     |
 | Mất nến khi WebSocket disconnect                   | `last_closed_at` trong DB + backfill REST + de-dup bằng PK             | `specs/market-data.md`       |
 | Binance ban IP do vượt rate limit                  | Outbound token bucket theo **weight** + hiệu chỉnh từ response header  | `specs/market-data.md`       |
-| Look-ahead bias làm Leaderboard vô nghĩa           | Fill ở `next_candle_open`; `candles[:index+1]`; fixture test tính tay   | `specs/backtest.md`, ADR-007 |
+| Look-ahead bias làm Leaderboard vô nghĩa           | 3 tầng: `candles[:index+1]` · `IndicatorView` causal · `next_candle_open` | `design.md` §5.2.1, ADR-007 · `specs/backtest.md` |
+| SL/TP: MVP hay extension? Nến chạm cả hai thì sao?  | SL/TP cố định theo % **là MVP** (chart phải vẽ được); intrabar giải bằng `intrabar_priority` mặc định `stop_loss_first` (conservative) | `design.md` ADR-017 · `specs/backtest.md` §C1 |
 | Backtest chiếm HTTP request 40 giây                | `POST /experiments` → `202 + run_id`, luôn async (không có fast path)   | `specs/experiment.md`, ADR-006 |
 | Search loop chạy vô hạn                            | Stop condition bắt buộc ở **3 lớp**: schema `CHECK`, API, runtime       | `specs/search-loop.md`       |
 | Search space nổ tổ hợp                             | Dedup `candidate_hash` + quota `max_candidates_per_run`                | `specs/search-loop.md`       |
@@ -168,7 +169,8 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Ownership DB chồng chéo giữa Go và Python          | Python sở hữu write + migration bảng domain; Go chỉ `SELECT` trên schema `read` qua role `api_reader` | `design.md` §1.2.4, §1.2.5 |
 | Duplicate event tạo entry trùng                    | `event_consumptions` + `UNIQUE (backtest_run_id, evaluator_version)`   | `specs/leaderboard.md`       |
 | Kết quả Leaderboard không truy nguồn được          | Snapshot append-only 6 bảng + `code_fingerprint` + `content_hash`      | `specs/leaderboard.md`, ADR-009, ADR-012 |
-| Strategy plugin lỗi giết cả worker                 | Sandbox timeout 1 s/call + exception isolation → candidate `failed`     | `specs/strategy-registry.md` |
+| Strategy plugin lỗi giết cả worker                 | Sandbox 3 tầng: `SIGALRM` 1 s → `SIGKILL` child 90 s → lease 120 s     | `specs/strategy-registry.md` |
+| Plugin đọc `indicators[t+1]` (look-ahead ẩn)        | `IndicatorView` causal — chặn `[t+1]`, `[-1]`, `len()`, `slice`         | `design.md` §5.2.1           |
 | Đổi công thức score phải chạy lại backtest         | Tách trade facts (thô) khỏi metrics (dẫn xuất)                         | `specs/evaluation.md`        |
 | SSRF qua news source                               | `ApprovedNewsSource` là **server config**; validate sau mỗi redirect/DNS | `specs/news.md`              |
 | Crawler phụ thuộc chặt vào ML                      | `NewsCollected` event; crawler không import model; test static ở CI    | `specs/news.md`              |
