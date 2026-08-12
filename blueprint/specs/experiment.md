@@ -2,9 +2,9 @@
 
 ## Mô tả
 
-`ExperimentSnapshot` là đơn vị bất biến trung tâm của hệ thống. Nó ghi lại **mọi thứ** cần để chạy lại một backtest và nhận đúng con số cũ: strategy nào ở version nào, tham số con và policy kết hợp nào, tập nến nào với `content_hash` nào, giả định thực thi nào (fee, slippage, fill policy, position policy, xử lý vị thế còn mở khi hết dataset), và evaluator version nào. Đây là hiện thực của yêu cầu Reproducibility (đề bài §36) và là gốc của toàn bộ chuỗi provenance mà `specs/leaderboard.md` khai thác. Nếu một field ảnh hưởng tới kết quả mà không nằm trong snapshot, thì kết quả đó không tái lập được — và đó là tiêu chí duy nhất để quyết định field nào phải có trong bảng này.
+`ExperimentSnapshot` là đơn vị bất biến trung tâm của hệ thống. Nó ghi lại **mọi thứ** cần để chạy lại một backtest và nhận đúng con số cũ: strategy nào ở version nào, tham số con và policy kết hợp nào, tập nến nào với `content_hash` nào, giả định thực thi nào (fee, slippage, fill policy, position policy, xử lý vị thế còn mở khi hết dataset), và evaluator version nào. Worker nạp tập nến từ snapshot vật lý `market_dataset_candles` theo `market_dataset_id`, không đọc operational cache `candles`. Đây là hiện thực của yêu cầu Reproducibility (đề bài §36) và là gốc của toàn bộ chuỗi provenance mà `specs/leaderboard.md` khai thác. Nếu một field ảnh hưởng tới kết quả mà không nằm trong snapshot, thì kết quả đó không tái lập được — và đó là tiêu chí duy nhất để quyết định field nào phải có trong bảng này.
 
-Module sở hữu ba bảng với ba vòng đời khác nhau: `experiments` là **snapshot ghi một lần, không bao giờ UPDATE**; `backtest_jobs` là **queue có trạng thái thay đổi liên tục**; `backtest_runs` là **vết của một lần thực thi**. Việc tách ba bảng không phải là chuẩn hoá cho đẹp: snapshot phải bất biến để provenance đáng tin, queue phải mutable để lease/retry hoạt động, và run phải riêng để ghi được `worker_id`, `duration_ms`, `error_code` — những thứ thuộc về *lần chạy* chứ không thuộc về *định nghĩa thí nghiệm*. Trách nhiệm code: `ExperimentService` (Python, `ai/`) tạo snapshot và enqueue; `worker` (cùng image Python, entrypoint `python -m app.worker`) claim job và gọi `BacktestEngine.run()` (chi tiết ở `specs/backtest.md`); Go API chỉ là public boundary — auth, RBAC, ownership, quota, validate (`specs/auth.md`).
+Module sở hữu ba bảng với ba vòng đời khác nhau: `experiments` là **snapshot ghi một lần, không bao giờ UPDATE**; `backtest_jobs` là **queue có trạng thái thay đổi liên tục**; `backtest_runs` là **vết của một lần thực thi**. Việc tách ba bảng không phải là chuẩn hoá cho đẹp: snapshot phải bất biến để provenance đáng tin, queue phải mutable để lease/retry hoạt động, và run phải riêng để ghi được `worker_id`, `duration_ms`, `error_code` — những thứ thuộc về *lần chạy* chứ không thuộc về *định nghĩa thí nghiệm*. Trách nhiệm code: `ExperimentService` (Python, `ai/`) tạo snapshot và enqueue; `worker` (cùng image Python, entrypoint `python -m app.worker`) claim job, đọc `market_dataset_candles` theo `market_dataset_id` và gọi `BacktestEngine.run()` (chi tiết ở `specs/backtest.md`); Go API chỉ là public boundary — auth, RBAC, ownership, quota, validate (`specs/auth.md`).
 
 Toàn bộ vòng đời là **bất đồng bộ, không có ngoại lệ** (ADR-006): `POST /api/v1/experiments` luôn ghi job và trả `202 { run_id }`, kể cả khi dataset chỉ có 200 nến và backtest mất 300 ms. Lý do không có fast path inline: hai code path nghĩa là hai chỗ có thể lệch nhau về xử lý lỗi, về việc ghi `backtest_runs`, về việc publish event — và bug ở path ít dùng sẽ không được phát hiện vì không ai chạy nó. Một path duy nhất đắt hơn khoảng **500 ms** cho backtest nhỏ nhưng đúng ở mọi trường hợp. Hệ quả tích cực: chuyển sang multi-worker không cần đổi API, vì API đã async từ đầu; nếu MVP làm inline rồi sau mới đổi async thì đó là **breaking change ở public contract**. Đánh đổi phải trả: UI buộc phải xử lý trạng thái pending (polling hoặc WebSocket) ngay từ MVP, không được hiển thị kết quả ngay sau khi bấm nút.
 
@@ -14,7 +14,7 @@ Queue là một **bảng PostgreSQL**, không phải broker (ADR-005). Điểm q
 
 - Một experiment được thực thi **đúng một lần** — kể cả khi queue giao trùng job cho hai worker.
 - **Không có job nào treo mãi** ở `leased`: worker chết → lease hết hạn ≤ 120 s → job về `queued`.
-- `experiments` row **không bao giờ bị UPDATE** sau khi tạo. Muốn đổi tham số là tạo experiment mới.
+- `experiments` row **không bao giờ bị UPDATE** sau khi tạo. Muốn đổi tham số là tạo experiment mới; DB trigger `experiments_immutable` chặn cả UPDATE/DELETE để invariant không phụ thuộc riêng vào application path.
 - Không có `backtest_jobs` row trỏ tới experiment không tồn tại, và không có experiment mồ côi không bao giờ được chạy.
 - Mỗi `backtest_runs` kết thúc ở đúng một trong ba state terminal `completed | failed | cancelled` — không có state "đang chạy mãi".
 - Không request nào tạo được work vượt `max_candles_per_experiment` (default **20.000** nến).
@@ -28,16 +28,17 @@ Queue là một **bảng PostgreSQL**, không phải broker (ADR-005). Điểm q
   "experiment_id": "8f14e45f-ea1e-4f3c-9c2b-7d1a2b3c4d5e",
   "strategy": { "strategy_id": "composite", "version": "1.0.0" },
   "candidate_definition": "<composite snapshot bất biến: children + policy + weights>",
-  "candidate_hash": "sha256:9f2a7c31be4708d5c6a1e3f0b2d8419c7e5a6b3d1f0c8e2a4b6d8f0a2c4e6b81",
+  "candidate_hash": "9f2a7c31be4708d5c6a1e3f0b2d8419c7e5a6b3d1f0c8e2a4b6d8f0a2c4e6b81",
   "market": {
     "dataset_version": "binance-btcusdt-5m-20260101-20260301",
+    "revision_no": 1,
     "provider": "binance",
     "symbol": "BTCUSDT",
     "timeframe": "5m",
     "range_from": "2026-01-01T00:00:00Z",
     "range_to": "2026-03-01T00:00:00Z",
     "candle_count": 17280,
-    "content_hash": "sha256:7a1e3c9d5b2f8046a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7"
+    "content_hash": "7a1e3c9d5b2f8046a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7"
   },
   "execution": {
     "initial_capital": "10000.00",
@@ -57,27 +58,31 @@ Queue là một **bảng PostgreSQL**, không phải broker (ADR-005). Điểm q
 }
 ```
 
+`candles` trong lời gọi `BacktestEngine.run(snapshot, candles)` là danh sách đã được load từ `market_dataset_candles`, sắp xếp tăng dần theo `close_time`. Nó không phải kết quả query live từ bảng `candles`.
+
 > **`candidate_definition` là snapshot, không phải tham chiếu.** Nó nhúng cả `children` (mỗi child có `strategy_id` + `version` + `parameters` + `weight`) và `combination.policy` + `threshold` + `encoding`. Nếu chỉ lưu một id trỏ tới "cấu hình composite hiện tại", thì sửa cấu hình đó ba tháng sau sẽ làm sai nghĩa mọi experiment cũ. Cấu trúc chi tiết ở `specs/composite-strategy.md`, cơ sở lý luận ở `design.md` §5.4 và ADR-003.
 
-> **`content_hash` của dataset nằm trong snapshot, không chỉ `dataset_version`.** Binance đôi khi revise nến. Cùng một `(symbol, timeframe, from, to)` ở hai thời điểm có thể cho hai tập nến khác nhau. Có hash thì phát hiện được; không có thì hai experiment "cùng dataset" thực ra chạy trên dữ liệu khác nhau mà không ai biết (`specs/market-data.md` luồng E).
+> **Composite root và child được resolve riêng.** `experiments.strategy_version_id` trỏ tới version ảo `composite@1.0.0` (`is_composite=true`, `family=NULL`) để FK/provenance của combiner ổn định. Trước khi ghi snapshot, service vẫn phải resolve từng child theo `(strategy_id, version)`, kiểm tra `code_fingerprint` và nhúng definition đầy đủ vào `candidate_definition`; root không phải là một child và không cho phép nesting.
+
+> **`content_hash` của dataset nằm trong snapshot, không chỉ `dataset_version`.** Binance đôi khi revise nến. Cùng một `(provider, symbol, timeframe, from, to)` ở hai thời điểm có thể cho hai tập nến khác nhau. Có hash thì phát hiện được; không có thì hai experiment "cùng dataset" thực ra chạy trên dữ liệu khác nhau mà không ai biết (`specs/market-data.md` luồng E).
 
 Schema — tên cột dùng đúng như `design.md` §4.2:
 
 ```sql
 experiments(id UUID PK, owner_id FK users, strategy_version_id UUID NOT NULL FK strategy_versions(id),
-            candidate_definition JSONB NOT NULL, candidate_hash CHAR(64) NOT NULL,
+            candidate_definition JSONB NOT NULL, candidate_hash CHAR(64) NOT NULL, -- lowercase hex, không có prefix
             market_dataset_id UUID NOT NULL FK market_datasets(id),
             initial_capital NUMERIC(20,8) DEFAULT 10000, fee_bps SMALLINT DEFAULT 10,
             slippage_bps SMALLINT DEFAULT 5,
             fill_policy fill_policy_enum DEFAULT 'next_candle_open',   -- next_candle_open|same_candle_close
             position_policy position_policy_enum DEFAULT 'long_only',  -- long_only|long_short
-            open_position_at_end VARCHAR(24) DEFAULT 'close_at_last_candle',
+            open_position_at_end open_position_policy_enum NOT NULL DEFAULT 'close_at_last_candle',
             -- Risk policy: SL/TP là MVP (design.md ADR-017). NULL = không có SL/TP.
             stop_loss_pct NUMERIC(6,3), take_profit_pct NUMERIC(6,3),
             intrabar_priority VARCHAR(20) NOT NULL DEFAULT 'stop_loss_first'
                               CHECK (intrabar_priority IN ('stop_loss_first','take_profit_first')),
             evaluator_version VARCHAR(24) NOT NULL,
-            search_candidate_id UUID FK search_candidates(id),         -- NULL nếu tạo tay
+            search_candidate_id UUID UNIQUE FK search_candidates(id),   -- NULL nếu tạo tay; canonical one-to-one link
             created_at,
             CHECK (fee_bps >= 0 AND slippage_bps >= 0), CHECK (initial_capital > 0),
             CHECK (stop_loss_pct   IS NULL OR (stop_loss_pct > 0 AND stop_loss_pct < 100)),
@@ -86,10 +91,16 @@ CREATE INDEX idx_experiments_owner ON experiments(owner_id, created_at DESC);
 CREATE INDEX idx_experiments_hash  ON experiments(candidate_hash, market_dataset_id);
 ```
 
+`experiments.search_candidate_id` là **liên kết canonical** cho candidate đã được backtest. Một candidate mới và experiment tương ứng được ghi trong cùng transaction với `backtest_jobs`; bảng `search_candidates` không duy trì cột FK ngược. `UNIQUE` trên FK cho phép nhiều experiment tạo tay (`NULL`) nhưng cấm một candidate bị gắn vào hai experiment. Muốn tìm experiment của candidate thì query ngược từ `experiments`, không duy trì hai con trỏ có thể lệch nhau.
+
+DB trigger `experiment_candidate_match` còn kiểm tra candidate và experiment cùng owner, cùng `market_dataset_id`, và cùng `candidate_hash`; application không thể vô tình gắn candidate của run này vào experiment của run khác.
+
+`open_position_at_end` dùng `open_position_policy_enum` và là một phần của snapshot. `discard_open_trade` bỏ row mở khỏi trade facts nhưng vẫn giữ equity mark-to-market để Return/MDD không mất PnL trong sample; `mark_unrealized` giữ row đó và Evaluator tách `trade_count` (trade đã settled) khỏi `open_trade_count`. Trong cả hai policy, Win Rate/profit factor/average trade chỉ dùng trade đã settled. Leaderboard dùng `trade_count` cho `min_trades`, nên run chỉ có vị thế mở không thể lọt Top-K một cách giả tạo.
+
 ```sql
 backtest_jobs(id UUID PK,
               experiment_id UUID UNIQUE NOT NULL FK experiments(id) ON DELETE CASCADE,
-              status job_status DEFAULT 'queued',   -- queued|leased|completed|failed
+              status job_status DEFAULT 'queued',   -- queued|leased|completed|failed|cancelled
               priority SMALLINT DEFAULT 100,        -- tạo tay 100 < search candidate 200
               attempt SMALLINT DEFAULT 0, max_attempts SMALLINT DEFAULT 3,
               leased_by VARCHAR(64),
@@ -135,9 +146,10 @@ sequenceDiagram
     GO->>GO: L1-L4 auth, RBAC, rate limit, validate schema
     GO->>EXS: create_experiment payload kèm X-Correlation-ID
     EXS->>EXS: validate LẠI, không tin caller nội bộ
-    EXS->>DB: resolve strategy_version_id từ strategy_id và version
-    Note over EXS,DB: Không tìm thấy → 422 unknown_strategy_version.<br/>FK bảo đảm snapshot không trỏ tới version không tồn tại.
-    EXS->>MS: ensure_dataset symbol, timeframe, from, to
+    EXS->>DB: resolve root strategy_version_id = composite@1.0.0
+    EXS->>EXS: resolve + validate từng child (id, version, fingerprint)
+    Note over EXS,DB: Root or child validation failure returns 422 before insert. FK keeps root version stable
+    EXS->>MS: ensure_dataset provider, symbol, timeframe, from, to
     MS->>MS: ước lượng số nến, so với max_candles_per_experiment
     Note over MS: Vượt 20.000 → 422 dataset_too_large,<br/>KHÔNG nạp nến rồi mới báo lỗi
     MS-->>EXS: market_dataset_id, candle_count, content_hash
@@ -214,7 +226,7 @@ sequenceDiagram
     DB-->>W: job_id, experiment_id, lease_token T, attempt 1 of 3
     W->>DB: UPSERT backtest_runs (status=running, worker_id, lease_token=T)<br/>WHERE status IN (queued, running, failed)
     Note over W,DB: 0 row trả về = run đã completed →<br/>đọc kết quả cũ, đánh job completed, KHÔNG chạy engine.
-    W->>DB: SELECT snapshot và nến của market_dataset_id
+    W->>DB: SELECT snapshot + market_dataset_candles<br/>WHERE market_dataset_id = snapshot.market_dataset_id<br/>ORDER BY close_time
     W->>DB: INSERT domain_events BacktestStarted (outbox, pending)
     par Vòng lặp backtest
         W->>ENG: run snapshot, candles
@@ -264,7 +276,7 @@ Nếu W1 thực ra **chưa chết** (chỉ GC pause dài) và hoàn thành backt
 
 Sau `max_attempts = 3`, job chuyển `status='failed'` với `last_error` ghi rõ, `backtest_runs.status='failed'` với `error_code`, và **candidate tương ứng được đánh `failed`** thay vì treo `queued` mãi — nếu bỏ bước cuối, `SearchRunService` sẽ đếm mãi không đủ `candidates_tested` và search run không bao giờ đạt stop condition (`specs/search-loop.md`).
 
-> **Chi tiết dễ bỏ sót: retry chỉ an toàn vì backtest là hàm thuần.** `BacktestEngine.run(snapshot, candles)` không có side effect ngoài giá trị trả về; snapshot bất biến, nến bất biến. Chạy lại lần thứ hai cho đúng kết quả lần thứ nhất. Nếu engine có state ngoài (ghi file tạm, cập nhật counter global) thì retry sẽ cho kết quả khác nhau tuỳ số lần retry, và đó là loại lỗi không tái hiện được.
+> **Chi tiết dễ bỏ sót: retry chỉ an toàn vì backtest là hàm thuần.** `BacktestEngine.run(snapshot, candles)` không có side effect ngoài giá trị trả về; snapshot experiment và snapshot nến đều bất biến. Chạy lại lần thứ hai cho đúng kết quả lần thứ nhất. Nếu engine có state ngoài (ghi file tạm, cập nhật counter global) thì retry sẽ cho kết quả khác nhau tuỳ số lần retry, và đó là loại lỗi không tái hiện được.
 
 ### F. State machine của `backtest_runs.status`
 
@@ -296,6 +308,7 @@ Không có cạnh `failed → queued`: retry là việc của **job** (`attempt 
 | --- | --- | --- | --- |
 | POST | `/api/v1/experiments` | Auth | → `202 {run_id}`; validate + quota; `200` nếu dedup hit |
 | GET | `/api/v1/experiments/{id}` | **Owner** | status + result summary + provenance |
+| GET | `/api/v1/experiments/{id}/candles` | Owner | nến từ `market_dataset_candles`, tối đa **1000** điểm/cửa sổ |
 | GET | `/api/v1/experiments/{id}/trades` | Owner | phân trang, max **200**/page |
 | GET | `/api/v1/experiments/{id}/equity` | Owner | decimate xuống ≤ **2000** điểm |
 | GET | `/api/v1/experiments/{id}/overlays` | Owner | signal + entry/exit/SL/TP marker, tính ở backend |
@@ -334,7 +347,7 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 
 **Tính đúng đắn**
 
-- `experiments` là append-only. Không có endpoint nào UPDATE row của bảng này; kiểm chứng bằng test static `grep -rn "UPDATE experiments" ai/app/` → **0** khớp.
+- `experiments` là append-only. Không có endpoint nào UPDATE row của bảng này; kiểm chứng bằng test static `grep -rn "UPDATE experiments" ai/app/` → **0** khớp, và DB trigger `experiments_immutable` là lớp bảo vệ cuối cùng.
 - `INSERT experiments` + `INSERT backtest_jobs` trong **một** transaction, không có ngoại lệ.
 - `experiment_id` UNIQUE trên `backtest_jobs` và `backtest_runs` — exactly-once đến từ constraint DB, không từ độ chính xác của lease.
 - Mọi giá trị tiền dùng `NUMERIC`, không `float`. Sai số float64 tích luỹ qua hàng nghìn trade đủ để lật dấu Total Return.
@@ -355,7 +368,8 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 - Ownership check trên **mọi** route `GET /experiments/*`; sai chủ → `404`, không `403`.
 - Quota kiểm tra **trong cùng transaction** với `INSERT`. Check ngoài transaction là TOCTOU: hai request đồng thời đều thấy còn slot rồi đều insert.
 - `error_detail` của run không bao giờ đi ra client nguyên văn — API chỉ trả `error_code` domain-level và `request_id`. Stack trace, tên bảng, SQL message chỉ nằm trong log server.
-- Snapshot chỉ nhận `symbol` thuộc `market_pairs` active và `timeframe` thuộc enum; không có đường nào để một chuỗi tự do từ client đi vào truy vấn nến.
+- Snapshot chỉ nhận `(provider, symbol)` thuộc `market_pairs` active và `timeframe` thuộc enum; không có đường nào để một chuỗi tự do từ client đi vào truy vấn nến.
+- Worker chỉ đọc `market_dataset_candles` theo `market_dataset_id`; operational cache `candles` chỉ phục vụ chart/realtime và không thể làm thay đổi input của experiment đã tạo.
 - Worker không mở cổng nào, không nhận HTTP request. Nó chỉ đọc queue — bề mặt tấn công của nó là **rỗng** về phía network.
 
 **Khả năng mở rộng**
@@ -377,7 +391,7 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 ## Tiêu chí chấp nhận
 
 - [ ] AC-01: `POST /api/v1/experiments` với dataset 200 nến → phản hồi là `202` kèm `run_id` trong **< 250 ms**, và `backtest_runs.status` lúc đó là `queued` — chứng minh không có đường inline nào.
-- [ ] AC-02: Test static `grep -rn "UPDATE experiments" ai/app/` → **0** khớp; `grep -rn "run_backtest" server/` → 0 khớp (Go không chạy domain).
+- [ ] AC-02: Test static `grep -rn "UPDATE experiments" ai/app/` → **0** khớp; `grep -rn "run_backtest" server/` → 0 khớp (Go không chạy domain); Worker chỉ query `market_dataset_candles` cho input.
 - [ ] AC-03: Kill process Python giữa lúc `INSERT experiments` và `INSERT backtest_jobs` (inject exception) → `SELECT count(*) FROM experiments` không tăng, `backtest_jobs` không tăng.
 - [ ] AC-04: Chạy 4 worker, enqueue 40 job → `SELECT experiment_id, count(*) FROM backtest_runs GROUP BY 1 HAVING count(*) > 1` trả **0 row**; tổng `trades` bằng đúng tổng của 40 run chạy tuần tự.
 - [ ] AC-05: `SIGKILL` một worker giữa job → trong **≤ 120 s** job đó được worker khác claim với `attempt=2` và `lease_token` khác; sau đó hoàn thành với `worker_id` khác. Không job nào còn `leased` sau khi queue rỗng, và **không** run nào còn `running`.
@@ -389,8 +403,10 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 - [ ] AC-08: `POST /experiments` hai lần với payload giống hệt, chờ lần đầu `completed` → lần hai trả `200` với **cùng** `run_id` và `reused: true`; `count(*) FROM experiments` chỉ tăng 1.
 - [ ] AC-09: Cùng payload với `force=true` → tạo experiment **mới**, và hai run cho `total_return_pct` **giống nhau đến từng chữ số** (kiểm chứng determinism).
 - [ ] AC-10: `POST /experiments` với `from=2017-01-01&to=2026-01-01&timeframe=1m` → `422 dataset_too_large`; RSS của process Python không tăng quá **50 MiB** trong lúc xử lý request đó.
-- [ ] AC-11: User A tạo experiment, user B (`RESEARCHER`) gọi cả 4 route `GET /experiments/{id}*` → cả 4 trả `404` và response không chứa `candidate_hash`, `owner_id`, hay bất kỳ metric nào.
-- [ ] AC-12: `GET /experiments/{id}` ngay sau khi tạo → `200` với `status="queued"`, `result=null`; sau khi worker xong → `200` với `status="completed"` và đầy đủ provenance (strategy version, dataset `content_hash`, `fee_bps`, `fill_policy`, `evaluator_version`).
+- [ ] AC-11: User A tạo experiment, user B (`RESEARCHER`) gọi cả 5 route `GET /experiments/{id}*` (summary, candles, trades, equity, overlays) → cả 5 trả `404` và response không chứa `candidate_hash`, `owner_id`, hay bất kỳ metric nào.
+- [ ] AC-12: `GET /experiments/{id}` ngay sau khi tạo → `200` với `status="queued"`, `result=null`; sau khi worker xong → `200` với `status="completed"` và đầy đủ provenance (strategy version, dataset `content_hash`, toàn bộ execution assumptions gồm `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`, `risk_policy`, `evaluator_version`).
+- [ ] AC-12b: Gắn cùng `search_candidate_id` vào hai experiment → `UNIQUE` reject; gắn candidate với owner/dataset/hash khác → trigger `experiment_candidate_match` reject.
+- [ ] AC-12c: Thử `UPDATE` hoặc `DELETE` một experiment đã tạo → DB trigger `experiments_immutable` reject; provenance và job liên quan không đổi.
 - [ ] AC-13: `GET /experiments/{id}/equity` của run 20.000 nến → **≤ 2000** điểm, và giá trị `max_drawdown` tính từ chuỗi đã decimate lệch **< 0,1** điểm phần trăm so với chuỗi gốc.
 - [ ] AC-14: Publish `BacktestCompleted` hai lần cho cùng run → `count(*) FROM evaluations WHERE backtest_run_id=$1` bằng **1**; `leaderboard_entries` không có row trùng.
 - [ ] AC-14b: **Outbox không mất event.** `SIGKILL` process Python ngay sau khi worker COMMIT kết quả (trước khi dispatcher chạy) → sau restart, `domain_events` vẫn có row `BacktestCompleted` với `dispatch_status='pending'`, dispatcher giao nó, và `evaluations` có đúng 1 row. Không có kết quả nào tồn tại mà thiếu evaluation (`design.md` §5.7).

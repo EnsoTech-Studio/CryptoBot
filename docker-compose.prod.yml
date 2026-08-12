@@ -1,0 +1,10 @@
+name: cryptobot
+
+# Target production override.
+# docker-compose.yml remains the local scaffold profile and intentionally exposes
+# Python for direct smoke testing. This override removes that public surface.
+services:
+  ai:
+    ports: !reset []
+    expose:
+      - "8000"

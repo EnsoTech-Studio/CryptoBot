@@ -6,7 +6,7 @@ Module này trả lời đúng một câu hỏi: *"Trên chart của panel này,
 
 Overlay live gồm ba loại: **indicator series** (`moving_average`, `rsi`, `bollinger_bands`, `macd_line`, `macd_signal`), **zone** (`support_zone`, `resistance_zone`) và **signal marker** (`buy_signal`, `sell_signal`). Danh sách overlay khả dụng cho một strategy không do frontend đoán — nó đọc `strategy_versions.overlay_types` qua `GET /api/v1/strategies`. Thêm `MACDStrategy` khai báo `overlay_types = ["macd_line","macd_signal","buy_signal","sell_signal"]` thì chart tự biết vẽ thêm hai đường, `web/` sửa **0 dòng** (`design.md` §8.1, ADR-002).
 
-Bốn panel trên dashboard là bốn **subscription độc lập**, khoá là `(symbol, timeframe, strategy_id@version, config_hash)`. Panel 1 xem `BTCUSDT 5m RSI(14)`, Panel 2 xem `BTCUSDT 15m RSI(21)`: hai khoá khác nhau ở cả `timeframe` lẫn `config_hash`, nên `CandleClosed` của `5m` chỉ chạm Panel 1, và delta của RSI(21) không bao giờ lọt vào series của RSI(14).
+Bốn panel trên dashboard là bốn **subscription độc lập**, khoá là `(provider, symbol, timeframe, strategy_id@version, config_hash)`. Panel 1 xem `binance/BTCUSDT 5m RSI(14)`, Panel 2 xem `binance/BTCUSDT 15m RSI(21)`: hai khoá khác nhau ở cả `timeframe` lẫn `config_hash`, nên `CandleClosed` của `5m` chỉ chạm Panel 1, và delta của RSI(21) không bao giờ lọt vào series của RSI(14). Provider là một phần của identity để `binance/BTCUSDT` không nhận nhầm delta từ `okx/BTCUSDT`.
 
 Execution marker (`entry`, `exit`, `stop_loss`, `take_profit`) **không** thuộc đặc tả này. Chúng cần fill policy, position state và execution assumptions đã ghi lại của một backtest run nên không suy ra được từ signal live — xem `specs/visualization.md`.
 
@@ -15,7 +15,7 @@ Execution marker (`entry`, `exit`, `stop_loss`, `take_profit`) **không** thuộ
 - **0 domain calculation trong `web/`**: mọi giá trị overlay là số backend đã tính; frontend chỉ format và vẽ.
 - Overlay chỉ có điểm trên nến **đã đóng**. Nến provisional có nến (để chart mượt) nhưng **không có** điểm overlay và **không có** signal marker.
 - Đổi timeframe của Chart 1 → Chart 2/3/4 re-render **0 lần**.
-- **0 frame** lọt sang subscription khác `config_hash`, dù cùng `(symbol, timeframe)`.
+- **0 frame** lọt sang subscription khác `config_hash` hoặc provider, dù cùng `(symbol, timeframe)`.
 - Feed stale → nến và overlay lịch sử **vẫn render** kèm badge `STALE`; không nội suy, không fake điểm mới (ADR-013).
 - Thêm strategy mới = 0 dòng frontend, 0 dòng Go, 0 migration.
 
@@ -37,17 +37,18 @@ def config_hash(strategy_id: str, version: str, validated_params: dict) -> str:
 > Không có `canonical_json` thì `{"a":1,"b":2}` và `{"b":2,"a":1}` cho hai hash khác nhau, và dedup/cache **vô hiệu một cách âm thầm** — không lỗi, chỉ là mỗi panel tự tính lại một series y hệt và cache hit rate = 0. Cùng lý do với `candidate_hash` ở ADR-003.
 
 ```
-subscription_key = "{symbol}|{timeframe}|{strategy_id}@{version}|{config_hash}"
-ví dụ:  BTCUSDT|5m|rsi@1.0.0|sha256:4d1f9c...
+subscription_key = "{provider}|{symbol}|{timeframe}|{strategy_id}@{version}|{config_hash}"
+ví dụ:  binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1f9c...
 ```
 
-`config_hash` là **bắt buộc** trong khoá vì `RSI(14,30,70)` và `RSI(21,30,70)` là hai series khác nhau trên cùng `(BTCUSDT, 5m)`. Bỏ nó ra khỏi khoá thì Panel 1 nhận cả delta của Panel 2 và vẽ sai — sai theo cách trông rất hợp lý, vì đường vẫn liền mạch.
+`provider` và `config_hash` đều **bắt buộc** trong khoá: `RSI(14,30,70)` và `RSI(21,30,70)` là hai series khác nhau trên cùng `(binance/BTCUSDT, 5m)`, còn Binance và OKX có thể cùng cung cấp `BTCUSDT`. Bỏ một trong hai ra khỏi khoá thì Panel nhận delta của series/provider khác và vẽ sai — sai theo cách trông rất hợp lý, vì đường vẫn liền mạch.
 
 ### `GET /api/v1/markets/chart-overlays`
 
 ```
 GET /api/v1/markets/chart-overlays
-      ?symbol=BTCUSDT
+      ?provider=binance
+      &symbol=BTCUSDT
       &timeframe=5m
       &strategy=rsi@1.0.0
       &config_hash=sha256:4d1f9c...
@@ -57,6 +58,7 @@ GET /api/v1/markets/chart-overlays
 
 ```json
 {
+  "provider": "binance",
   "symbol": "BTCUSDT",
   "timeframe": "5m",
   "strategy": "rsi@1.0.0",
@@ -115,14 +117,14 @@ export interface OverlayMarker {
 
 ```json
 // client → server
-{ "action": "subscribe",   "key": "BTCUSDT|5m|rsi@1.0.0|sha256:4d1f9c...", "req": "c17" }
-{ "action": "unsubscribe", "key": "BTCUSDT|5m|rsi@1.0.0|sha256:4d1f9c...", "req": "c18" }
+{ "action": "subscribe",   "key": "binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1f9c...", "req": "c17" }
+{ "action": "unsubscribe", "key": "binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1f9c...", "req": "c18" }
 
 // server → client: ack
-{ "type": "subscribed", "key": "BTCUSDT|5m|...", "req": "c17", "seq": 8471 }
+{ "type": "subscribed", "key": "binance|BTCUSDT|5m|...", "req": "c17", "seq": 8471 }
 
 // server → client: nến provisional (KHÔNG kèm overlay)
-{ "type": "candle", "key": "BTCUSDT|5m|...", "is_closed": false,
+{ "type": "candle", "key": "binance|BTCUSDT|5m|...", "is_closed": false,
   "candle": { "t": "2026-08-11T08:00:00Z", "o": 118000, "h": 118220, "l": 117960, "c": 118150 } }
 
 // server → client: nến đóng + overlay delta, cùng seq
@@ -153,7 +155,7 @@ export interface OverlayMarker {
 │ │ ── main pane: nến + MA    │ │ ── main pane: nến            │ │
 │ │ ── sub pane : rsi 0..100  │ │ ── sub pane : rsi 0..100     │ │
 │ │ ▲BUY 03:40   ▼SELL 06:15  │ │ ▲BUY 04:00                   │ │
-│ │ sub: BTCUSDT|5m|rsi|4d1f  │ │ sub: BTCUSDT|15m|rsi|9b02    │ │
+│ │ sub: binance|BTCUSDT|5m   │ │ sub: binance|BTCUSDT|15m     │ │
 │ └───────────────────────────┘ └──────────────────────────────┘ │
 │ ┌── Panel 3 ────────────────┐ ┌── Panel 4 ───────────────────┐ │
 │ │ ETHUSDT [1h ▾]            │ │ BTCUSDT [4h ▾]  STALE ⚠      │ │
@@ -180,18 +182,18 @@ sequenceDiagram
     API-->>P: rsi@1.0.0 parameters_schema + overlay_types
     Note over P: StrategyPicker sinh form từ parameters_schema.<br/>KHÔNG hardcode field name của RSI.
 
-    P->>API: GET /markets/candles symbol=BTCUSDT tf=5m from to
-    API->>DB: SELECT candles WHERE close_time BETWEEN
+    P->>API: GET /markets/candles provider=binance symbol=BTCUSDT tf=5m from to
+    API->>DB: SELECT FROM read.candles_v1 WHERE close_time BETWEEN
     API-->>P: tối đa 1000 nến đã đóng
 
-    P->>API: GET /markets/chart-overlays strategy=rsi@1.0.0 config_hash=4d1f
+    P->>API: GET /markets/chart-overlays provider=binance strategy=rsi@1.0.0 config_hash=4d1f
     API->>LAB: compute_overlay snapshot
     LAB->>DB: SELECT candles cùng range
     LAB->>LAB: indicator + strategy.analyze cho từng nến đã đóng
     LAB-->>API: series + markers + warmup_candles + seq
     API-->>P: overlay đã tính
 
-    P->>WS: subscribe key BTCUSDT · 5m · rsi@1.0.0 · sha256 4d1f
+    P->>WS: subscribe key binance · BTCUSDT · 5m · rsi@1.0.0 · sha256 4d1f
     WS->>WS: registry key -> add conn
     WS-->>P: subscribed seq=8471
     Note over P,WS: Fetch REST TRƯỚC rồi subscribe, và dùng seq<br/>để phát hiện frame nào đã nằm trong snapshot REST.
@@ -202,7 +204,7 @@ Thứ tự "REST trước, WS sau" là có chủ đích. Nếu subscribe trướ
 ### B. Nến provisional — có nến, không có overlay
 
 1. `MarketPriceUpdated` đến WS Hub mỗi 1–2 s cho nến đang chạy.
-2. Hub gửi frame `type=candle`, `is_closed=false` tới các connection khớp `(symbol, timeframe)` bất kể `config_hash` — vì nến là dữ liệu chung, không phụ thuộc strategy.
+2. Hub gửi frame `type=candle`, `is_closed=false` tới các connection khớp `(provider, symbol, timeframe)` bất kể `config_hash` — vì nến là dữ liệu chung của một provider, không phụ thuộc strategy.
 3. Client **update tại chỗ** nến cuối, đánh dấu provisional (viền nhạt / hollow body).
 4. **Không** có `overlay_delta` cho nến provisional. Series overlay kết thúc ở nến đã đóng cuối cùng; UI vẽ đoạn cuối bằng nét mờ dần hoặc để trống một cột.
 5. Nến provisional **không ghi DB** (`specs/market-data.md`).
@@ -226,17 +228,17 @@ sequenceDiagram
     participant P2 as Panel 2 rsi p=21
     participant P3 as Panel 3 tf=1h
 
-    MS->>EV: CandleClosed BTCUSDT 5m T=08:00
+    MS->>EV: CandleClosed binance/BTCUSDT 5m T=08:00
     EV->>OC: CandleClosed
-    OC->>HUB: GET active config_hash cho BTCUSDT 5m
-    HUB-->>OC: 4d1f rsi p=14 · 9b02 rsi p=21
+    OC->>HUB: GET active config_hash cho binance/BTCUSDT 5m
+    HUB-->>OC: 4d1f rsi p=14 · 9b02 rsi p=21 (provider=binance)
     loop mỗi config_hash đang được subscribe
         OC->>OC: tính delta trên cửa sổ lookback
         OC->>HUB: ChartOverlayUpdated key delta revised_from
     end
     HUB->>P1: overlay_delta 4d1f
     HUB->>P2: overlay_delta 9b02
-    Note over P3: 0 frame. Khoá là BTCUSDT · 1h · ...<br/>state không đổi, React không re-render.
+    Note over P3: 0 frame. Khoá là binance · BTCUSDT · 1h · ...<br/>state không đổi, React không re-render.
 ```
 
 `OverlayCalculator` chỉ tính cho `config_hash` **đang có ít nhất 1 subscriber**. Đây là điểm khiến chi phí tỉ lệ với số panel đang mở, không tỉ lệ với số strategy đã đăng ký trong registry.
@@ -244,17 +246,17 @@ sequenceDiagram
 ### D. Đổi timeframe Chart 1 từ `5m` sang `1h`
 
 1. User chọn `1h` trong dropdown của Panel 1. Handler nằm **trong** `ChartPanel`, ghi vào state của panel đó (`usePanelState(panelId)`).
-2. Client gửi `unsubscribe BTCUSDT|5m|rsi@1.0.0|4d1f`, rồi `subscribe BTCUSDT|1h|rsi@1.0.0|4d1f`. Hai frame trên **cùng** một WebSocket connection, không mở connection mới.
-3. Song song: `AbortController` huỷ mọi request REST của Panel 1 còn đang bay; fetch `GET /markets/candles?...timeframe=1h` và `GET /markets/chart-overlays?...timeframe=1h`.
-4. Hub xoá conn khỏi `registry["BTCUSDT|5m|..."]`; nếu set rỗng → xoá luôn khoá → `OverlayCalculator` ngừng tính cho `config_hash` đó ở `5m`.
+2. Client gửi `unsubscribe binance|BTCUSDT|5m|rsi@1.0.0|4d1f`, rồi `subscribe binance|BTCUSDT|1h|rsi@1.0.0|4d1f`. Hai frame trên **cùng** một WebSocket connection, không mở connection mới.
+3. Song song: `AbortController` huỷ mọi request REST của Panel 1 còn đang bay; fetch `GET /markets/candles?...provider=binance&timeframe=1h` và `GET /markets/chart-overlays?...provider=binance&timeframe=1h`.
+4. Hub xoá conn khỏi `registry["binance|BTCUSDT|5m|..."]`; nếu set rỗng → xoá luôn khoá → `OverlayCalculator` ngừng tính cho `config_hash` đó ở `5m`.
 5. Panel 2/3/4: không gửi frame, không nhận frame, prop không đổi, state không đổi → **0 re-render** (đo bằng render counter trong `React.Profiler`).
 
 > **Quy tắc frontend không thương lượng:** state của panel nằm trong component của panel đó, hoặc là một entry riêng keyed by `panelId` trong store. **Không** có object `dashboardState` chung. Một object chung khiến `setState` của Panel 1 tạo object mới → mọi consumer re-render, và bug này "trông đúng" tuyệt đối trên màn hình — chỉ profiler phát hiện được. Đây là lý do S1 được đo bằng render counter chứ không bằng mắt.
 
 ### E. Feed stale và phục hồi
 
-1. `MarketService` phát `StreamStale(symbol, timeframe, last_closed_at, reconnect_count)`.
-2. Hub broadcast tới mọi subscription khớp `(symbol, timeframe)` — mọi `config_hash`.
+1. `MarketService` phát `StreamStale(provider, symbol, timeframe, last_closed_at, reconnect_count)`.
+2. Hub broadcast tới mọi subscription khớp `(provider, symbol, timeframe)` — mọi `config_hash`.
 3. UI: badge `STALE · cập nhật lần cuối 07:55 UTC` ở góc panel; nến và overlay lịch sử **vẫn render bình thường**; không vẽ điểm mới.
 4. `StreamRecovered` → xoá badge, và client **refetch REST** thay vì tin vào delta: khoảng nến bị thiếu đã được backfill nên overlay phải tính lại trên cửa sổ đó.
 5. `GET /markets/status` là nguồn để UI kiểm tra lại sau khi reload trang (WS event đã bay qua thì không lấy lại được).
@@ -314,7 +316,7 @@ Im lặng hiển thị nến cũ như thể mới là kịch bản tệ nhất: 
 
 - Endpoint public nhưng rate limit 120 req/phút/IP, burst 30.
 - WS: ≤ 8 subscription (anonymous) / ≤ 16 (auth) mỗi connection; ≤ 4 connection/IP.
-- `subscription_key` được **parse và validate** ở `server/internal/ws/subscription.go`: symbol ∈ `market_pairs` active, timeframe ∈ enum, strategy version tồn tại, `config_hash` khớp regex `^sha256:[0-9a-f]{64}$`. Key là input từ ngoài → untrusted.
+- `subscription_key` được **parse và validate** ở `server/internal/ws/subscription.go`: provider + symbol ∈ `market_pairs` active, timeframe ∈ enum, strategy version tồn tại, `config_hash` khớp regex `^sha256:[0-9a-f]{64}$`. Key là input từ ngoài → untrusted.
 - Không forward payload gốc của Binance ra client (`specs/market-data.md`). Frame WS dùng schema nội bộ.
 - Không trả stack trace, tên bảng, hay tên file model trong `error.message`.
 

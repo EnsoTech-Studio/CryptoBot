@@ -66,7 +66,7 @@ Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/
    | 2   | C4 Diagram — Level 1 (Context), Level 2 (Container), Level 3 (Component) |
    | 3   | High-Level Architecture + 6 điểm tích hợp      |
    | 4   | Thiết kế cơ sở dữ liệu (DDL đầy đủ + ERD + đường provenance) |
-   | 5   | Domain contract (7 port) + Event vocabulary (15 event) + **transactional outbox** (§5.7) + **`POST /internal/events`** (§5.8) |
+   | 5   | Domain contract (7 domain port + `JobDispatcher` seam) + Event vocabulary (15 event) + **transactional outbox** (§5.7) + **`POST /internal/events`** (§5.8) |
    | 6   | 4 luồng nghiệp vụ: Realtime, Strategy, Search/Backtest, News/Sentiment |
    | 7   | Kiểm soát truy cập: RBAC + ownership, Defense in Depth 4 lớp |
    | 8   | 4 cơ chế bảo vệ: Plugin Registry, Quota/Rate limit, Job Queue (+ **lease token** §8.3.1), Observability |
@@ -134,7 +134,7 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | §32.3 Realtime      | Backend-mediated WebSocket + subscription per panel; `POST /internal/events` | `design.md` §6.1, §5.8, ADR-001, ADR-016 | S2   |
 | §32.4 Reliability   | Reconnect + backfill; cô lập lỗi từng module; outbox không mất event; lease token | `design.md` §1.5, §5.7, §6.1, §8.3.1 | S8, S9 |
 | §32.5 Performance   | `FOR UPDATE SKIP LOCKED` + N worker + bounded input  | `design.md` §8.3, §8.3.1, ADR-014 | S10  |
-| §32.6 Maintainability | Ownership rõ ràng (§1.2) + 7 port + Dependency Inversion | `design.md` §1.2, §5.1, ADR-004 | S4   |
+| §32.6 Maintainability | Ownership rõ ràng (§1.2) + 7 domain port + `JobDispatcher` seam + Dependency Inversion | `design.md` §1.2, §5.1, ADR-004 | S4   |
 | §32.7 Observability | Metric theo domain + correlation ID + progress panel | `design.md` §8.4 · `specs/observability.md` | S6 |
 
 ### Scenario đánh giá và 8 câu hỏi
@@ -195,6 +195,8 @@ Năm nguyên tắc được áp dụng nhất quán trong toàn bộ blueprint, 
 
 ## Phiên bản
 
+- **v1.3** — 2026-08-12 — Đóng contract read projection bằng schema/view/role/grant DDL; thêm DB guard cho artifact bất biến; version dataset `revision_no` + advisory lock; làm rõ ML integration seam, giới hạn public/internal và cách đếm domain port.
+- **v1.2** — 2026-08-12 — Đồng bộ provenance với `risk_policy`; làm rõ SL/TP trigger so với execution fill; thêm virtual composite root cho FK; khóa causal `IndicatorView` và family constraint; xác nhận `requirements.html` là nguồn yêu cầu chính.
 - **v1.1** — 2026-08-11 — Làm rõ ranh giới kiến trúc sau review: architectural style theo từng process (§1.1) + Service Boundary & Ownership (§1.2) + read projection cho Go (§1.2.5) + artifact vs workload (§1.3.1); chốt transactional outbox (§5.7) và `POST /internal/events` (§5.8); chốt lease token cho retry/take-over (§8.3.1); tách Target Architecture khỏi Delivery Roadmap (§12.0); thêm ADR-015, ADR-016; sửa bug `weighted_vote` với `threshold = 0`; phân loại nguồn gốc yêu cầu [SRC]/[PD]/[NFR] (`proposal.md` §4.4) + điều kiện đo cho mọi SLO (§2.2); thêm 19 sơ đồ render sẵn ở `assets/`.
 - **v1.0** — 2026-08-11 — Bản blueprint đầu cho phần thiết kế kiến trúc.
 

@@ -11,9 +11,10 @@ sequenceDiagram
     GO->>GO: L1-L4 auth, RBAC, rate limit, validate schema
     GO->>EXS: create_experiment payload kèm X-Correlation-ID
     EXS->>EXS: validate LẠI, không tin caller nội bộ
-    EXS->>DB: resolve strategy_version_id từ strategy_id và version
-    Note over EXS,DB: Không tìm thấy → 422 unknown_strategy_version.<br/>FK bảo đảm snapshot không trỏ tới version không tồn tại.
-    EXS->>MS: ensure_dataset symbol, timeframe, from, to
+    EXS->>DB: resolve root strategy_version_id = composite@1.0.0
+    EXS->>EXS: resolve + validate từng child (id, version, fingerprint)
+    Note over EXS,DB: Root or child validation failure returns 422 before insert. FK keeps root version stable
+    EXS->>MS: ensure_dataset provider, symbol, timeframe, from, to
     MS->>MS: ước lượng số nến, so với max_candles_per_experiment
     Note over MS: Vượt 20.000 → 422 dataset_too_large,<br/>KHÔNG nạp nến rồi mới báo lỗi
     MS-->>EXS: market_dataset_id, candle_count, content_hash

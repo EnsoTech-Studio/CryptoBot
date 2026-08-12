@@ -1,6 +1,6 @@
 # Crypto Strategy Lab — Technical Design
 
-> Phần 1 / Blueprint • Tài liệu thiết kế kỹ thuật • Phiên bản 1.1
+> Phần 1 / Blueprint • Tài liệu thiết kế kỹ thuật • Phiên bản 1.3
 
 **Mục lục**
 
@@ -81,7 +81,7 @@ Nhưng "event-driven" ở đây **không** có nghĩa "in-process dispatcher là
 | --- | --- | --- |
 | Vai trò | Public backend / boundary — **edge service** | Internal computation domain service |
 | Ai gọi tới | Browser (internet công khai) | **Chỉ** Go API và Worker (internal network) |
-| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, quota enforcement, request validation, error mapping, request/correlation ID, WS subscription registry và fan-out | Market normalization, indicator, strategy registry, composite, experiment snapshot, backtest, evaluation, ranking, news orchestration, sentiment |
+| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, request validation, error mapping, request/correlation ID, WS subscription registry và fan-out; khởi tạo quota admission qua command atomic | Market normalization, indicator, strategy registry, composite, experiment snapshot, backtest, evaluation, ranking, news orchestration, sentiment; thực thi quota admission transaction và domain writes |
 | **Không** được sở hữu | Thuật toán strategy, backtest math, công thức metric/score, quyết định domain | Trình bày HTTP cho browser, session người dùng, phát hành/xác thực token |
 | Ngôn ngữ được chọn vì | Goroutine + channel: fan-out WebSocket I/O-bound, không GIL | numpy/pandas cho indicator CPU-bound; hệ sinh thái ML cho sentiment |
 
@@ -89,7 +89,7 @@ Nhưng "event-driven" ở đây **không** có nghĩa "in-process dispatcher là
 
 Không phải vì "Python có sẵn trong scaffold". Bốn lý do kiến trúc:
 
-1. **Cùng dữ liệu, cùng vòng đời.** Indicator đọc `candles`; backtest đọc `candles` + `ExperimentSnapshot`; evaluation đọc `trades`; ranking đọc `evaluations`. Đây là **một chuỗi biến đổi trên cùng một tập dữ liệu**. Tách ra process khác nhau nghĩa là mỗi bước phải serialize hàng chục nghìn nến qua network — chi phí thuần, không mua được gì.
+1. **Cùng dữ liệu, cùng vòng đời.** Indicator/overlay realtime đọc operational cache `candles`; backtest đọc `market_dataset_candles` + `ExperimentSnapshot`; evaluation đọc `trades`; ranking đọc `evaluations`. Đây là **một chuỗi biến đổi trên cùng một dataset snapshot**. Tách ra process khác nhau nghĩa là mỗi bước phải serialize hàng chục nghìn nến qua network — chi phí thuần, không mua được gì.
 2. **Reproducibility đòi hỏi một implementation duy nhất.** Nếu indicator tồn tại ở cả Go (cho overlay realtime) và Python (cho backtest), sẽ có ngày RSI trên chart khác RSI mà backtest đã dùng. Đó là hai nguồn chân lý (§9.3). Một implementation, ở Python, là ràng buộc về tính đúng đắn.
 3. **CPU-bound nên tách khỏi I/O-bound.** Backtest chiếm CPU liên tục 2–40 s. Nếu nó chạy cùng process với WebSocket loop thì GIL và CPU contention làm độ trễ realtime tăng vọt. Tách Go ra để backtest nặng **không** ảnh hưởng độ trễ chart.
 4. **Sentiment model là Python.** Model ML sống trong Python. Crawler chỉ collect và publish `NewsCollected`; Sentiment Service subscribe (§9.5) — cả hai đều trong domain core nên không phát sinh network hop cho một pipeline nội bộ.
@@ -111,27 +111,313 @@ Ranh giới này được chốt để không có ownership chồng chéo ngầm
 
 | Nhóm bảng | Owner (write + migration) | Bên còn lại |
 | --- | --- | --- |
-| **Domain**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs`, `domain_events`, `event_consumptions` | **Python Strategy Lab** (+ Worker, cùng codebase) | Go: **read-only projection**, xem §1.2.5 |
-| **Edge**: `users`, `refresh_tokens`, `user_quotas` | **Go API** | Python: không đọc, không ghi. Nhận `principal` qua header nội bộ |
+| **Domain**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs`, `domain_events`, `event_consumptions` | **Python Strategy Lab** (+ Worker, cùng codebase) | Go: **read-only projection**, xem §1.2.5 |
+| **Edge**: `users`, `refresh_tokens`, `user_quotas` | **Go API** | Python không có quyền đọc/ghi trực tiếp. Ngoại lệ duy nhất là command `SearchAdmission` chạy qua một `SECURITY DEFINER` transaction function, được migration owner cấp `EXECUTE` có kiểm soát để atomically đọc quota và tạo domain run. |
 
 Alembic migration của bảng domain nằm trong repo Python. Go **không** có migration cho bảng domain và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
 
 #### 1.2.5 Read projection — CQRS read path của Go
 
-Có hai chỗ trong specs cho thấy Go `SELECT` trực tiếp dữ liệu domain (`specs/chart-overlay.md` — `GET /markets/candles`; `specs/visualization.md` §A — `GET /experiments/{id}`). Đây **không** phải ownership chồng chéo; nó là một **read path riêng biệt, có tên, có giới hạn**:
+Các specs market, experiment, visualization, leaderboard, search và auth đều có read
+path đi qua Go. Các sequence diagram phải ghi rõ tên `read.*` view; đây **không**
+phải ownership chồng chéo mà là một **read path riêng biệt, có tên, có giới hạn**:
 
 | Thuộc tính | Quy định |
 | --- | --- |
 | Tên gọi | **Read projection** — CQRS read path. Write đi qua Python; read có thể đi trực tiếp. |
-| Schema được phép đọc | **Chỉ** các view trong schema `read`: `read.candles_v1`, `read.experiment_summary_v1`, `read.trades_v1`, `read.equity_v1`, `read.leaderboard_v1`, `read.news_v1`. Không đọc bảng gốc. |
+| Schema được phép đọc | **Chỉ** các view trong schema `read`: `read.candles_v1`, `read.market_datasets_v1`, `read.dataset_candles_v1`, `read.experiment_summary_v1`, `read.trades_v1`, `read.run_signals_v1`, `read.equity_v1`, `read.leaderboard_v1`, `read.news_v1`, `read.search_run_v1`, `read.search_run_quota_v1`. Không đọc bảng gốc. |
 | Quyền DB | Go dùng role `api_reader` có `SELECT` trên schema `read` và **không** có quyền gì trên bảng gốc. Ownership được cưỡng chế bằng `GRANT`, không bằng quy ước. |
 | View là contract | Python sở hữu định nghĩa view. Đổi bảng gốc mà giữ nguyên view → Go không phải sửa. Đổi view = breaking change, phải version (`_v1` → `_v2`, giữ song song một phase). |
 | Consistency model | Cùng một PostgreSQL nên **không có replication lag**. Nhưng "vừa `202 Accepted` mà `status` vẫn `queued`" là **đúng**, không phải stale — job chưa chạy. UI biết khi nào refetch qua WS event (`BacktestCompleted`, `LeaderboardUpdated`), không poll cho tới khi thấy dữ liệu. |
 | Không được làm gì trong read path | Không JOIN để tính toán domain (score, metric, PnL). Nếu Go cần một con số phái sinh, con số đó phải đã được Python tính và ghi vào cột. Go chỉ `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`. |
 | Vì sao không route mọi read qua Python | `GET /markets/candles` trả tới 1000 nến và là endpoint bị gọi nhiều nhất. Thêm một hop Go→Python chỉ để chuyển tiếp một `SELECT` không thêm bảo đảm nào (Python cũng đọc đúng bảng đó) mà cộng 1–3 ms và một điểm hỏng nữa. |
-| Khi nào **phải** route qua Python | Mọi read cần **áp dụng logic domain**: overlay (cần indicator + fill policy), provenance resolution, aggregate sentiment theo giờ. |
+| Khi nào **phải** route qua Python | Mọi read cần **áp dụng logic domain**: overlay (cần indicator + fill policy), provenance resolution có resolve nested artifact, aggregate sentiment theo giờ. Summary/provenance phẳng đã được ghi trong `read.experiment_summary_v1` thì Go đọc trực tiếp; read snapshot candles dùng `read.dataset_candles_v1`, không query live cache. |
 
 Quy tắc một dòng để nhớ: **Go đọc cái Python đã ghi, qua view Python định nghĩa, và không tính gì thêm.**
+
+Các route public không có view trong danh sách trên (`/markets/pairs`,
+`/markets/status`, `/strategies`, `/markets/chart-overlays`, `/news/aggregate`) là
+domain reads có logic/registry/provider resolution nên Go proxy qua Python internal
+command. Chúng không được phép rơi xuống query bảng gốc từ Go.
+
+Contract tối thiểu của các view mới/quan trọng là:
+
+- `read.market_datasets_v1(id UUID, dataset_version VARCHAR, provider VARCHAR, symbol VARCHAR, timeframe, range_from TIMESTAMPTZ, range_to TIMESTAMPTZ, revision_no SMALLINT, candle_count INT, content_hash CHAR(64))`: metadata bất biến của dataset.
+- `read.dataset_candles_v1(market_dataset_id UUID, dataset_version VARCHAR, content_hash CHAR(64), open_time TIMESTAMPTZ, close_time TIMESTAMPTZ, open NUMERIC, high NUMERIC, low NUMERIC, close NUMERIC, volume NUMERIC, trade_count INT)`: đọc snapshot vật lý, dùng cho chart kết quả và không đọc bảng `candles`.
+- `read.experiment_summary_v1`: một row cho mỗi `evaluation_version` của run (hoặc một row với metric `NULL` khi Evaluator chưa chạy), chứa `backtest_run_id`, dataset metadata, strategy metadata, candidate snapshot và execution assumptions. Go chọn evaluator mới nhất bằng `ORDER BY computed_at DESC NULLS LAST`.
+- `read.trades_v1(..., signal_t TIMESTAMPTZ, ...)` và `read.run_signals_v1(...)`: hai fact projection riêng cho trade table và overlay marker.
+- `read.search_run_v1`: projection cho GET progress và ownership check của search run.
+- `read.search_run_quota_v1(owner_id UUID PRIMARY KEY, running_count INT NOT NULL, max_concurrent_runs SMALLINT NOT NULL, available_slots INT NOT NULL)`: **chỉ informational**. Go không dùng view này làm admission decision; quota được chốt atomically bởi `SearchAdmission` command.
+
+Read projection là **migration contract thật**, không phải tên gọi trong sequence diagram. Migration Python/Alembic chạy bằng schema-owner phải tạo schema/view và quyền dưới đây; Go chỉ được cấp quyền đọc các view đã version hoá:
+
+```sql
+-- Chạy bằng migration/schema owner; không chạy từ Go API.
+CREATE SCHEMA IF NOT EXISTS read;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_reader') THEN
+        CREATE ROLE api_reader NOLOGIN;
+    END IF;
+END $$;
+
+-- Không để api_reader đọc bảng gốc hoặc sequence bằng quyền mặc định.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM api_reader;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM api_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM api_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM api_reader;
+
+CREATE VIEW read.candles_v1 AS
+SELECT provider, symbol, timeframe, open_time, close_time,
+       open, high, low, close, volume, trade_count
+FROM public.candles;
+
+CREATE VIEW read.market_datasets_v1 AS
+SELECT id, dataset_version, provider, symbol, timeframe,
+       range_from, range_to, revision_no, candle_count, content_hash
+FROM public.market_datasets;
+
+CREATE VIEW read.dataset_candles_v1 AS
+SELECT c.market_dataset_id, d.dataset_version, d.content_hash,
+       c.open_time, c.close_time,
+       c.open, c.high, c.low, c.close, c.volume, c.trade_count
+FROM public.market_dataset_candles c
+JOIN public.market_datasets d ON d.id = c.market_dataset_id;
+
+CREATE VIEW read.experiment_summary_v1 AS
+SELECT x.id AS experiment_id, x.owner_id,
+       br.id AS backtest_run_id, br.status AS run_status,
+       x.market_dataset_id,
+       d.dataset_version, d.provider, d.symbol, d.timeframe,
+       d.range_from, d.range_to, d.revision_no, d.candle_count,
+       d.content_hash,
+       x.strategy_version_id, sv.strategy_id,
+       sv.version AS strategy_version, sv.code_fingerprint,
+       x.candidate_definition, x.candidate_hash,
+       x.initial_capital, x.fee_bps, x.slippage_bps,
+       x.fill_policy, x.position_policy, x.open_position_at_end,
+       CASE
+           WHEN x.stop_loss_pct IS NULL AND x.take_profit_pct IS NULL THEN NULL
+           ELSE jsonb_build_object(
+               'stop_loss_pct', x.stop_loss_pct,
+               'take_profit_pct', x.take_profit_pct,
+               'intrabar_priority', x.intrabar_priority)
+       END AS risk_policy,
+       x.evaluator_version AS requested_evaluator_version,
+       br.worker_id, br.candles_read,
+       br.signals_count, br.duration_ms, br.error_code, br.error_detail,
+       br.started_at, br.finished_at,
+       e.evaluator_version AS evaluator_version,
+       e.evaluator_version AS evaluation_version,
+       e.total_return_pct, e.win_rate_pct,
+       e.max_drawdown_pct, e.trade_count, e.open_trade_count,
+       e.profit_factor, e.sharpe_ratio, e.avg_trade_pct,
+       e.computed_at
+FROM public.experiments x
+LEFT JOIN public.backtest_runs br ON br.experiment_id = x.id
+JOIN public.market_datasets d ON d.id = x.market_dataset_id
+JOIN public.strategy_versions sv ON sv.id = x.strategy_version_id
+LEFT JOIN public.evaluations e ON e.backtest_run_id = br.id;
+
+CREATE VIEW read.trades_v1 AS
+SELECT t.id AS trade_id, br.experiment_id, x.owner_id,
+       t.backtest_run_id, t.sequence_no, t.side,
+       t.signal_t, t.entry_time, t.entry_price, t.exit_time, t.exit_price,
+       t.quantity, t.fee_paid, t.slippage_cost,
+       t.pnl_absolute, t.pnl_percent, t.exit_reason,
+       t.sl_price, t.tp_price
+FROM public.trades t
+JOIN public.backtest_runs br ON br.id = t.backtest_run_id
+JOIN public.experiments x ON x.id = br.experiment_id;
+
+CREATE VIEW read.run_signals_v1 AS
+SELECT rs.id AS signal_id, rs.backtest_run_id, br.experiment_id, x.owner_id,
+       rs.candle_time AS signal_t, rs.signal, rs.confidence, rs.child_signals
+FROM public.run_signals rs
+JOIN public.backtest_runs br ON br.id = rs.backtest_run_id
+JOIN public.experiments x ON x.id = br.experiment_id;
+
+CREATE VIEW read.equity_v1 AS
+SELECT ep.backtest_run_id, br.experiment_id, x.owner_id,
+       x.initial_capital, ep.point_time, ep.equity, ep.drawdown_pct
+FROM public.equity_points ep
+JOIN public.backtest_runs br ON br.id = ep.backtest_run_id
+JOIN public.experiments x ON x.id = br.experiment_id;
+
+CREATE VIEW read.leaderboard_v1 AS
+SELECT le.id AS entry_id, le.score_policy_version, le.score,
+       le.rank_at_insert, le.market_dataset_id, le.observed_at,
+       d.dataset_version, d.provider, d.symbol, d.timeframe,
+       d.range_from, d.range_to, d.revision_no, d.candle_count, d.content_hash,
+       le.evaluation_id, e.backtest_run_id, br.experiment_id, x.owner_id,
+       x.strategy_version_id, sv.strategy_id, sv.version AS strategy_version,
+       sv.code_fingerprint, x.candidate_definition, x.candidate_hash,
+       x.initial_capital, x.fee_bps, x.slippage_bps,
+       x.fill_policy, x.position_policy, x.open_position_at_end,
+       CASE
+           WHEN x.stop_loss_pct IS NULL AND x.take_profit_pct IS NULL THEN NULL
+           ELSE jsonb_build_object(
+               'stop_loss_pct', x.stop_loss_pct,
+               'take_profit_pct', x.take_profit_pct,
+               'intrabar_priority', x.intrabar_priority)
+       END AS risk_policy,
+       e.evaluator_version,
+       e.total_return_pct, e.win_rate_pct, e.max_drawdown_pct,
+       e.trade_count, e.profit_factor, e.sharpe_ratio
+FROM public.leaderboard_entries le
+JOIN public.evaluations e ON e.id = le.evaluation_id
+JOIN public.backtest_runs br ON br.id = e.backtest_run_id
+JOIN public.experiments x ON x.id = br.experiment_id
+JOIN public.market_datasets d ON d.id = le.market_dataset_id
+JOIN public.strategy_versions sv ON sv.id = x.strategy_version_id;
+
+CREATE VIEW read.news_v1 AS
+SELECT ni.id AS news_item_id, ni.source_id, ns.source_key,
+       ni.url, ni.title, ni.content, ni.published_at, ni.crawled_at,
+       ni.related_coins, sr.label AS sentiment_label,
+       sr.score AS sentiment_score, sr.model AS sentiment_model,
+       sr.model_version AS sentiment_model_version,
+       sr.analyzed_at AS sentiment_analyzed_at
+FROM public.news_items ni
+JOIN public.news_sources ns ON ns.id = ni.source_id
+LEFT JOIN LATERAL (
+    SELECT s.label, s.score, s.model, s.model_version, s.analyzed_at
+    FROM public.sentiment_results s
+    WHERE s.news_item_id = ni.id
+    ORDER BY s.analyzed_at DESC, s.id DESC
+    LIMIT 1
+) sr ON TRUE;
+
+CREATE VIEW read.search_run_v1 AS
+SELECT sr.id AS search_run_id, sr.owner_id, sr.status, sr.generator_id,
+       sr.generator_version, sr.stop_conditions, sr.seed, sr.stop_reason,
+       sr.candidates_generated, sr.candidates_tested, sr.candidates_failed,
+       sr.non_improving_count, sr.generator_exhausted, sr.best_score,
+       sr.best_evaluation_id, sr.market_dataset_id,
+       d.dataset_version, d.content_hash,
+       sr.execution_config, sr.lock_version, sr.started_at, sr.finished_at,
+       sr.created_at, sr.updated_at
+FROM public.search_runs sr
+JOIN public.market_datasets d ON d.id = sr.market_dataset_id;
+
+CREATE VIEW read.search_run_quota_v1 AS
+SELECT uq.user_id AS owner_id,
+       COUNT(sr.id)::INT AS running_count,
+       uq.max_concurrent_runs,
+       GREATEST(uq.max_concurrent_runs - COUNT(sr.id)::INT, 0)::INT AS available_slots
+FROM public.user_quotas uq
+LEFT JOIN public.search_runs sr
+       ON sr.owner_id = uq.user_id
+      AND sr.status IN ('queued', 'running', 'paused')
+GROUP BY uq.user_id, uq.max_concurrent_runs;
+
+GRANT USAGE ON SCHEMA read TO api_reader;
+GRANT SELECT ON read.candles_v1,
+                    read.market_datasets_v1,
+                    read.dataset_candles_v1,
+                    read.experiment_summary_v1,
+                    read.trades_v1,
+                    read.run_signals_v1,
+                    read.equity_v1,
+                    read.leaderboard_v1,
+                    read.news_v1,
+                    read.search_run_v1,
+                    read.search_run_quota_v1
+TO api_reader;
+```
+
+#### Atomic command boundary — quota admission
+
+Go vẫn là nơi nhận request, xác thực principal, RBAC và validate syntax. Nhưng Go
+**không** được đọc `read.search_run_quota_v1` rồi mới gọi Python để quyết định quota:
+đó là hai transaction và tạo TOCTOU race. Admission là một command duy nhất:
+
+1. Go gọi `POST /internal/search-runs/admit` tới Python với principal đã được Go xác thực,
+   payload đã validate và `idempotency_key`.
+2. Python gọi `SearchAdmission` transaction function do migration owner tạo. Function
+   khóa đúng row `public.user_quotas` bằng `SELECT ... FOR UPDATE`, đếm các
+   `search_runs` ở `queued|running|paused`, kiểm tra cả `max_concurrent_runs` và
+   `max_candidates_per_run`, rồi INSERT `search_runs` trong **cùng một transaction**.
+   Các `backtest_jobs` chỉ được tạo sau đó, cùng transaction với từng candidate.
+3. Nếu quota vượt, function rollback và trả `concurrent_run_limit`; nếu cùng
+   `(owner_id, idempotency_key)` đã tồn tại, trả lại run cũ. Không có cửa sổ giữa
+   quota check và INSERT.
+
+Python application role không được `SELECT`/`UPDATE` trực tiếp `user_quotas`; nó chỉ
+được `EXECUTE` function này. Function cố định `search_path`, nhận owner từ principal
+đã được Go ký/xác thực ở internal boundary, và là ngoại lệ duy nhất đối với ownership
+table ở §1.2.4. `read.search_run_quota_v1` chỉ phục vụ diagnostics/UI, **không** là
+security gate.
+
+Các view được sở hữu bởi migration role; thay đổi schema gốc phải giữ nguyên shape của `_v1`, hoặc tạo `_v2` và chạy song song một phase. Nếu view cần ownership predicate, Go vẫn phải truyền `owner_id` sau khi xác thực principal; view không được biến thành nơi tính business metric.
+
+Migration contract của command (body JSON chỉ là shorthand cho payload đã được
+Python validate; application thực tế có thể dùng các tham số typed tương ứng):
+
+```sql
+CREATE FUNCTION public.admit_search_run_v1(
+    p_owner_id UUID,
+    p_generator_id VARCHAR(48),
+    p_generator_version VARCHAR(24),
+    p_search_space JSONB,
+    p_stop_conditions JSONB,
+    p_seed BIGINT,
+    p_market_dataset_id UUID,
+    p_execution_config JSONB,
+    p_max_candidates INT,
+    p_idempotency_key VARCHAR(64)
+) RETURNS TABLE(search_run_id UUID, reused BOOLEAN)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE q RECORD; active_count INT; existing_id UUID;
+BEGIN
+    SELECT * INTO q FROM user_quotas
+     WHERE user_id = p_owner_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'quota_not_configured'; END IF;
+
+    SELECT id INTO existing_id FROM search_runs
+     WHERE owner_id = p_owner_id AND idempotency_key = p_idempotency_key;
+    IF existing_id IS NOT NULL THEN
+        RETURN QUERY SELECT existing_id, TRUE;
+        RETURN;
+    END IF;
+
+    SELECT COUNT(*)::INT INTO active_count FROM search_runs
+     WHERE owner_id = p_owner_id AND status IN ('queued','running','paused');
+    IF active_count >= q.max_concurrent_runs THEN
+        RAISE EXCEPTION 'concurrent_run_limit';
+    END IF;
+    IF p_max_candidates > q.max_candidates_per_run THEN
+        RAISE EXCEPTION 'candidate_limit_exceeded';
+    END IF;
+
+    INSERT INTO search_runs (
+        owner_id, generator_id, generator_version, search_space,
+        stop_conditions, seed, market_dataset_id, execution_config,
+        idempotency_key
+    ) VALUES (
+        p_owner_id, p_generator_id, p_generator_version, p_search_space,
+        p_stop_conditions, p_seed, p_market_dataset_id, p_execution_config,
+        p_idempotency_key
+    )
+    RETURNING id INTO search_run_id;
+    RETURN QUERY SELECT search_run_id, FALSE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admit_search_run_v1(
+    UUID, VARCHAR, VARCHAR, JSONB, JSONB, BIGINT, UUID, JSONB, INT, VARCHAR
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admit_search_run_v1(
+    UUID, VARCHAR, VARCHAR, JSONB, JSONB, BIGINT, UUID, JSONB, INT, VARCHAR
+)
+    TO lab_admission_executor;
+```
+
+Function này chỉ admission một `search_run`; `backtest_jobs` được tạo sau trong
+transaction `search_candidates + experiments + backtest_jobs` của từng candidate.
+Phần bắt buộc của admission là row lock, idempotency lookup, active-count check và
+INSERT `search_runs` cùng một function call.
 
 ### 1.3 Các thành phần chính
 
@@ -179,7 +465,7 @@ Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container 
 | Cặp                          | Giao thức                                            | Chi tiết                                                                                                                            |
 | ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Browser ↔ Go API             | HTTPS REST + **WebSocket** (`/api/v1/markets/stream`) | JSON. WebSocket vì cần client→server message (`subscribe`/`unsubscribe` từng panel), SSE một chiều không đủ. Xem ADR-001.            |
-| Go API → Python Lab          | HTTP/1.1 JSON trên **internal network**              | Không publish port ra ngoài trong profile production. Propagate `X-Request-ID`, `X-Correlation-ID`, deadline (`X-Deadline-Ms`), principal context. |
+| Go API → Python Lab          | HTTP/1.1 JSON trên **internal network**              | Không publish port ra ngoài trong profile production. Propagate `X-Request-ID`, `X-Correlation-ID`, deadline (`X-Deadline-Ms`), principal context. Commands gồm `/internal/search-runs/admit`, `/internal/search-runs/{id}/actions` và `/internal/score-policies/*`; Go không ghi domain table trực tiếp. |
 | Go API → PostgreSQL (read)   | TCP, role `api_reader`, **chỉ schema `read`**        | Read projection / CQRS read path. `SELECT` trên view `read.*`; không quyền trên bảng gốc. Xem §1.2.5. |
 | Python Lab ↔ PostgreSQL      | TCP, connection pool (asyncpg / SQLAlchemy)          | Owner của bảng domain: write + migration (Alembic), chạy **trước** khi readiness báo healthy. Parameterized query. |
 | Python Lab ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
@@ -197,7 +483,7 @@ Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container 
 | -------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Binance WebSocket**      | Không có nến mới                            | Chart hiển thị badge `STALE` + `last_update`. Nến lịch sử vẫn render từ DB. Adapter reconnect backoff; sau khi nối lại **backfill REST** khoảng thiếu, de-dup theo unique key → 0 nến mất. |
 | **Binance REST**           | Không load được lịch sử mới                 | Request bị ảnh hưởng trả `502` với `error.code = market_provider_unavailable`. Nến đã cache trong PostgreSQL vẫn phục vụ. Backtest trên dataset đã có **vẫn chạy**. |
-| **Python Strategy Lab**    | Không tính overlay, không tạo experiment    | Go API trả `503` cho các route domain; `/health` của Go vẫn `200` (liveness ≠ readiness). WebSocket giữ connection, gửi frame `{"type":"lab_unavailable"}`.      |
+| **Python Strategy Lab**    | Không tính overlay, không tạo experiment    | Go API trả `503` cho các route domain; `/healthz` của Go vẫn `200` (liveness ≠ readiness). WebSocket giữ connection, gửi frame `{"type":"lab_unavailable"}`.      |
 | **Backtest Worker (tất cả)** | Job không được xử lý                      | Job giữ trạng thái `queued`, **không mất**. UI hiển thị `queued: N, running: 0` + cảnh báo "no worker available". Khi worker lên, tiếp tục từ chỗ dừng.        |
 | **PostgreSQL**             | Không đọc/ghi được gì                       | Readiness fail → API `503`. **Không** trả kết quả partial như completed. Job đang chạy fail và **không** commit evaluation nửa vời.                            |
 | **News Provider**          | Không thu được tin mới                      | Job news đó fail, ghi `failure_reason`, retry theo schedule. Chart, backtest technical, leaderboard **không bị ảnh hưởng**. Trang News hiển thị dữ liệu cũ + `last_collected_at`. |
@@ -225,6 +511,7 @@ flowchart TB
 
     Binance["🌐 Binance<br/><i>Sàn giao dịch</i><br/>REST klines + WebSocket stream<br/><b>read-only, public endpoint</b>"]
     NewsSrc["🌐 News Sources<br/><i>RSS feeds, News API</i><br/><b>allowlist cấu hình server-side</b>"]
+    MLModel["Sentiment Model / ML Runtime<br/><i>Python module ở MVP;<br/>remote GPU adapter khi cần</i>"]
 
     Researcher -->|"HTTPS: xem chart, tạo experiment,<br/>đọc leaderboard/trades/news"| System
     Operator -->|"HTTPS: pause/resume/cancel run,<br/>đọc metrics & progress"| System
@@ -233,18 +520,19 @@ flowchart TB
     System -->|"HTTPS REST<br/>lấy nến lịch sử"| Binance
     System <-->|"WSS<br/>nhận kline realtime"| Binance
     System -->|"HTTPS<br/>thu thập tin tức"| NewsSrc
+    System -.->|"SentimentAnalyzer port<br/>in-process hoặc adapter remote"| MLModel
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef system fill:#1168bd,stroke:#0b4884,color:#fff
     classDef external fill:#999,stroke:#6b6b6b,color:#fff
     class Researcher,Operator,Developer person
     class System system
-    class Binance,NewsSrc external
+    class Binance,NewsSrc,MLModel external
 ```
 
 **Đọc gì từ Level 1**
 
-- Chỉ có **2 loại phụ thuộc ngoài**: sàn giao dịch và nguồn tin. Cả hai đều **một chiều đọc**.
+- Có **2 network dependency ở MVP** (sàn giao dịch và nguồn tin) cùng một **ML integration seam**. Model hiện chạy trong Python process; node ML ở context diagram biểu diễn khả năng thay bằng runtime/GPU endpoint bên ngoài mà không đổi `NewsCollector`, `SentimentAnalyzer` hay strategy contract. Binance/news đều **một chiều đọc**.
 - Không có mũi tên nào từ hệ thống đi ra để **ghi** vào Binance. Đây là biểu diễn của ranh giới simulation-only — một **product decision của nhóm** (`proposal.md` §4.3), không phải yêu cầu trích từ đề bài.
 - `Strategy Developer` nối bằng đường nét đứt và **không đi qua UI**: strategy được thêm bằng code + deploy, không bằng form. Đây là chủ ý — cho phép upload code strategy qua UI là một lỗ RCE.
 
@@ -265,7 +553,7 @@ flowchart TB
 
         Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint <code>python -m app.worker</code>]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
-        DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
+        DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, dataset snapshots,<br/>strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
 
         Cache[("<b>Redis 7</b><br/>[Container — tuỳ chọn, có điều kiện §12.0]<br/><br/>Cache overlay đã tính,<br/>outbound rate-limit dùng chung")]
     end
@@ -420,7 +708,7 @@ flowchart LR
         direction TB
         MW["Middleware chain<br/>requestID → CORS → ratelimit<br/>→ auth → RBAC → validate"]
         REST["REST handlers"]
-        WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(symbol,timeframe,strategy,config_hash)</i>"]
+        WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(provider,symbol,timeframe,strategy,config_hash)</i>"]
     end
 
     subgraph LabBox["STRATEGY LAB — Python"]
@@ -466,7 +754,7 @@ flowchart LR
         W1["Worker<br/>poll → run → publish"]
     end
 
-    DB[("PostgreSQL<br/>candles · strategy_versions<br/>experiments · backtest_jobs<br/>trades · equity_points<br/>evaluations · leaderboard_entries<br/>news_items · sentiment_results")]
+    DB[("PostgreSQL<br/>candles · dataset snapshots<br/>strategy_versions · experiments<br/>backtest_jobs · trades · equity_points<br/>evaluations · leaderboard_entries<br/>news_items · sentiment_results")]
 
     BN_W -->|"kline tick"| MDA
     BN_R -->|"backfill nến thiếu"| MDA
@@ -474,7 +762,7 @@ flowchart LR
     MDS -->|"upsert nến đã đóng"| DB
     MDS --> BUS
     BUS -->|"CandleClosed"| OVL
-    OVL -->|"ChartOverlayUpdated<br/>+ config_hash"| WSHUB
+    OVL -->|"ChartOverlayUpdated<br/>+ provider + config_hash"| WSHUB
     MDS -->|"candle delta"| WSHUB
     WSHUB -->|"chỉ panel khớp<br/>subscription"| P1
     WSHUB --> P2
@@ -541,7 +829,7 @@ flowchart LR
 **③ Experiment → Job Queue**
 
 - `POST /experiments` **không** chạy backtest trong request. Nó ghi `ExperimentSnapshot` + `backtest_jobs` row trong **cùng một transaction**, rồi trả `202 { run_id }`.
-- Snapshot chứa đủ để tái lập: candidate definition, `dataset_version`, `from/to`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `evaluator_version`.
+- Snapshot chứa đủ để tái lập: candidate definition, `dataset_version`, `from/to`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `risk_policy` (`stop_loss_pct`, `take_profit_pct`, `intrabar_priority`), `evaluator_version`.
 - Job có `lease_expires_at`. Worker chết → lease hết hạn → job về `queued`, worker khác nhận. At-least-once + evaluation idempotent theo `backtest_run_id` = không double-count.
 - Cam kết: **chuyển 1 worker → N worker chỉ là `--scale worker=N`**. Xem `specs/experiment.md`, `specs/backtest.md`.
 
@@ -587,19 +875,20 @@ sequenceDiagram
 
     BN->>AD: {"e":"kline","k":{"t":...,"c":"118150","x":false}}
     AD->>AD: validate schema + normalize → Candle(provisional)
-    AD->>MS: MarketPriceUpdated(BTCUSDT, 5m, provisional)
+    AD->>MS: MarketPriceUpdated(binance, BTCUSDT, 5m, provisional)
     MS->>HUB: candle delta qua POST /internal/events
-    HUB->>P1: frame khớp subscription (BTCUSDT,5m)
-    Note over P2: KHÔNG nhận — subscription là (BTCUSDT,15m)
+    HUB->>P1: frame khớp subscription (binance,BTCUSDT,5m)
+    Note over P2: KHÔNG nhận — subscription là (binance,BTCUSDT,15m)
 
     BN->>AD: {"k":{...,"x":true}} — nến đóng
-    AD->>MS: CandleClosed(BTCUSDT, 5m, close_time=T)
+    AD->>MS: CandleClosed(binance, BTCUSDT, 5m, close_time=T)
     MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,close_time) DO UPDATE
+    Note over DB: candles là operational cache<br/>backtest đọc immutable dataset snapshot
     MS->>MS: cập nhật last_closed_at (dùng cho backfill)
     MS->>EV: publish CandleClosed (in-process, cùng process lab)
     EV->>OC: CandleClosed
     OC->>OC: tính overlay cho các config_hash đang được subscribe
-    OC->>HUB: ChartOverlayUpdated(symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
+    OC->>HUB: ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
     HUB->>P1: chỉ overlay của config_hash mà Panel 1 đã subscribe
 ```
 
@@ -617,9 +906,9 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 
 Đây là yêu cầu §5 của đề bài và là một trong 10 tiêu chí thành công (S1). Cơ chế:
 
-- Mỗi panel là một **subscription độc lập** với khoá `(symbol, timeframe, strategy_id@version, config_hash)`.
-- WS Hub (Go) giữ registry `subscription_key → set[connection]`. Khi có `CandleClosed` cho `(BTCUSDT, 5m)`, hub chỉ gửi tới connection nào đã subscribe đúng khoá đó.
-- Khi user đổi Chart 1 từ `5m → 1h`: client gửi `{"action":"unsubscribe", key:"BTCUSDT|5m|..."}` rồi `{"action":"subscribe", key:"BTCUSDT|1h|..."}`, và fetch `GET /markets/candles?...timeframe=1h`. Chart 2–4 không gửi gì, không nhận gì, state không đổi → React không re-render chúng.
+- Mỗi panel là một **subscription độc lập** với khoá `(provider, symbol, timeframe, strategy_id@version, config_hash)`.
+- WS Hub (Go) giữ registry `subscription_key → set[connection]`. Khi có `CandleClosed` cho `(binance, BTCUSDT, 5m)`, hub chỉ gửi tới connection nào đã subscribe đúng khoá đó.
+- Khi user đổi Chart 1 từ `5m → 1h`: client gửi `{"action":"unsubscribe", key:"binance|BTCUSDT|5m|..."}` rồi `{"action":"subscribe", key:"binance|BTCUSDT|1h|..."}`, và fetch `GET /markets/candles?...provider=binance&timeframe=1h`. Chart 2–4 không gửi gì, không nhận gì, state không đổi → React không re-render chúng.
 - Ở phía frontend, state của mỗi panel nằm trong component của panel đó (hoặc một entry riêng trong store keyed by `panelId`), **không** nằm trong một object `dashboardState` chung. Một object chung là cách phổ biến nhất để phá vỡ tính độc lập này mà vẫn "trông đúng".
 
 ---
@@ -634,7 +923,8 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 
 | Nhóm dữ liệu             | Đặc điểm truy cập                                                            | Lựa chọn                        | Lý do                                                                                                     |
 | ------------------------ | ---------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Candles**              | Ghi append theo thời gian, đọc range query `WHERE symbol,timeframe AND close_time BETWEEN` | **PostgreSQL** (partition theo tháng nếu số row đòi hỏi) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Time-series DB (TimescaleDB/InfluxDB) sẽ dùng khi > 100M row — chưa đến. |
+| **Candles**              | Cache vận hành của nến đã đóng, đọc range query `WHERE provider,symbol,timeframe AND close_time BETWEEN` | **PostgreSQL** (partition theo tháng nếu số row đòi hỏi) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Row có thể được cập nhật khi provider revise dữ liệu; nó **không** là nguồn đọc của backtest. |
+| **Market dataset candles** | Ghi một lần theo `market_dataset_id`, đọc tuần tự cho backtest | **PostgreSQL** | Bản sao vật lý bất biến của đúng tập nến đã hash. Backtest chỉ đọc bảng này, nên việc refresh cache `candles` không làm thay đổi kết quả cũ. |
 | **Strategy definitions / versions** | Ghi rất ít, đọc nhiều, **bất biến sau khi dùng**                    | **PostgreSQL**                  | Cần FK từ `experiments` để đảm bảo referential integrity của provenance. Đây là lý do không dùng file JSON. |
 | **Experiments (snapshot)** | Ghi 1 lần, đọc lại nhiều, schema cố tình mở rộng được                      | **PostgreSQL + JSONB**          | Cột chuẩn hoá cho field cần query/index (`symbol`, `timeframe`, `status`); `JSONB` cho `candidate_definition` vì cấu trúc composite lồng nhau và sẽ tiến hoá. |
 | **Backtest jobs**        | Ghi/đọc/update trạng thái tần suất cao, cần lock để nhiều worker không tranh nhau | **PostgreSQL** (`FOR UPDATE SKIP LOCKED`) | Cho đúng semantics của queue **và** transaction chung với việc ghi kết quả. Broker riêng không cho được điều thứ hai. Xem ADR-005. |
@@ -671,11 +961,13 @@ CREATE TYPE timeframe_enum AS ENUM ('1m','5m','15m','30m','1h','2h','4h','1d');
 CREATE TYPE signal_enum    AS ENUM ('BUY','SELL','HOLD');
 CREATE TYPE run_status     AS ENUM ('queued','running','completed','failed','cancelled');
 CREATE TYPE search_status  AS ENUM ('queued','running','paused','completed','failed','cancelled');
-CREATE TYPE job_status     AS ENUM ('queued','leased','completed','failed');
+CREATE TYPE job_status     AS ENUM ('queued','leased','completed','failed','cancelled');
 CREATE TYPE sentiment_enum AS ENUM ('POSITIVE','NEUTRAL','NEGATIVE');
 CREATE TYPE trade_side     AS ENUM ('LONG','SHORT');
 CREATE TYPE fill_policy_enum AS ENUM ('next_candle_open','same_candle_close');
 CREATE TYPE position_policy_enum AS ENUM ('long_only','long_short');
+CREATE TYPE open_position_policy_enum AS ENUM
+    ('close_at_last_candle','discard_open_trade','mark_unrealized');
 -- Trạng thái dispatch của transactional outbox (§5.7)
 CREATE TYPE event_dispatch_status AS ENUM ('pending','claimed','delivered','dead');
 ```
@@ -721,11 +1013,12 @@ CREATE TABLE user_quotas (
 -- =============================================================
 CREATE TABLE market_pairs (
     id       SMALLSERIAL PRIMARY KEY,
-    symbol   VARCHAR(24) UNIQUE NOT NULL,             -- 'BTCUSDT'
+    symbol   VARCHAR(24) NOT NULL,                    -- 'BTCUSDT'
     base     VARCHAR(12) NOT NULL,                    -- 'BTC'
     quote    VARCHAR(12) NOT NULL,                    -- 'USDT'
     provider VARCHAR(24) NOT NULL DEFAULT 'binance',
-    is_active BOOLEAN    NOT NULL DEFAULT TRUE
+    is_active BOOLEAN    NOT NULL DEFAULT TRUE,
+    UNIQUE (provider, symbol)
 );
 
 -- Nến ĐÃ ĐÓNG. Nến provisional không bao giờ được ghi vào đây.
@@ -744,13 +1037,15 @@ CREATE TABLE candles (
     fetched_at  TIMESTAMPTZ    NOT NULL DEFAULT now(),  -- provenance
     -- Khoá này LÀ cơ chế de-dup của backfill: retry bao nhiêu lần cũng an toàn
     PRIMARY KEY (provider, symbol, timeframe, close_time),
+    FOREIGN KEY (provider, symbol) REFERENCES market_pairs(provider, symbol),
     CHECK (high >= low),
     CHECK (high >= open AND high >= close),
     CHECK (low  <= open AND low  <= close),
     CHECK (volume >= 0),
     CHECK (close_time > open_time)
 );
-CREATE INDEX idx_candles_range ON candles(symbol, timeframe, close_time DESC);
+CREATE INDEX idx_candles_range
+    ON candles(provider, symbol, timeframe, close_time DESC);
 
 -- Vết của stream: dùng để biết cần backfill từ đâu sau reconnect
 CREATE TABLE stream_checkpoints (
@@ -761,41 +1056,77 @@ CREATE TABLE stream_checkpoints (
     reconnect_count INT           NOT NULL DEFAULT 0,
     is_stale       BOOLEAN        NOT NULL DEFAULT FALSE,
     updated_at     TIMESTAMPTZ    NOT NULL DEFAULT now(),
-    PRIMARY KEY (provider, symbol, timeframe)
+    PRIMARY KEY (provider, symbol, timeframe),
+    FOREIGN KEY (provider, symbol) REFERENCES market_pairs(provider, symbol)
 );
 
 -- Định danh bất biến của một tập nến dùng cho experiment (reproducibility)
 CREATE TABLE market_datasets (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    dataset_version VARCHAR(120) UNIQUE NOT NULL,  -- 'binance-btcusdt-5m-20260101-20260301'
+    dataset_version VARCHAR(120) UNIQUE NOT NULL,  -- base name or base-r2/base-r3/... revision
     provider        VARCHAR(24)    NOT NULL,
     symbol          VARCHAR(24)    NOT NULL,
     timeframe       timeframe_enum NOT NULL,
     range_from      TIMESTAMPTZ    NOT NULL,
     range_to        TIMESTAMPTZ    NOT NULL,
+    revision_no     SMALLINT       NOT NULL DEFAULT 1, -- 1 = base, 2+ = provider revision
     candle_count    INT            NOT NULL,
-    content_hash    CHAR(64)       NOT NULL,   -- sha256 của chuỗi nến đã canonical hoá
+    content_hash    CHAR(64)       NOT NULL,   -- sha256 hex lowercase của canonical(open/close + OHLCV + trade_count)
     created_at      TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    FOREIGN KEY (provider, symbol) REFERENCES market_pairs(provider, symbol),
     CHECK (range_to > range_from),
-    CHECK (candle_count > 0)
+    CHECK (revision_no > 0),
+    CHECK (candle_count > 0),
+    UNIQUE (provider, symbol, timeframe, range_from, range_to, revision_no)
 );
-CREATE INDEX idx_datasets_lookup ON market_datasets(symbol, timeframe, range_from, range_to);
+CREATE INDEX idx_datasets_lookup
+    ON market_datasets(provider, symbol, timeframe, range_from, range_to);
+
+-- SNAPSHOT VẬT LÝ BẤT BIẾN của dataset.
+-- `candles` ở trên là operational cache và có thể được refresh khi provider revise dữ liệu.
+-- Backtest KHÔNG đọc `candles`; nó đọc đúng bản copy này theo market_dataset_id.
+CREATE TABLE market_dataset_candles (
+    market_dataset_id UUID NOT NULL REFERENCES market_datasets(id) ON DELETE RESTRICT,
+    open_time         TIMESTAMPTZ    NOT NULL,
+    close_time        TIMESTAMPTZ    NOT NULL,
+    open              NUMERIC(24,8)  NOT NULL,
+    high              NUMERIC(24,8)  NOT NULL,
+    low               NUMERIC(24,8)  NOT NULL,
+    close             NUMERIC(24,8)  NOT NULL,
+    volume            NUMERIC(30,8)  NOT NULL,
+    trade_count       INT,
+    PRIMARY KEY (market_dataset_id, close_time),
+    CHECK (high >= low),
+    CHECK (high >= open AND high >= close),
+    CHECK (low <= open AND low <= close),
+    CHECK (volume >= 0),
+    CHECK (close_time > open_time)
+);
+CREATE INDEX idx_dataset_candles_range
+    ON market_dataset_candles(market_dataset_id, close_time);
 ```
 
-> **`content_hash` giải quyết một vấn đề cụ thể**: nếu backfill sửa một nến (Binance đôi khi revise), thì cùng một `(symbol, timeframe, from, to)` có thể cho ra hai tập nến khác nhau ở hai thời điểm. Không có hash thì hai experiment "cùng dataset" thực ra chạy trên dữ liệu khác nhau và không ai biết. Có hash thì phát hiện được ngay: cùng `dataset_version` mà `content_hash` khác → tạo dataset version mới.
+> **`content_hash` và `market_dataset_candles` giải quyết hai nửa của cùng một vấn đề**: nếu backfill sửa một nến (Binance đôi khi revise), thì cùng một `(provider, symbol, timeframe, from, to)` có thể cho ra hai tập nến khác nhau ở hai thời điểm. Hash phát hiện sự khác nhau; snapshot vật lý giữ nguyên tập cũ. Vì vậy `candles` có thể được cập nhật thành giá trị mới, nhưng experiment cũ vẫn đọc bản copy cũ qua `market_dataset_id`, còn dataset `-r2`, `-r3`, ... nhận snapshot mới. `revision_no` được cấp dưới `pg_advisory_xact_lock` để hai worker không tranh cùng một version.
 
 ```sql
 -- =============================================================
 -- 3. Strategy — định nghĩa & VERSION BẤT BIẾN  (đề bài §36)
 -- =============================================================
 CREATE TABLE strategy_definitions (
-    strategy_id  VARCHAR(48) PRIMARY KEY,       -- 'ma_cross','rsi','bollinger','support_resistance','news_sentiment'
+    strategy_id  VARCHAR(48) PRIMARY KEY,       -- plugin ids + virtual root 'composite'
     display_name VARCHAR(120) NOT NULL,
-    family       VARCHAR(24)  NOT NULL
-                 CHECK (family IN ('trend','momentum','volatility','structure','information')),
+    -- Composite là root kỹ thuật, không thuộc một domain family nào.
+    -- family chỉ NULL khi is_composite=true; plugin thật phải có đúng 1 family.
+    family       VARCHAR(24),
     description  TEXT,
     is_composite BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        (is_composite = TRUE  AND family IS NULL)
+        OR
+        (is_composite = FALSE AND family IS NOT NULL
+         AND family IN ('trend','momentum','volatility','structure','information'))
+    )
 );
 
 -- APPEND-ONLY. Không bao giờ UPDATE một row đã được experiment tham chiếu.
@@ -807,11 +1138,18 @@ CREATE TABLE strategy_versions (
     default_params    JSONB       NOT NULL,
     input_requirements JSONB      NOT NULL,          -- ["candles.close"] hoặc ["news.sentiment_1h"]
     overlay_types     JSONB       NOT NULL,          -- ["moving_average","buy_signal","sell_signal"]
-    code_fingerprint  CHAR(64)    NOT NULL,          -- sha256 source strategy → phát hiện sửa code mà quên bump version
+    code_fingerprint  CHAR(64)    NOT NULL,          -- sha256 hex lowercase source strategy → phát hiện sửa code mà quên bump version
     registered_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (strategy_id, version)
 );
 ```
+
+`composite@1.0.0` là một **virtual root version** được seed vào
+`strategy_definitions`/`strategy_versions` với `is_composite=true` và
+`family=NULL`. Nó tồn tại để `experiments.strategy_version_id` có một FK ổn định
+cho contract của combiner; nó không được đưa vào search space và không thể làm
+child của một composite khác. Các child thật vẫn phải có một trong 5 domain
+family và được resolve theo `(strategy_id, version)` trước khi snapshot được ghi.
 
 > **`code_fingerprint` bắt một lỗi rất dễ xảy ra**: dev sửa thuật toán trong `rsi.py` nhưng để nguyên `version = "1.0.0"`. Khi đó experiment cũ và mới cùng ghi `rsi@1.0.0` nhưng chạy hai thuật toán khác nhau — provenance sai một cách âm thầm, không ai phát hiện. Ở startup, registry so `code_fingerprint` thực tế với DB; lệch → **fail fast** với thông báo "strategy rsi@1.0.0 changed, bump version". Đây là cách biến yêu cầu Reproducibility (§36) từ quy ước-trên-giấy thành ràng buộc-kiểm-tra-được.
 
@@ -829,40 +1167,80 @@ CREATE TABLE search_runs (
     stop_conditions     JSONB NOT NULL,
     -- ví dụ: {"max_candidates":200,"max_duration_sec":1800,
     --         "max_non_improving":50,"max_failure_rate":0.3}
-    seed                BIGINT,                 -- reproducible random search
+    seed                BIGINT NOT NULL,       -- API sinh và lưu kể cả khi client không truyền
     status              search_status NOT NULL DEFAULT 'queued',
-    stop_reason         VARCHAR(48),            -- 'max_candidates'|'timeout'|'no_improvement'|'cancelled'|'failure_rate'
+    stop_reason         VARCHAR(48),            -- max_candidates|timeout|no_improvement|failure_rate|space_exhausted|generator_error|cancelled
     candidates_generated INT NOT NULL DEFAULT 0,
     candidates_tested    INT NOT NULL DEFAULT 0,
     candidates_failed    INT NOT NULL DEFAULT 0,
+    non_improving_count  INT NOT NULL DEFAULT 0,
+    generator_exhausted  BOOLEAN NOT NULL DEFAULT FALSE,
     best_score          NUMERIC(12,4),
     best_evaluation_id  UUID,
     market_dataset_id   UUID NOT NULL REFERENCES market_datasets(id),
-    execution_config    JSONB NOT NULL,         -- fee/slippage/fill/position — chung cho cả run
+    execution_config    JSONB NOT NULL,         -- fee/slippage/fill/position/risk — chung cho cả run
     idempotency_key     VARCHAR(64),
     lock_version        INT NOT NULL DEFAULT 0, -- optimistic lock cho pause/resume đồng thời
     started_at          TIMESTAMPTZ,
     finished_at         TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (owner_id, idempotency_key),
     CHECK (jsonb_typeof(stop_conditions) = 'object'),
-    -- Ràng buộc CỨNG: phải có ít nhất 1 stop condition thật
+    CHECK (stop_reason IS NULL OR stop_reason IN
+           ('max_candidates','timeout','no_improvement','failure_rate',
+            'space_exhausted','generator_error','cancelled')),
+    CHECK (candidates_generated >= 0
+           AND candidates_tested >= 0
+           AND candidates_failed >= 0
+           AND candidates_failed <= candidates_tested
+           AND non_improving_count >= 0),
+    -- Ràng buộc CỨNG: phải có ít nhất 1 stop condition hợp lệ, dương; mọi
+    -- key stop condition nếu được gửi cũng phải đúng kiểu/range.
+    -- jsonb_path_exists tránh cast một giá trị string thành numeric trong CHECK.
     CHECK (
-        stop_conditions ? 'max_candidates'
-        OR stop_conditions ? 'max_duration_sec'
-        OR stop_conditions ? 'max_non_improving'
+        (NOT (stop_conditions ? 'max_candidates') OR jsonb_path_exists(stop_conditions,
+            '$ ? (@.max_candidates.type() == "number" && @.max_candidates > 0)'))
+        AND (NOT (stop_conditions ? 'max_duration_sec') OR jsonb_path_exists(stop_conditions,
+            '$ ? (@.max_duration_sec.type() == "number" && @.max_duration_sec > 0)'))
+        AND (NOT (stop_conditions ? 'max_non_improving') OR jsonb_path_exists(stop_conditions,
+            '$ ? (@.max_non_improving.type() == "number" && @.max_non_improving > 0)'))
+        AND (NOT (stop_conditions ? 'max_failure_rate') OR jsonb_path_exists(stop_conditions,
+            '$ ? (@.max_failure_rate.type() == "number" && @.max_failure_rate > 0 && @.max_failure_rate <= 1)'))
+        AND (
+            jsonb_path_exists(stop_conditions,
+                '$ ? (@.max_candidates.type() == "number" && @.max_candidates > 0)')
+            OR jsonb_path_exists(stop_conditions,
+                '$ ? (@.max_duration_sec.type() == "number" && @.max_duration_sec > 0)')
+            OR jsonb_path_exists(stop_conditions,
+                '$ ? (@.max_non_improving.type() == "number" && @.max_non_improving > 0)')
+            OR jsonb_path_exists(stop_conditions,
+                '$ ? (@.max_failure_rate.type() == "number" && @.max_failure_rate > 0 && @.max_failure_rate <= 1)')
+        )
     )
 );
 CREATE INDEX idx_search_runs_owner ON search_runs(owner_id, created_at DESC);
 CREATE INDEX idx_search_runs_active ON search_runs(status) WHERE status IN ('queued','running','paused');
+CREATE INDEX idx_search_runs_stale ON search_runs(updated_at) WHERE status = 'running';
+
+CREATE OR REPLACE FUNCTION touch_search_run_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER search_run_touch_updated_at
+    BEFORE UPDATE ON search_runs
+    FOR EACH ROW EXECUTE FUNCTION touch_search_run_updated_at();
 
 CREATE TABLE search_candidates (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     search_run_id        UUID NOT NULL REFERENCES search_runs(id) ON DELETE CASCADE,
     sequence_no          INT  NOT NULL,
     candidate_definition JSONB NOT NULL,        -- composite snapshot bất biến
-    candidate_hash       CHAR(64) NOT NULL,     -- sha256 canonical(definition) → dedup
-    experiment_id        UUID,                  -- FK gán sau khi tạo experiment
+    candidate_hash       CHAR(64) NOT NULL,     -- sha256 hex lowercase canonical(definition) → dedup
     status               run_status NOT NULL DEFAULT 'queued',
     failure_reason       TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -894,7 +1272,7 @@ CREATE TABLE experiments (
     -- Strategy: cả id lẫn version. Version là FK → không thể trỏ tới version không tồn tại.
     strategy_version_id  UUID NOT NULL REFERENCES strategy_versions(id),
     candidate_definition JSONB NOT NULL,   -- composite snapshot đầy đủ (children + policy + weights)
-    candidate_hash       CHAR(64) NOT NULL,
+    candidate_hash       CHAR(64) NOT NULL,   -- sha256 hex lowercase canonical(definition)
     -- Dataset: FK → biết chính xác tập nến nào
     market_dataset_id    UUID NOT NULL REFERENCES market_datasets(id),
     -- Execution assumptions: KHÔNG mặc định ngầm, luôn ghi rõ
@@ -903,7 +1281,7 @@ CREATE TABLE experiments (
     slippage_bps         SMALLINT NOT NULL DEFAULT 5,
     fill_policy          fill_policy_enum     NOT NULL DEFAULT 'next_candle_open',
     position_policy      position_policy_enum NOT NULL DEFAULT 'long_only',
-    open_position_at_end VARCHAR(24) NOT NULL DEFAULT 'close_at_last_candle',
+    open_position_at_end open_position_policy_enum NOT NULL DEFAULT 'close_at_last_candle',
     -- Risk policy: SL/TP là MVP vì chart phải vẽ được chúng (specs/backtest.md §C1).
     -- NULL = không có SL/TP → vị thế chỉ đóng bằng signal hoặc end_of_sample.
     stop_loss_pct        NUMERIC(6,3),
@@ -911,20 +1289,43 @@ CREATE TABLE experiments (
     intrabar_priority    VARCHAR(20) NOT NULL DEFAULT 'stop_loss_first'
                          CHECK (intrabar_priority IN ('stop_loss_first','take_profit_first')),
     evaluator_version    VARCHAR(24) NOT NULL,
-    search_candidate_id  UUID REFERENCES search_candidates(id),  -- NULL nếu tạo tay
+    -- Một candidate có tối đa một experiment; candidate tạo tay để NULL.
+    search_candidate_id  UUID UNIQUE REFERENCES search_candidates(id),
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (fee_bps >= 0 AND slippage_bps >= 0),
     CHECK (initial_capital > 0),
-    -- 0% nghĩa là đóng ngay lúc vào lệnh; ≥ 100% là mức giá ≤ 0
+    -- 0% bị từ chối vì nghĩa là đóng ngay lúc vào lệnh; ≥ 100% là mức giá ≤ 0
     CHECK (stop_loss_pct   IS NULL OR (stop_loss_pct   > 0 AND stop_loss_pct < 100)),
     CHECK (take_profit_pct IS NULL OR take_profit_pct > 0)
 );
 CREATE INDEX idx_experiments_owner ON experiments(owner_id, created_at DESC);
 CREATE INDEX idx_experiments_hash  ON experiments(candidate_hash, market_dataset_id);
 
-ALTER TABLE search_candidates
-  ADD CONSTRAINT fk_candidate_experiment
-  FOREIGN KEY (experiment_id) REFERENCES experiments(id);
+-- `search_candidate_id` là canonical one-to-one link. Trigger này khóa thêm
+-- các thuộc tính không thể biểu diễn bằng FK đơn: owner, dataset và hash của
+-- experiment phải đúng với search run/candidate đã sinh nó.
+CREATE OR REPLACE FUNCTION enforce_experiment_candidate_match()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.search_candidate_id IS NOT NULL
+       AND NOT EXISTS (
+           SELECT 1
+           FROM search_candidates sc
+           JOIN search_runs sr ON sr.id = sc.search_run_id
+           WHERE sc.id = NEW.search_candidate_id
+             AND sr.owner_id = NEW.owner_id
+             AND sr.market_dataset_id = NEW.market_dataset_id
+             AND sc.candidate_hash = NEW.candidate_hash
+       ) THEN
+        RAISE EXCEPTION 'experiment candidate does not match owner, dataset, or hash';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER experiment_candidate_match
+    BEFORE INSERT OR UPDATE ON experiments
+    FOR EACH ROW EXECUTE FUNCTION enforce_experiment_candidate_match();
 
 -- Job queue: bảng này LÀ contract giữa Lab và Worker
 CREATE TABLE backtest_jobs (
@@ -979,6 +1380,7 @@ CREATE TABLE trades (
     backtest_run_id  UUID NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
     sequence_no      INT  NOT NULL,
     side             trade_side NOT NULL DEFAULT 'LONG',
+    signal_t         TIMESTAMPTZ,                 -- signal candle that caused this entry; NULL for manual/end-only facts
     entry_time       TIMESTAMPTZ NOT NULL,
     entry_price      NUMERIC(24,8) NOT NULL,
     exit_time        TIMESTAMPTZ,
@@ -998,6 +1400,12 @@ CREATE TABLE trades (
     CHECK (exit_time IS NULL OR exit_time >= entry_time),
     CHECK (exit_reason IS NULL
            OR exit_reason IN ('signal','stop_loss','take_profit','end_of_sample')),
+    -- Trade đóng phải có đầy đủ kết quả; trade mark-to-market còn mở có
+    -- exit_time/exit_price/exit_reason NULL nhưng có thể có pnl unrealized.
+    CHECK (exit_time IS NULL
+           OR (exit_price IS NOT NULL AND pnl_absolute IS NOT NULL
+               AND pnl_percent IS NOT NULL AND exit_reason IS NOT NULL)),
+    CHECK (exit_reason IS NULL OR exit_time IS NOT NULL),
     -- exit_reason='stop_loss' bắt buộc phải có mức đã chốt → chặn việc gán reason không có dữ liệu
     CHECK (exit_reason <> 'stop_loss'   OR sl_price IS NOT NULL),
     CHECK (exit_reason <> 'take_profit' OR tp_price IS NOT NULL)
@@ -1031,7 +1439,8 @@ CREATE TABLE evaluations (
     total_return_pct  NUMERIC(14,6) NOT NULL,
     win_rate_pct      NUMERIC(8,4)  NOT NULL,
     max_drawdown_pct  NUMERIC(10,6) NOT NULL,
-    trade_count       INT           NOT NULL,
+    trade_count       INT           NOT NULL,       -- settled trades only
+    open_trade_count  INT           NOT NULL DEFAULT 0, -- mark_unrealized rows
     profit_factor     NUMERIC(12,6),
     sharpe_ratio      NUMERIC(12,6),
     avg_trade_pct     NUMERIC(12,6),
@@ -1041,7 +1450,8 @@ CREATE TABLE evaluations (
     UNIQUE (backtest_run_id, evaluator_version),
     CHECK (win_rate_pct BETWEEN 0 AND 100),
     CHECK (max_drawdown_pct <= 0),
-    CHECK (trade_count >= 0)
+    CHECK (trade_count >= 0),
+    CHECK (open_trade_count >= 0)
 );
 ```
 
@@ -1060,12 +1470,69 @@ CREATE TABLE score_policies (
     is_active   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- Đúng 1 policy active tại một thời điểm
+-- Không có hai policy active tại một thời điểm.
 CREATE UNIQUE INDEX idx_one_active_policy ON score_policies(is_active) WHERE is_active;
+
+-- Policy là append-only. Chỉ cột is_active được phép đổi, và cũng chỉ qua
+-- activate_score_policy() bên dưới; formula/weights/version không bao giờ UPDATE.
+CREATE OR REPLACE FUNCTION reject_score_policy_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'score_policies is append-only; create a new version instead';
+    END IF;
+
+    IF NEW.version IS DISTINCT FROM OLD.version
+       OR NEW.formula IS DISTINCT FROM OLD.formula
+       OR NEW.weights IS DISTINCT FROM OLD.weights
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'score policy definition is immutable; create a new version';
+    END IF;
+
+    IF NEW.is_active IS DISTINCT FROM OLD.is_active
+       AND COALESCE(current_setting('app.score_policy_activation', true), '') <> '1' THEN
+        RAISE EXCEPTION 'score policy activation must use activate_score_policy()';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER score_policies_immutable
+    BEFORE UPDATE OR DELETE ON score_policies
+    FOR EACH ROW EXECUTE FUNCTION reject_score_policy_mutation();
+
+-- Đây là command duy nhất đổi policy active. Advisory lock serialize hai admin
+-- activate đồng thời; partial unique index chặn trạng thái hai active; invariant
+-- cuối transaction chặn trạng thái không có active policy.
+CREATE OR REPLACE FUNCTION activate_score_policy(p_version VARCHAR(24))
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE active_count INT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('score-policy-activation', 0));
+    IF NOT EXISTS (SELECT 1 FROM score_policies WHERE version = p_version) THEN
+        RAISE EXCEPTION 'score policy % does not exist', p_version;
+    END IF;
+
+    PERFORM set_config('app.score_policy_activation', '1', true);
+    UPDATE score_policies SET is_active = FALSE WHERE is_active;
+    UPDATE score_policies SET is_active = TRUE WHERE version = p_version;
+    PERFORM set_config('app.score_policy_activation', '0', true);
+
+    SELECT COUNT(*)::INT INTO active_count
+    FROM score_policies
+    WHERE is_active;
+    IF active_count <> 1 THEN
+        RAISE EXCEPTION 'score policy invariant violated: expected exactly one active policy, got %', active_count;
+    END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.activate_score_policy(VARCHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.activate_score_policy(VARCHAR) TO lab_writer;
 
 CREATE TABLE leaderboard_entries (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    evaluation_id        UUID NOT NULL REFERENCES evaluations(id) ON DELETE CASCADE,
+    evaluation_id        UUID NOT NULL REFERENCES evaluations(id) ON DELETE RESTRICT,
     score_policy_version VARCHAR(24) NOT NULL REFERENCES score_policies(version),
     score                NUMERIC(12,4) NOT NULL,
     rank_at_insert       SMALLINT NOT NULL,
@@ -1077,9 +1544,78 @@ CREATE TABLE leaderboard_entries (
 );
 CREATE INDEX idx_leaderboard_topk
     ON leaderboard_entries(market_dataset_id, score_policy_version, score DESC, observed_at DESC);
+
+-- `market_dataset_id` được lặp lại để làm leading key của Top-K index, nhưng
+-- không được phép trở thành provenance do application tự bảo đảm. Trigger DB
+-- bắt buộc nó khớp evaluation → backtest_run → experiment.
+CREATE OR REPLACE FUNCTION enforce_leaderboard_dataset_match()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM evaluations e
+        JOIN backtest_runs br ON br.id = e.backtest_run_id
+        JOIN experiments x ON x.id = br.experiment_id
+        WHERE e.id = NEW.evaluation_id
+          AND x.market_dataset_id = NEW.market_dataset_id
+    ) THEN
+        RAISE EXCEPTION 'leaderboard dataset does not match evaluation provenance';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER leaderboard_dataset_match
+    BEFORE INSERT OR UPDATE ON leaderboard_entries
+    FOR EACH ROW EXECUTE FUNCTION enforce_leaderboard_dataset_match();
+
+-- Provenance không được mất vì một lệnh xoá upstream hoặc một update entry.
+CREATE OR REPLACE FUNCTION reject_leaderboard_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'leaderboard_entries is append-only';
+    RETURN OLD; -- unreachable; keeps the trigger function total for static checks
+END;
+$$;
+
+CREATE TRIGGER leaderboard_entries_immutable
+    BEFORE UPDATE OR DELETE ON leaderboard_entries
+    FOR EACH ROW EXECUTE FUNCTION reject_leaderboard_mutation();
+
+-- Provenance artifacts khác cũng không được sửa/xoá sau khi INSERT.
+-- UPDATE/DELETE phải tạo version/artifact mới; INSERT vẫn được phép.
+CREATE OR REPLACE FUNCTION reject_immutable_artifact_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '% is append-only; create a new version instead', TG_TABLE_NAME;
+    RETURN OLD; -- unreachable; keeps the trigger function total for static checks
+END;
+$$;
+
+CREATE TRIGGER market_datasets_immutable
+    BEFORE UPDATE OR DELETE ON market_datasets
+    FOR EACH ROW EXECUTE FUNCTION reject_immutable_artifact_mutation();
+
+CREATE TRIGGER market_dataset_candles_immutable
+    BEFORE UPDATE OR DELETE ON market_dataset_candles
+    FOR EACH ROW EXECUTE FUNCTION reject_immutable_artifact_mutation();
+
+CREATE TRIGGER strategy_versions_immutable
+    BEFORE UPDATE OR DELETE ON strategy_versions
+    FOR EACH ROW EXECUTE FUNCTION reject_immutable_artifact_mutation();
+
+CREATE TRIGGER experiments_immutable
+    BEFORE UPDATE OR DELETE ON experiments
+    FOR EACH ROW EXECUTE FUNCTION reject_immutable_artifact_mutation();
+
+CREATE TRIGGER evaluations_immutable
+    BEFORE UPDATE OR DELETE ON evaluations
+    FOR EACH ROW EXECUTE FUNCTION reject_immutable_artifact_mutation();
 ```
 
-> **`market_dataset_id` trên leaderboard entry** chặn một so sánh vô nghĩa: strategy chạy trên BTCUSDT 5m tháng 1 và strategy chạy trên BTCUSDT 1h tháng 6 không thể xếp cùng bảng. Không có cột này thì Leaderboard sẽ trộn táo với cam và Top-1 chỉ phản ánh dataset nào dễ ăn nhất.
+> **`market_dataset_id` trên leaderboard entry** chặn một so sánh vô nghĩa: strategy chạy trên BTCUSDT 5m tháng 1 và strategy chạy trên BTCUSDT 1h tháng 6 không thể xếp cùng bảng. Không có cột này thì Leaderboard sẽ trộn táo với cam và Top-1 chỉ phản ánh dataset nào dễ ăn nhất. FK `evaluation_id ... ON DELETE RESTRICT` và trigger append-only cũng bảo đảm lịch sử không bị xoá cascade hoặc ghi đè.
+
+Các trigger trên là lớp bảo vệ DB, không chỉ là quy ước application. Vì `api_reader` không có quyền bảng gốc và domain write role không có đường UPDATE/DELETE artifact trong repository, cả lỗi code lẫn thao tác xoá cascade đều bị chặn. Muốn sửa strategy, dataset hoặc evaluation phải INSERT version/artifact mới.
 
 ```sql
 -- =============================================================
@@ -1208,7 +1744,7 @@ erDiagram
 
     MARKET_PAIRS ||--o{ CANDLES : has
     MARKET_PAIRS ||--o{ STREAM_CHECKPOINTS : tracked_by
-    CANDLES }o--|| MARKET_DATASETS : "snapshot as"
+    MARKET_DATASETS ||--o{ MARKET_DATASET_CANDLES : "immutable snapshot"
 
     STRATEGY_DEFINITIONS ||--o{ STRATEGY_VERSIONS : versions
     STRATEGY_VERSIONS ||--o{ EXPERIMENTS : "selected by"
@@ -1240,18 +1776,20 @@ erDiagram
 LEADERBOARD_ENTRIES.score
   → EVALUATIONS (evaluator_version, metrics)
     → BACKTEST_RUNS (worker, duration, status)
-      → EXPERIMENTS (fee_bps, slippage_bps, fill_policy, position_policy)
+      → EXPERIMENTS (fee_bps, slippage_bps, fill_policy, position_policy, open_position_at_end, risk_policy)
         ├─→ STRATEGY_VERSIONS (strategy_id, version, params_schema, code_fingerprint)
-        └─→ MARKET_DATASETS (symbol, timeframe, from, to, content_hash)
+        └─→ MARKET_DATASETS (provider, symbol, timeframe, from, to, revision_no, content_hash)
+            └─→ MARKET_DATASET_CANDLES (immutable OHLCV snapshot)
 ```
 
-Mọi con số trên Leaderboard đi ngược được về **6 bảng** này, tất cả append-only. Đây là câu trả lời cụ thể cho §40.8 và cho R6.
+Mọi con số trên Leaderboard đi ngược được về metadata provenance và **snapshot OHLCV bất biến**. `strategy_versions`, `market_datasets`, `market_dataset_candles`, `experiments`, `evaluations` và `leaderboard_entries` chỉ được INSERT; `backtest_runs` chỉ thay đổi metadata thực thi/lease, không thay đổi input hay trade facts. Đây là câu trả lời cụ thể cho §40.8 và cho R6.
 
 ### 4.4 Chiến lược retention và giới hạn
 
 | Dữ liệu                 | Retention                                          | Giới hạn API                                                       |
 | ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------ |
-| `candles`               | Giữ lâu dài. Partition theo tháng khi > 50M row     | `GET /markets/candles` tối đa **1000 nến/request**                 |
+| `candles`               | Cache vận hành; giữ lâu dài và partition theo tháng khi > 50M row | `GET /markets/candles` (provider + symbol) tối đa **1000 nến/request** |
+| `market_datasets`, `market_dataset_candles` | Artifact bất biến; giữ lâu dài, archive/partition chứ không hard-delete | Worker đọc snapshot theo `market_dataset_id` |
 | `equity_points`         | Giữ theo run; **decimate** khi trả API              | Tối đa **2000 điểm/response** (downsample tuyến tính)              |
 | `trades`, `run_signals` | Giữ lâu dài (là fact)                              | Phân trang, tối đa **200 row/page**                                |
 | `domain_events`         | 30 ngày, sau đó archive/drop partition             | Không expose public; chỉ dùng cho debug + audit                     |
@@ -1265,9 +1803,9 @@ Giới hạn ở cột phải **không phải validation UI** — chúng là con
 
 ## 5. Domain contract và Event vocabulary
 
-Đây là phần quan trọng nhất của blueprint. **Toàn bộ khả năng mở rộng của hệ thống nằm ở 7 interface dưới đây** — chúng là các "seam" mà mọi thay đổi tương lai đi qua.
+Đây là phần quan trọng nhất của blueprint. **Toàn bộ khả năng mở rộng domain nằm ở 7 interface dưới đây** — chúng là các "seam" mà mọi thay đổi tương lai đi qua. `JobDispatcher` được liệt kê riêng là infrastructure seam, nên tổng code-level interface là **7 domain ports + 1 JobDispatcher**.
 
-### 5.1 Bảy port của hệ thống
+### 5.1 Bảy domain port của hệ thống
 
 Cú pháp chỉ để minh hoạ; cam kết thiết kế là **contract và hướng phụ thuộc**.
 
@@ -1357,12 +1895,13 @@ class AnalysisContext:
     params: Mapping[str, Any]         # đã validate theo parameters_schema
 ```
 
-Bốn điều `AnalysisContext` **cố ý không có**:
+Bốn điều dữ liệu của `AnalysisContext` **cố ý không có**, cộng thêm thời gian hệ thống:
 
 1. **Không có DB session / repository.** Strategy không query được gì. Dữ liệu nó cần phải được `MarketService` hoặc `NewsService` chuẩn bị trước và đưa vào.
 2. **Không có HTTP client.** Strategy không gọi được Binance, không gọi được API nào.
 3. **Không có nến sau `index`.** Slice `candles[:index+1]` được đảm bảo ở tầng gọi.
 4. **Không có giá trị indicator sau `index`.** Đây là lỗ hổng dễ bỏ sót nhất và được xử lý riêng ở §5.2.1.
+5. **Không có thời gian hệ thống.** Strategy không được gọi `datetime.now()`; mọi mốc thời gian dùng trong phân tích phải đến từ candle/news window được truyền vào để backtest tái lập được.
 
 Hệ quả kiểm chứng được: **file `strategies/rsi.py` import được và test được trong môi trường không có PostgreSQL, không có network.** Nếu một lúc nào đó nó không còn như vậy, tức là contract đã bị vi phạm — và điều đó phát hiện được bằng một unit test chạy trong CI.
 
@@ -1464,7 +2003,7 @@ def __post_init__(self):
         object.__setattr__(self, "indicators", IndicatorView(self.indicators, self.index))
 ```
 
-**Đánh đổi.** Mỗi lần đọc indicator giờ đi qua một lời gọi Python thay vì index trực tiếp: ~100 ns thay vì ~30 ns. Với 20.000 nến × 3 strategy × 4 lần đọc/nến ≈ 240.000 lời gọi ≈ **24 ms cho cả run** — nằm trong ngân sách `< 100 µs/nến`. Nếu về sau đo được đây là bottleneck thật, có một lối thoát không phá contract: `IndicatorView` kiểm tra `sys.flags.optimized` và trả mảng thô ở chế độ `-O` cho **run tin cậy** (candidate của search run nội bộ), vẫn giữ view cho plugin mới. Nhưng đó là tối ưu hoá cần số đo, không phải mặc định.
+**Đánh đổi.** Mỗi lần đọc indicator giờ đi qua một lời gọi Python thay vì index trực tiếp: ~100 ns thay vì ~30 ns. Với 20.000 nến × 3 strategy × 4 lần đọc/nến ≈ 240.000 lời gọi ≈ **24 ms cho cả run** — nằm trong ngân sách `< 100 µs/nến`. Không có chế độ `-O` hay trusted-run nào được trả mảng thô: bỏ qua causal view dù plugin là code nội bộ vẫn biến một invariant dữ liệu thành quy ước dễ bị cấu hình sai. Nếu profiling thật sự tìm thấy bottleneck, tối ưu bên trong `CausalSeries` hoặc tạo bounded view khác nhưng vẫn giữ cùng contract và phải có fixture look-ahead chạy trong CI.
 
 > **Vì sao không chọn cách đơn giản hơn — slice từng indicator mỗi nến.** `{k: v[:t+1] for k, v in indicators.items()}` đúng về ngữ nghĩa và không cần class mới. Nhưng nó tạo bản copy ở **mỗi** nến: 20.000 nến × 4 indicator × trung bình 10.000 phần tử ≈ 800 triệu phép copy. Vòng lặp trở thành O(n²) và một backtest 20.000 nến sẽ mất hàng chục giây chỉ để copy mảng. Đây là ví dụ của việc lựa chọn "ít code nhất" và "đúng nhất" không trùng nhau — và khi chúng không trùng, ràng buộc hiệu năng có số đo cụ thể sẽ quyết định.
 
@@ -1560,19 +2099,22 @@ Go API sở hữu contract công khai và map sang lệnh nội bộ. `Auth` = c
 | Method | Route                                        | Auth   | Mục đích                                                                    |
 | ------ | -------------------------------------------- | ------ | --------------------------------------------------------------------------- |
 | GET    | `/api/v1/markets/pairs`                      | public | Danh sách pair khả dụng                                                     |
-| GET    | `/api/v1/markets/candles`                    | public | Nến lịch sử có giới hạn (`symbol`, `timeframe`, `from`, `to`; max 1000)      |
-| GET    | `/api/v1/markets/chart-overlays`             | public | Overlay **do backend tính** cho 1 `config_hash` (§3.2)                      |
+| GET    | `/api/v1/markets/candles`                    | public | Nến lịch sử từ operational cache, max 1000/response; dataset builder nội bộ có quota 20.000 |
+| GET    | `/api/v1/markets/chart-overlays`             | public | Overlay **do backend tính** cho 1 `(provider, symbol, timeframe, config_hash)` (§3.2) |
 | GET    | `/api/v1/markets/stream`                     | public | **WebSocket**: subscribe/unsubscribe theo panel; rate-limited, max 8 sub/conn |
 | GET    | `/api/v1/markets/status`                     | public | Trạng thái feed: `stale`, `last_closed_at`, `reconnect_count`                |
 | GET    | `/api/v1/strategies`                         | public | Registry metadata: id, version, family, `parameters_schema`, `overlay_types` |
 | POST   | `/api/v1/experiments`                        | Auth   | Tạo experiment bất biến → **`202 { run_id }`**, không chờ backtest           |
 | GET    | `/api/v1/experiments/{id}`                   | Owner  | Trạng thái run + result summary + provenance                                 |
+| GET    | `/api/v1/experiments/{id}/candles`            | Owner  | Nến từ `read.dataset_candles_v1`, tối đa 1000 điểm/cửa sổ                    |
 | GET    | `/api/v1/experiments/{id}/trades`            | Owner  | Trade facts, phân trang (max 200/page)                                       |
 | GET    | `/api/v1/experiments/{id}/equity`            | Owner  | Equity curve, decimate ≤ 2000 điểm                                           |
 | GET    | `/api/v1/experiments/{id}/overlays`          | Owner  | Overlay của result: signal + entry/exit/SL/TP marker                         |
 | POST   | `/api/v1/search-runs`                        | Auth   | Bắt đầu search; **`stop_conditions` bắt buộc**; áp quota                     |
 | GET    | `/api/v1/search-runs/{id}`                   | Owner  | Progress: tested/queued/failed/best/current/elapsed/stop_reason              |
 | POST   | `/api/v1/search-runs/{id}/actions`           | Owner  | `{"action":"pause"\|"resume"\|"cancel","command_id":"..."}` — idempotent      |
+| POST   | `/api/v1/admin/score-policies`                | ADMIN  | Tạo immutable scoring policy version mới                                  |
+| POST   | `/api/v1/admin/score-policies/{version}/activate` | ADMIN | Activate policy qua Python command + `activate_score_policy()`             |
 | GET    | `/api/v1/leaderboard`                        | public | Top-K theo `dataset_version` + `score_policy_version`                        |
 | GET    | `/api/v1/leaderboard/{entryId}/provenance`   | public | Toàn bộ chuỗi truy nguồn (§4.3)                                              |
 | GET    | `/api/v1/news`                               | public | News + sentiment (`null` nếu chưa/không phân tích được)                       |
@@ -1611,14 +2153,14 @@ Quy tắc **không thương lượng** ở boundary:
 
 | Event                   | Publisher            | Consumer                          | Delivery | Payload chính                                                    |
 | ----------------------- | -------------------- | --------------------------------- | -------- | ---------------------------------------------------------------- |
-| `MarketPriceUpdated`    | BinanceAdapter       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | symbol, timeframe, provisional candle |
-| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | **In-proc** (`lab`)                     | symbol, timeframe, close_time, OHLCV |
-| `ChartOverlayUpdated`   | OverlayCalculator    | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | symbol, timeframe, strategy@ver, `config_hash`, delta series |
-| `StreamStale`           | MarketService        | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | symbol, timeframe, last_closed_at, reconnect_count |
+| `MarketPriceUpdated`    | BinanceAdapter       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, provisional candle |
+| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | **In-proc** (`lab`)                     | provider, symbol, timeframe, close_time, OHLCV |
+| `ChartOverlayUpdated`   | OverlayCalculator    | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, strategy@ver, `config_hash`, delta series |
+| `StreamStale`           | MarketService        | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, last_closed_at, reconnect_count |
 | `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | **In-proc** (`lab`)                     | search_run_id, candidate_hash, definition, generation_meta |
 | `BacktestQueued`        | ExperimentService    | metrics, WS Hub                   | **Outbox** → metrics; HTTP → WS Hub     | experiment_id, job_id, priority |
 | `BacktestStarted`       | Worker               | metrics, WS Hub                   | **Outbox** (worker → dispatcher)        | experiment_id, worker_id, candle_count |
-| `BacktestCompleted`     | Worker               | Evaluator                         | **Outbox** (worker → dispatcher)        | backtest_run_id, trade_count, duration_ms |
+| `BacktestCompleted`     | Worker               | Evaluator                         | **Outbox** (worker → dispatcher)        | backtest_run_id, settled_trade_count, open_trade_count, duration_ms |
 | `BacktestFailed`        | Worker               | SearchRunService, metrics         | **Outbox** (worker → dispatcher)        | experiment_id, error_code, retryable |
 | `StrategyEvaluated`     | Evaluator            | **RankingService**                | **Outbox** (§5.7.4)                     | evaluation_id, metrics, evaluator_version |
 | `LeaderboardUpdated`    | RankingService       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | entry_id, rank, score, dataset_version |
@@ -1718,7 +2260,10 @@ async with conn.transaction():
     await repo.insert_equity_points(conn, run_id, equity)
     await repo.update_run_completed(conn, run_id, duration_ms, candles_read)
     await repo.update_job_completed(conn, job_id)
-    await publish_transactional(conn, BacktestCompleted(run_id, len(trades), duration_ms))
+    await publish_transactional(
+        conn,
+        BacktestCompleted(run_id, settled_trade_count, open_trade_count, duration_ms),
+    )
 # COMMIT: hoặc cả kết quả lẫn event được ghi, hoặc không gì cả.
 ```
 
@@ -1921,7 +2466,7 @@ Idempotency-Key: 01JB2X9K7M4NQZ8V3T5W6Y7Z8A      # = event_id của event đầu
       "correlation_id": "req_01JB2X9K7M4NQZ",
       "occurred_at": "2026-08-11T09:14:22.481Z",
       "seq": 8472,
-      "subscription_key": "BTCUSDT|5m|rsi@1.0.0|sha256:4d1f…",
+      "subscription_key": "binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1f…",
       "payload": { }
     }
   ]
@@ -2015,7 +2560,7 @@ sequenceDiagram
     BN--xAD: connection closed
     AD->>MS: StreamDisconnected
     MS->>CK: is_stale = true, reconnect_count += 1
-    MS->>HUB: StreamStale(symbol, timeframe, last_closed_at=T1)
+    MS->>HUB: StreamStale(provider, symbol, timeframe, last_closed_at=T1)
     HUB->>UI: badge "STALE · cập nhật lần cuối T1"
     Note over UI: Nến lịch sử VẪN render từ DB.<br/>Backtest trên dataset đã có VẪN chạy.
 
@@ -2032,7 +2577,7 @@ sequenceDiagram
     MS->>DB: UPSERT — PK (provider,symbol,timeframe,close_time) tự de-dup
     Note over DB: Chồng lấp với nến đã có → DO UPDATE, KHÔNG tạo nến trùng.<br/>Vì vậy backfill an toàn để retry bao nhiêu lần cũng được.
     MS->>CK: last_closed_at = Tn, is_stale = false
-    MS->>HUB: StreamRecovered
+    MS->>HUB: StreamRecovered(provider, symbol, timeframe)
     HUB->>UI: bỏ badge STALE, render nến bù
 ```
 
@@ -2128,20 +2673,19 @@ sequenceDiagram
         SRS->>GEN: generate(space, batch_size, seed, history)
         GEN-->>SRS: CandidateStrategy(hash=H, generated_by=..., meta=...)
 
-        SRS->>DB: INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
+        SRS->>DB: BEGIN · INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
         alt hash đã tồn tại trong run
-            DB-->>SRS: 0 row
+            DB-->>SRS: 0 row · COMMIT
             Note over SRS: Trùng → bỏ qua, KHÔNG backtest lại. Sang candidate tiếp.
         else candidate mới
-            SRS->>EXS: create_experiment(candidate, dataset, execution)
-            EXS->>DB: BEGIN
-            EXS->>DB: INSERT experiments (snapshot bất biến)
+            SRS->>EXS: create_experiment(candidate_id, dataset, execution)
+            EXS->>DB: INSERT experiments (snapshot bất biến, search_candidate_id=candidate_id)
             EXS->>DB: INSERT backtest_jobs (status=queued, priority=200)
             EXS->>DB: COMMIT
-            Note over EXS,DB: Snapshot và job trong CÙNG transaction.<br/>Không có job trỏ tới experiment không tồn tại.
+            Note over EXS,DB: Candidate, snapshot và job trong CÙNG transaction.<br/>`experiments.search_candidate_id` là liên kết canonical, UNIQUE.
             EXS->>HUB: BacktestQueued
+            SRS->>DB: UPDATE candidates_generated += 1, updated_at=now()
         end
-        SRS->>DB: UPDATE candidates_generated += 1
         SRS->>HUB: SearchProgressUpdated
     end
 
@@ -2149,14 +2693,14 @@ sequenceDiagram
         W1->>DB: claim: SELECT ... WHERE status='queued'<br/>FOR UPDATE SKIP LOCKED LIMIT 1
         DB-->>W1: job A + lease_token T1
         W1->>DB: UPDATE status=leased, leased_by=w1,<br/>lease_token=T1, lease_expires_at=now()+120s
-        W1->>W1: BacktestEngine.run(snapshot, candles)
+        W1->>W1: load market_dataset_candles snapshot<br/>BacktestEngine.run(snapshot, candles)
         W1->>DB: BEGIN · trades, run_signals, equity_points<br/>· UPSERT backtest_runs WHERE lease_token=T1<br/>· INSERT domain_events BacktestCompleted (pending) · COMMIT
         Note over W1,DB: Kết quả VÀ event trong cùng transaction (§5.7.3).<br/>Mọi UPDATE guard bằng lease_token (§8.3.1).
     and
         W2->>DB: claim: SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1
         Note over W2,DB: SKIP LOCKED = W2 KHÔNG chờ W1,<br/>nó nhận job B ngay lập tức
         DB-->>W2: job B + lease_token T2
-        W2->>W2: BacktestEngine.run(...)
+        W2->>W2: load market_dataset_candles snapshot<br/>BacktestEngine.run(...)
         W2->>DB: BEGIN · kết quả · INSERT domain_events (pending) · COMMIT
     end
 
@@ -2172,13 +2716,13 @@ sequenceDiagram
         RNK->>DB: INSERT event_consumptions(ranking)<br/>+ leaderboard_entries (APPEND, không UPDATE)
         RNK->>HUB: LeaderboardUpdated qua POST /internal/events
         HUB->>U: leaderboard tự cập nhật (không refresh trang)
-        RNK->>SRS: best_score cải thiện → reset non_improving_count
+        RNK->>DB: best_score cải thiện → reset non_improving_count (cùng transaction)
     else không vào Top-K
-        RNK->>SRS: non_improving_count += 1
+        RNK->>DB: non_improving_count += 1
     end
     DP->>DB: mọi handler đã ack → dispatch_status=delivered
 
-    SRS->>DB: UPDATE status=completed, stop_reason='max_candidates'
+    SRS->>DB: UPDATE status=completed, stop_reason='max_candidates', updated_at=now()
     SRS->>HUB: SearchRunFinished
 ```
 
@@ -2188,9 +2732,9 @@ sequenceDiagram
 
 | Lớp                 | Cơ chế                                                                                          |
 | ------------------- | ----------------------------------------------------------------------------------------------- |
-| Schema              | `CHECK (stop_conditions ? 'max_candidates' OR ? 'max_duration_sec' OR ? 'max_non_improving')` — không INSERT được run không có stop condition |
+| Schema              | `CHECK` yêu cầu ít nhất một key stop condition có giá trị số dương (gồm `max_failure_rate`) — không INSERT được run không có stop condition hợp lệ |
 | API validation      | `POST /search-runs` reject `422` nếu thiếu; quota giới hạn `max_candidates ≤ user_quotas.max_candidates_per_run` |
-| Runtime             | `check_stop_conditions()` chạy ở **đầu** mỗi vòng, trước khi generate. Không có nhánh nào bỏ qua nó |
+| Runtime             | `check_stop_conditions()` chạy ở **đầu** mỗi vòng, trước khi generate. Không có nhánh nào bỏ qua nó; state đọc lại từ DB sau restart |
 
 Bốn loại stop condition và ý nghĩa từng loại:
 
@@ -2333,7 +2877,7 @@ Hệ thống dùng **RBAC 3 role** kết hợp **ownership check** trên resourc
 | `GET /leaderboard` · `/{id}/provenance`      | ✅        | ✅              | ✅             | ✅    |
 | `GET /news` · `/news/aggregate`              | ✅        | ✅              | ✅             | ✅    |
 | `POST /experiments`                          | ❌        | ✅ (owner=self) | ✅             | ✅    |
-| `GET /experiments/{id}` (+ `/trades`, `/equity`, `/overlays`) | ❌ | ✅ **chỉ của mình** | ✅ mọi | ✅ mọi |
+| `GET /experiments/{id}` (+ `/candles`, `/trades`, `/equity`, `/overlays`) | ❌ | ✅ **chỉ của mình** | ✅ mọi | ✅ mọi |
 | `POST /search-runs`                          | ❌        | ✅ (theo quota) | ✅             | ✅    |
 | `GET /search-runs/{id}`                      | ❌        | ✅ **chỉ của mình** | ✅ mọi     | ✅ mọi |
 | `POST /search-runs/{id}/actions`             | ❌        | ✅ **chỉ của mình** | ✅ mọi     | ✅ mọi |
@@ -2564,7 +3108,7 @@ Rate limit chặn 5 `POST /search-runs`/phút. Nhưng **một** search run hợp
 
 **Outbound rate limit — cái dễ bị quên**
 
-Binance dùng hệ thống **weight**: `/api/v3/klines` với `limit=1000` tốn weight 2, giới hạn 1200 weight/phút/IP. Vượt → `429`, tiếp tục vượt → **`418` và ban IP tạm thời**. Nghĩa là một backfill loop không kiểm soát có thể làm hệ thống mất market data hoàn toàn trong nhiều phút. Vì vậy `BinanceAdapter` có token bucket **outbound** theo weight, và mọi call đi qua nó. Khi chạy nhiều worker, bucket này phải shared (Redis) — nếu không, 4 worker × 1200 weight = ban chắc chắn. Đây là điều kiện (b) ở §12.0 khiến Redis trở thành bắt buộc.
+Binance dùng hệ thống **weight**: `/api/v3/klines` với `limit=1000` tốn weight 2. Ngưỡng là cấu hình `provider_weight_limit_per_minute` (MVP mặc định **6000 weight/phút/IP**, phải đổi được khi provider đổi tài liệu), không hard-code trong adapter. Vượt → `429`, tiếp tục vượt → **`418` và ban IP tạm thời**. Nghĩa là một backfill loop không kiểm soát có thể làm hệ thống mất market data hoàn toàn trong nhiều phút. Vì vậy `BinanceAdapter` có token bucket **outbound** theo weight, mọi call đi qua nó, và đọc `X-MBX-USED-WEIGHT-1M` để hiệu chỉnh bucket theo thực tế. Khi chạy nhiều worker, bucket này phải shared (Redis) — nếu không, giới hạn tổng phải được tính theo `provider_weight_limit_per_minute`, không nhân bản độc lập theo worker. Đây là điều kiện (b) ở §12.0 khiến Redis trở thành bắt buộc khi scale vượt một process.
 
 ### 8.3 Bảo vệ khả năng scale — Job Queue với contract cố định (§32.5 Performance, §43)
 
@@ -2909,7 +3453,7 @@ Nếu ai đó thêm một query SQL vào strategy, test này fail ngay.
 
 **a. Leaderboard entry mutable**
 
-Nếu `leaderboard_entries` là bảng UPDATE (entry tốt hơn ghi đè entry cũ), thì lịch sử thứ hạng mất và entry biến thành "bản copy của strategy hiện tại" — phá provenance. Chặn bằng: append-only + `UNIQUE (evaluation_id, score_policy_version)` (§4.1 phương án C).
+Nếu `leaderboard_entries` là bảng UPDATE (entry tốt hơn ghi đè entry cũ), hoặc bị xoá cascade khi dọn evaluation, thì lịch sử thứ hạng mất và entry biến thành "bản copy của strategy hiện tại" — phá provenance. Chặn bằng: `ON DELETE RESTRICT`, trigger append-only + `UNIQUE (evaluation_id, score_policy_version)` (§4.1 phương án C).
 
 **b. Overlay tính hai nơi**
 
@@ -2925,8 +3469,8 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 ### ADR-001: WebSocket (không SSE, không polling) cho realtime market data
 
-- **Bối cảnh**: 4 chart panel, mỗi panel có `(symbol, timeframe)` riêng, đổi timeframe độc lập. Đề bài §4 nói rõ frontend không được polling `GET /price` liên tục.
-- **Quyết định**: WebSocket tại `GET /api/v1/markets/stream`. Client gửi `{"action":"subscribe","key":"BTCUSDT|5m|rsi@1.0.0|sha256:4d1..."}`. Go API giữ registry `subscription_key → set[conn]` và chỉ đẩy frame tới connection khớp.
+- **Bối cảnh**: 4 chart panel, mỗi panel có `(provider, symbol, timeframe)` riêng, đổi timeframe độc lập. Đề bài §4 nói rõ frontend không được polling `GET /price` liên tục.
+- **Quyết định**: WebSocket tại `GET /api/v1/markets/stream`. Client gửi `{"action":"subscribe","key":"binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1..."}`. Go API giữ registry `subscription_key → set[conn]` và chỉ đẩy frame tới connection khớp.
 - **Vì sao không SSE**: SSE là một chiều server→client. Với SSE, việc subscribe/unsubscribe từng panel phải làm qua REST call riêng, tạo ra vấn đề đồng bộ giữa "REST đã đổi subscription" và "stream nào đang chạy". Với 4 panel đổi timeframe độc lập, đó là nguồn bug thật. WebSocket cho subscribe trên cùng kênh, atomic.
 - **Vì sao không polling**: 4 panel × 1 request/giây × N user = tải vô nghĩa, và độ trễ tệ hơn.
 - **Vì sao Binance không nối trực tiếp vào browser**: (a) frontend sẽ phụ thuộc payload Binance → thêm OKX phải sửa frontend; (b) không kiểm soát được rate limit; (c) mỗi browser một connection tới Binance thay vì một connection dùng chung.
@@ -2997,7 +3541,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 - **Quyết định**: `GET /api/v1/markets/chart-overlays?symbol&timeframe&strategy=rsi@1.0.0&config_hash=...` trả series đã tính. Realtime delta qua `ChartOverlayUpdated` với cùng `config_hash`.
 - **Vì sao**: ba lý do ở §3.2 — tránh hai nguồn chân lý cho cùng một indicator, overlay của backtest result *bắt buộc* từ backend (cần fill policy + position state), và tránh phải implement mỗi strategy 2 lần (Python + TypeScript).
-- **Vì sao có `config_hash` trong khoá subscription**: RSI(14,30,70) và RSI(21,30,70) là hai series khác nhau trên cùng `(symbol, timeframe)`. Không có `config_hash` thì Panel 1 (RSI 14) sẽ nhận cả delta của Panel 2 (RSI 21) và vẽ sai.
+- **Vì sao có `provider` và `config_hash` trong khoá subscription**: RSI(14,30,70) và RSI(21,30,70) là hai series khác nhau trên cùng `(provider, symbol, timeframe)`, và Binance/OKX có thể cùng cung cấp một symbol. Thiếu một trong hai field thì Panel có thể nhận delta của series hoặc provider khác và vẽ sai.
 - **Đánh đổi**: mỗi lần user đổi param là một round-trip. Bù lại: `config_hash` là khoá cache tự nhiên (nếu thêm Redis), và tính đúng quan trọng hơn tiết kiệm một round-trip.
 
 ### ADR-009: `code_fingerprint` để thực thi versioning của strategy
@@ -3023,7 +3567,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 ### ADR-012: Leaderboard append-only tham chiếu evaluation
 
-- **Quyết định**: `leaderboard_entries` append-only, trỏ `evaluation_id`, có `score_policy_version` và `market_dataset_id`. "Top-K hiện tại" là một query, không phải một bảng.
+- **Quyết định**: `leaderboard_entries` append-only, trỏ `evaluation_id` với `ON DELETE RESTRICT`, có `score_policy_version` và `market_dataset_id`; DB trigger chặn UPDATE/DELETE. "Top-K hiện tại" là một query, không phải một bảng.
 - **Vì sao**: phân tích 3 phương án ở §4.1. Điểm quyết định là entry phải là snapshot bất biến để trả lời §40.8, và phải giữ lịch sử thứ hạng để giải thích được diễn tiến của search run.
 - **Vì sao có `market_dataset_id`**: chặn so sánh giữa các dataset khác nhau — Top-1 phải là "tốt nhất trên cùng dữ liệu", không phải "may mắn gặp dataset dễ".
 - **Eligibility nằm trong policy, không trong code**: `score_policies.weights` chứa `min_trades` (mặc định 10) và các anchor chuẩn hoá. Một strategy có 2 trade và `+40%` return **không** vào Top-K vì không có ý nghĩa thống kê — nhưng ngưỡng hợp lý phụ thuộc timeframe và độ dài dataset, nên nó là dữ liệu chứ không phải hằng số. Chi tiết ở `specs/leaderboard.md` và `specs/evaluation.md`.
@@ -3126,7 +3670,7 @@ class OKXAdapter:
 
 Lý do frontend không đổi: nó nhận `Candle` chuẩn hoá qua `GET /markets/candles` và WebSocket. Field name của OKX (`ts`, `o`, `h`, `l`, `c`, `vol`) chỉ tồn tại **bên trong** `_to_candle()`. Frontend chưa bao giờ thấy chúng.
 
-Thêm vào: 1 row `market_pairs` với `provider='okx'`. `candles.provider` đã là phần của primary key nên hai provider cùng symbol không xung đột — điều này đã có trong schema từ MVP, không phải migration sau.
+Thêm vào: 1 row `market_pairs` với `provider='okx'` (ràng buộc là `UNIQUE(provider, symbol)`). `candles.provider` đã là phần của primary key và index range nên hai provider cùng symbol không xung đột — điều này đã có trong schema từ MVP, không phải migration sau.
 
 → Chi tiết: §3.1 điểm ①, `specs/market-data.md`.
 
@@ -3201,6 +3745,10 @@ Nếu shape *phải* đổi (ví dụ thêm nhãn `MIXED`): đó là breaking ch
     "fee_bps": 10, "slippage_bps": 5,
     "fill_policy": "next_candle_open", "position_policy": "long_only",
     "open_position_at_end": "close_at_last_candle",
+    "risk_policy": {
+      "stop_loss_pct": 2.0, "take_profit_pct": 5.0,
+      "intrabar_priority": "stop_loss_first"
+    },
     "initial_capital": "10000.00"
   },
   "strategy": {
@@ -3209,20 +3757,21 @@ Nếu shape *phải* đổi (ví dụ thêm nhãn `MIXED`): đó là breaking ch
     "children": [
       { "strategy_id": "ma_cross", "version": "1.0.0",
         "parameters": { "fast_period": 20, "slow_period": 50 }, "weight": 0.2,
-        "code_fingerprint": "sha256:9f2a…" },
+        "code_fingerprint": "9f2a…" },
       { "strategy_id": "rsi", "version": "1.0.0",
         "parameters": { "period": 14, "buy_threshold": 30, "sell_threshold": 70 }, "weight": 0.3,
-        "code_fingerprint": "sha256:3c81…" },
+        "code_fingerprint": "3c81…" },
       { "strategy_id": "support_resistance", "version": "1.0.0",
         "parameters": { "lookback": 80, "touch_tolerance_pct": 0.5 }, "weight": 0.5,
-        "code_fingerprint": "sha256:be47…" }
+        "code_fingerprint": "be47…" }
     ]
   },
   "dataset": {
     "dataset_version": "binance-btcusdt-5m-20260101-20260301",
     "provider": "binance", "symbol": "BTCUSDT", "timeframe": "5m",
     "range_from": "2026-01-01T00:00:00Z", "range_to": "2026-03-01T00:00:00Z",
-    "candle_count": 17280, "content_hash": "sha256:7a1e…"
+    "revision_no": 1,
+    "candle_count": 17280, "content_hash": "7a1e…"
   },
   "search_run": { "id": "…", "generator_id": "random_search",
                   "generator_version": "1.0.0", "seed": 42 }

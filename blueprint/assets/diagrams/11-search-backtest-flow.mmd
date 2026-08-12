@@ -29,20 +29,19 @@ sequenceDiagram
         SRS->>GEN: generate(space, batch_size, seed, history)
         GEN-->>SRS: CandidateStrategy(hash=H, generated_by=..., meta=...)
 
-        SRS->>DB: INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
+        SRS->>DB: BEGIN · INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
         alt hash đã tồn tại trong run
-            DB-->>SRS: 0 row
+            DB-->>SRS: 0 row · COMMIT
             Note over SRS: Trùng → bỏ qua, KHÔNG backtest lại. Sang candidate tiếp.
         else candidate mới
-            SRS->>EXS: create_experiment(candidate, dataset, execution)
-            EXS->>DB: BEGIN
-            EXS->>DB: INSERT experiments (snapshot bất biến)
+            SRS->>EXS: create_experiment(candidate_id, dataset, execution)
+            EXS->>DB: INSERT experiments (snapshot bất biến, search_candidate_id=candidate_id)
             EXS->>DB: INSERT backtest_jobs (status=queued, priority=200)
             EXS->>DB: COMMIT
-            Note over EXS,DB: Snapshot và job trong CÙNG transaction.<br/>Không có job trỏ tới experiment không tồn tại.
+            Note over EXS,DB: Candidate, snapshot và job trong CÙNG transaction.<br/>`experiments.search_candidate_id` là liên kết canonical, UNIQUE.
             EXS->>HUB: BacktestQueued
+            SRS->>DB: UPDATE candidates_generated += 1, updated_at=now()
         end
-        SRS->>DB: UPDATE candidates_generated += 1
         SRS->>HUB: SearchProgressUpdated
     end
 
@@ -50,14 +49,14 @@ sequenceDiagram
         W1->>DB: claim: SELECT ... WHERE status='queued'<br/>FOR UPDATE SKIP LOCKED LIMIT 1
         DB-->>W1: job A + lease_token T1
         W1->>DB: UPDATE status=leased, leased_by=w1,<br/>lease_token=T1, lease_expires_at=now()+120s
-        W1->>W1: BacktestEngine.run(snapshot, candles)
+        W1->>W1: load market_dataset_candles snapshot<br/>BacktestEngine.run(snapshot, candles)
         W1->>DB: BEGIN · trades, run_signals, equity_points<br/>· UPSERT backtest_runs WHERE lease_token=T1<br/>· INSERT domain_events BacktestCompleted (pending) · COMMIT
         Note over W1,DB: Kết quả VÀ event trong cùng transaction (§5.7.3).<br/>Mọi UPDATE guard bằng lease_token (§8.3.1).
     and
         W2->>DB: claim: SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1
         Note over W2,DB: SKIP LOCKED = W2 KHÔNG chờ W1,<br/>nó nhận job B ngay lập tức
         DB-->>W2: job B + lease_token T2
-        W2->>W2: BacktestEngine.run(...)
+        W2->>W2: load market_dataset_candles snapshot<br/>BacktestEngine.run(...)
         W2->>DB: BEGIN · kết quả · INSERT domain_events (pending) · COMMIT
     end
 
@@ -73,11 +72,11 @@ sequenceDiagram
         RNK->>DB: INSERT event_consumptions(ranking)<br/>+ leaderboard_entries (APPEND, không UPDATE)
         RNK->>HUB: LeaderboardUpdated qua POST /internal/events
         HUB->>U: leaderboard tự cập nhật (không refresh trang)
-        RNK->>SRS: best_score cải thiện → reset non_improving_count
+        RNK->>DB: best_score cải thiện → reset non_improving_count (cùng transaction)
     else không vào Top-K
-        RNK->>SRS: non_improving_count += 1
+        RNK->>DB: non_improving_count += 1
     end
     DP->>DB: mọi handler đã ack → dispatch_status=delivered
 
-    SRS->>DB: UPDATE status=completed, stop_reason='max_candidates'
+    SRS->>DB: UPDATE status=completed, stop_reason='max_candidates', updated_at=now()
     SRS->>HUB: SearchRunFinished

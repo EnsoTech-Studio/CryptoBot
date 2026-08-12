@@ -77,6 +77,8 @@ Composite snapshot — đây là **dữ liệu**, được lưu nguyên văn và
 
 `candidate_hash = sha256(canonical_json(definition))`. Quy tắc `canonical_json` được chốt ở `design.md` ADR-003 và **mọi** nơi tính hash phải dùng đúng nó: sort key theo code point UTF-8 (đệ quy mọi cấp), số nguyên không dấu thập phân (`20` chứ không `20.0`), số thực bỏ trailing zero (`0.30` → `0.3`), chuỗi chuẩn hoá NFC, không khoảng trắng, `null` khác với key vắng mặt. Lý do: `{"a":1,"b":2}` và `{"b":2,"a":1}` là **cùng một** definition và **phải** cho cùng hash. Nếu không, `UNIQUE (search_run_id, candidate_hash)` vẫn tồn tại nhưng dedup của search **vô hiệu một cách âm thầm** — search vẫn chạy, chỉ là backtest lại cùng một tổ hợp nhiều lần và đốt worker mà không ai thấy lỗi.
 
+`experiments.strategy_version_id` của composite trỏ tới version ảo `composite@1.0.0` (`is_composite=true`, `family=NULL`) được seed trong registry. Đây là root ổn định cho FK và provenance, không phải một child trong search space; nesting bị cấm. Mỗi child vẫn được resolve theo `(strategy_id, version)` và kiểm tra `code_fingerprint` trước khi transaction ghi snapshot.
+
 > **Chi tiết dễ bỏ sót**: `encoding` phải nằm trong snapshot, không phải hằng số. Một policy tương lai có thể muốn `{"BUY": 2, "HOLD": 0, "SELL": -1}` (thiên vị long) — nếu encoding là hằng số trong code thì policy đó không biểu diễn được, và mọi entry cũ mất thông tin về ánh xạ đã dùng.
 
 ## Luồng chính

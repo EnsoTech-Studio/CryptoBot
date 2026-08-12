@@ -21,7 +21,7 @@ flowchart LR
         direction TB
         MW["Middleware chain<br/>requestID → CORS → ratelimit<br/>→ auth → RBAC → validate"]
         REST["REST handlers"]
-        WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(symbol,timeframe,strategy,config_hash)</i>"]
+        WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(provider,symbol,timeframe,strategy,config_hash)</i>"]
     end
 
     subgraph LabBox["STRATEGY LAB — Python"]
@@ -67,7 +67,7 @@ flowchart LR
         W1["Worker<br/>poll → run → publish"]
     end
 
-    DB[("PostgreSQL<br/>candles · strategy_versions<br/>experiments · backtest_jobs<br/>trades · equity_points<br/>evaluations · leaderboard_entries<br/>news_items · sentiment_results")]
+    DB[("PostgreSQL<br/>candles · dataset snapshots<br/>strategy_versions · experiments<br/>backtest_jobs · trades · equity_points<br/>evaluations · leaderboard_entries<br/>news_items · sentiment_results")]
 
     BN_W -->|"kline tick"| MDA
     BN_R -->|"backfill nến thiếu"| MDA
@@ -75,7 +75,7 @@ flowchart LR
     MDS -->|"upsert nến đã đóng"| DB
     MDS --> BUS
     BUS -->|"CandleClosed"| OVL
-    OVL -->|"ChartOverlayUpdated<br/>+ config_hash"| WSHUB
+    OVL -->|"ChartOverlayUpdated<br/>+ provider + config_hash"| WSHUB
     MDS -->|"candle delta"| WSHUB
     WSHUB -->|"chỉ panel khớp<br/>subscription"| P1
     WSHUB --> P2

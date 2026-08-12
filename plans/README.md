@@ -34,7 +34,7 @@
 
 ## Nội dung gốc (để tra cứu)
 
-Sáu file dưới đây là bản nháp ban đầu:
+Sáu file Markdown dưới đây và một file HTML là bản nháp ban đầu:
 
 1. `01-requirements-and-scope.md` — yêu cầu, ranh giới MVP, acceptance criteria
 2. `02-target-architecture.md` — C4-style context, container, module, extension seam

@@ -15,7 +15,7 @@ Nó **không** tính Return, Win Rate, MDD, Sharpe — đó là việc của `Ev
 Đặc biệt phải đảm bảo:
 
 - **Không look-ahead bias**: tín hiệu tính trên nến `t` được fill sớm nhất ở nến `t+1` (ADR-007). Đây là rủi ro R3 — sai chỗ này thì toàn bộ Leaderboard vô nghĩa.
-- **Deterministic**: cùng snapshot + cùng dataset → kết quả **byte-identical** ở mọi lần chạy, mọi worker.
+- **Deterministic**: cùng snapshot + cùng dataset → kết quả **byte-identical** ở mọi lần chạy, mọi worker. Input `candles` của engine luôn được load từ `market_dataset_candles`, không từ operational cache.
 - **Trade facts bất biến**: `trades` là fact, không phải view. Không bao giờ recompute và ghi đè.
 - **Vị thế còn mở lúc hết dataset được xử lý tường minh**, không bỏ lửng.
 - Precision bằng `Decimal`, không `float`.
@@ -27,6 +27,8 @@ class BacktestEngine(Protocol):
     def run(self, snapshot: ExperimentSnapshot,
             candles: Sequence[Candle]) -> BacktestResult: ...
 ```
+
+`candles` trong contract trên là snapshot đã được Worker đọc từ `market_dataset_candles` theo `snapshot.market_dataset_id`, sắp xếp theo `close_time`. Engine không tự query bảng live `candles`.
 
 ```python
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class BacktestResult:
 class TradeFact:
     sequence_no: int
     side: Literal["LONG", "SHORT"]
+    signal_t: datetime | None            # signal candle that caused entry; NULL when no signal-backed entry
     entry_time: datetime
     entry_price: Decimal                # giá đã áp slippage
     exit_time: datetime | None
@@ -50,8 +53,8 @@ class TradeFact:
     quantity: Decimal
     fee_paid: Decimal                   # tổng fee cả entry + exit
     slippage_cost: Decimal
-    pnl_absolute: Decimal | None
-    pnl_percent: Decimal | None
+    pnl_absolute: Decimal | None          # unrealized khi exit_time=None + mark_unrealized
+    pnl_percent: Decimal | None           # unrealized khi exit_time=None + mark_unrealized
     exit_reason: Literal["signal", "stop_loss", "take_profit", "end_of_sample"] | None
 
 
@@ -226,7 +229,7 @@ sl_price = entry_px * (1 - risk.stop_loss_pct   / 100) if risk.stop_loss_pct   e
 tp_price = entry_px * (1 + risk.take_profit_pct / 100) if risk.take_profit_pct else None
 ```
 
-Hai mức này được lưu vào `trades.sl_price` / `trades.tp_price` — đó là nguồn dữ liệu cho `overlay_type: "stop_loss"` / `"take_profit"` ở `specs/visualization.md`, và là lý do chúng vẽ được thành **đường ngang từ `entry_time` đến `exit_time`** thay vì một điểm.
+Hai mức này là **trigger level** và được lưu vào `trades.sl_price` / `trades.tp_price` — đó là nguồn dữ liệu cho `overlay_type: "stop_loss"` / `"take_profit"` ở `specs/visualization.md`, và là lý do chúng vẽ được thành **đường ngang từ `entry_time` đến `exit_time`** thay vì một điểm.
 
 > **Vì sao chốt tại entry, không tính lại mỗi nến.** Tính lại theo giá hiện tại là trailing stop — một hành vi khác hoàn toàn và nằm trong phần tuỳ chọn của đề bài. SL cố định cho một mức giá không đổi suốt vòng đời vị thế, nên vẽ được và giải thích được. Nếu về sau làm trailing stop thì đó là `risk_policy.trailing_pct` mới, và `trades` cần thêm cột lịch sử mức SL — một thay đổi có phạm vi rõ ràng, không phải sửa chỗ này.
 
@@ -258,7 +261,12 @@ def check_exit(candle: Candle, sl: Decimal | None, tp: Decimal | None,
 >
 > Chọn cách thứ ba làm mặc định, nhưng để `intrabar_priority` là **field trong snapshot** để nhóm chứng minh được tác động của giả định này (AC-17b) — chứ không phải một hằng số ẩn trong code.
 
-**Fill price của SL/TP là chính mức đã chốt, không phải giá nến.** `exit_price = sl_price` (đã áp slippage một lần nữa theo hướng bất lợi), vì đó là mức lệnh chờ. Dùng `candle.low` làm exit price sẽ giả định khớp ở đáy nến — tốt hơn thực tế.
+**Trigger của SL/TP là chính mức đã chốt, không phải giá nến.** Khi chạm trigger,
+`exit_price = fill_price(trigger_price, "LONG", is_entry=False, slippage_bps)`;
+với lệnh LONG, slippage làm giá fill thấp hơn trigger. `trades.sl_price` /
+`trades.tp_price` vẫn là mức trigger để overlay vẽ đúng đường lệnh; `trades.exit_price`
+là execution fact sau slippage. Dùng `candle.low` làm exit price sẽ giả định khớp ở đáy
+nến — tệ hơn mức fill đã mô hình hoá và không tái lập được từ execution policy.
 
 **Thứ tự kiểm tra trong một nến** (quan trọng, dễ sai):
 
@@ -286,10 +294,10 @@ ALTER TABLE trades
 | `open_position_at_end`   | Hành vi                                                                  |
 | ------------------------ | ------------------------------------------------------------------------ |
 | `close_at_last_candle` ✅ | Đóng tại `close` của nến cuối, `exit_reason='end_of_sample'`, có áp fee+slippage |
-| `discard_open_trade`     | Bỏ trade đó khỏi `trades`; nêu rõ trong result là đã bỏ bao nhiêu trade    |
-| `mark_unrealized`        | Giữ trade với `exit_time=NULL`; `pnl` là unrealized                       |
+| `discard_open_trade`     | Bỏ row trade mở khỏi `trades`/`open_trade_count`, nhưng equity vẫn mark-to-market tới nến cuối để Return/MDD phản ánh giá trị danh mục; các metric dựa trên trade không tính row bị bỏ |
+| `mark_unrealized`        | Giữ trade với `exit_time=NULL`; `pnl` là unrealized. Evaluator đếm row này vào `open_trade_count`, **không** vào `trade_count`/Win Rate/profit factor/avg trade; equity và MDD vẫn mark-to-market |
 
-Mặc định `close_at_last_candle` vì nó cho một con số Return có thể so sánh giữa các strategy. `mark_unrealized` làm Win Rate không xác định (trade chưa kết thúc thắng hay thua?).
+Mặc định `close_at_last_candle` vì nó cho một con số Return có thể so sánh giữa các strategy. `mark_unrealized` vẫn cho Return/MDD xác định nhờ equity mark-to-market, nhưng các metric dựa trên kết quả trade chỉ dùng trade đã settled; UI phải hiện rõ `open_trade_count` thay vì biến vị thế mở thành một win/loss.
 
 ### E. Equity curve và drawdown
 
@@ -321,15 +329,15 @@ Số lượng `equity_points` = số nến (tối đa 20.000). API decimate xu�
 | `equity` xuống ≤ 0 (cháy tài khoản)                            | Dừng vòng lặp, đóng vị thế tại nến đó, `exit_reason='end_of_sample'`, ghi `error_code=null` nhưng `diagnostics.liquidated=true`. Kết quả **vẫn hợp lệ** (đó là kết quả thật của strategy) |
 | Worker chết giữa backtest                                      | Job chưa `complete` → lease hết hạn ≤ 120 s → worker khác nhận với `attempt+1`. **Không** có partial `trades` vì chỉ commit khi xong (`specs/experiment.md`) |
 | Hai worker cùng nhận một job (lease race)                      | `UNIQUE (experiment_id)` trên `backtest_runs` → chỉ 1 INSERT thành công; worker thua bỏ qua                       |
-| Chạy lại cùng snapshot ra kết quả khác                         | **Bug nghiêm trọng.** Nguyên nhân thường là: `float` thay `Decimal`, dùng `datetime.now()`, iterate qua `set`/`dict` không sort, random không seed. Có test AC-02 chặn |
+| Chạy lại cùng snapshot ra kết quả khác                         | **Bug nghiêm trọng.** Nguyên nhân thường là: đọc nhầm operational cache thay vì `market_dataset_candles`, `float` thay `Decimal`, dùng `datetime.now()`, iterate qua `set`/`dict` không sort, random không seed. Có test AC-02 chặn |
 | `fee_bps` hoặc `slippage_bps` âm                               | `CHECK (fee_bps >= 0 AND slippage_bps >= 0)` ở DB + validate ở API → `422`                                       |
 | `initial_capital = 0`                                          | `CHECK (initial_capital > 0)` → `422`. Nếu cho 0 thì `quantity = 0/price = 0` và mọi metric là NaN                |
 | Số nến vượt 20.000                                             | `422 dataset_too_large` (ADR-014) — chặn ở API, không để OOM Python process                                       |
-| `stop_loss_pct` hoặc `take_profit_pct` ≤ 0                     | `422 invalid_risk_policy` — `0%` nghĩa là đóng ngay lúc vào lệnh, `âm` là vô nghĩa                                 |
+| `stop_loss_pct` hoặc `take_profit_pct` ≤ 0                     | `422 invalid_risk_policy` — `0%` bị từ chối vì trigger trùng entry và đóng ngay lúc vào lệnh; giá trị âm vô nghĩa |
 | `stop_loss_pct ≥ 100`                                          | `422` — SL ở mức giá ≤ 0 không tồn tại                                                                            |
 | SL và TP **cùng chạm** trong một nến                            | Quyết định theo `intrabar_priority` (mặc định `stop_loss_first`). `diagnostics.intrabar_ambiguous_exits` đếm số lần xảy ra → người đọc biết kết quả phụ thuộc giả định này bao nhiêu |
 | Nến đầu tiên sau entry đã chạm cả SL và TP                       | Giống trên. Đây là trường hợp thường gặp nhất khi `stop_loss_pct` nhỏ và nến biến động lớn — vì thế `intrabar_ambiguous_exits` là chỉ số quan trọng, không phải chi tiết phụ |
-| Gap qua đêm nhảy qua cả `sl_price` (giá mở nến thấp hơn SL)      | `exit_price = sl_price` như mức lệnh chờ — **không** dùng `open` thật. Đánh dấu `diagnostics.gapped_exits += 1`. Đây là giả định lạc quan (thực tế lệnh khớp ở giá xấu hơn), ghi rõ để không tưởng là chính xác |
+| Gap qua đêm nhảy qua cả `sl_price` (giá mở nến thấp hơn SL)      | Dùng trigger `sl_price` rồi áp exit slippage — **không** dùng `open` thật. Đánh dấu `diagnostics.gapped_exits += 1`. Đây là giả định lạc quan (thực tế lệnh khớp ở giá xấu hơn), ghi rõ để không tưởng là chính xác |
 | `risk_policy` có SL/TP nhưng strategy không bao giờ ra `BUY`     | 0 trade, `sl_price`/`tp_price` không có row nào. `specs/visualization.md` trả mảng marker rỗng, không lỗi           |
 | `risk_policy = NULL` nhưng UI bật hiển thị SL/TP                 | `GET /experiments/{id}/overlays` trả 0 marker loại `stop_loss`/`take_profit`; UI ẩn toggle thay vì hiện checkbox rỗng |
 | `run_signals` có 20.000 row cho 1 run × 500 candidate          | 10M row/search run. Retention: xoá `run_signals` của candidate **không vào Top-K** sau 7 ngày; giữ của entry Leaderboard |
@@ -339,7 +347,7 @@ Số lượng `equity_points` = số nến (tối đa 20.000). API decimate xu�
 **Tính đúng đắn**
 
 - Fill sớm nhất ở nến `t+1` với `next_candle_open`. Không có đường code nào đọc `candles[i]` với `i > ctx.index` trong lúc tính signal.
-- **Chống look-ahead có 3 tầng, không 1.** (a) `candles[:t+1]` — đọc nến tương lai là `IndexError`; (b) `IndicatorView(raw, t)` — đọc `indicators[...][t+k>0]`, `[-1]`, hay slice vượt `t` là `LookAheadError` (`design.md` §5.2.1); (c) `fill_policy` — không giao dịch tại giá chưa biết lúc quyết định. Thiếu tầng (b) thì tầng (a) gần như vô nghĩa: `rsi_14[t+1]` được tính từ `close[t+1]`.
+- **Chống look-ahead có 3 tầng, không 1.** (a) `candles[:t+1]` — đọc nến tương lai là `IndexError`; (b) `IndicatorView(raw, t)` — đọc indicator tại index `> t` là `LookAheadError`, còn `[-1]`, `len()` và slice được diễn giải/clamp trong phạm vi `[0, t]` (`design.md` §5.2.1); (c) `fill_policy` — không giao dịch tại giá chưa biết lúc quyết định. Thiếu tầng (b) thì tầng (a) gần như vô nghĩa: `rsi_14[t+1]` được tính từ `close[t+1]`.
 - Mọi giá, số lượng, fee dùng `Decimal`/`NUMERIC(24,8)`. **Không** `float` ở bất kỳ đâu trong engine.
 - Slippage luôn theo hướng bất lợi cho người giao dịch.
 - **SL/TP chốt tại entry và không đổi.** Điều chỉnh động là trailing stop — hành vi khác, thuộc extension.
@@ -382,7 +390,7 @@ Số lượng `equity_points` = số nến (tối đa 20.000). API decimate xu�
 ## Tiêu chí chấp nhận
 
 - [ ] AC-01: Fixture 200 nến với kết quả tính tay trước (xem `specs/evaluation.md` §ví dụ) → `trades`, `entry_price`, `exit_price`, `fee_paid` khớp **chính xác** từng con số.
-- [ ] AC-02: Chạy cùng snapshot 2 lần → `trades` và `equity_points` **byte-identical** (so sánh bằng hash của kết quả serialize canonical).
+- [ ] AC-02: Chạy cùng snapshot 2 lần, sau khi refresh/revise bảng `candles` → `trades` và `equity_points` **byte-identical** (so sánh bằng hash của kết quả serialize canonical), chứng minh engine đọc `market_dataset_candles`.
 - [ ] AC-03: Chạy cùng snapshot trên 2 worker khác nhau → kết quả identical.
 - [ ] AC-04: Test look-ahead — strategy trả `BUY` tại nến `t` → `trades[0].entry_price` bằng `candles[t+1].open` (đã áp slippage), **không** bằng `candles[t].close`.
 - [ ] AC-05: Test look-ahead cứng — inject một strategy cố đọc `ctx.candles[ctx.index + 1]` → `IndexError`, không phải giá trị.
@@ -393,16 +401,17 @@ Số lượng `equity_points` = số nến (tối đa 20.000). API decimate xu�
 - [ ] AC-07: Strategy `BUY` mọi nến → đúng **1** trade (mở ở đầu, đóng ở `end_of_sample`), `run_signals` có đủ 20.000 record.
 - [ ] AC-08: Đổi `fill_policy` từ `next_candle_open` sang `same_candle_close` trên cùng snapshot → `total_return_pct` khác nhau đo được (chứng minh policy có tác động thật, không phải field trang trí).
 - [ ] AC-09: Đặt `fee_bps=0, slippage_bps=0` → `sum(fee_paid) == 0` và `sum(slippage_cost) == 0`; Return cao hơn trường hợp có phí.
-- [ ] AC-10: Vị thế còn mở lúc hết dataset → có trade với `exit_reason='end_of_sample'` và `exit_price == candles[-1].close` (đã áp slippage).
+- [ ] AC-10: Vị thế còn mở lúc hết dataset → có trade với `exit_reason='end_of_sample'` và `exit_price == fill_price(candles[-1].close, "LONG", is_entry=False, slippage_bps)`.
 - [ ] AC-11: `open_position_at_end='discard_open_trade'` trên cùng dữ liệu → ít hơn đúng 1 trade, diagnostics ghi `discarded_open_trades=1`.
+- [ ] AC-11b: `open_position_at_end='mark_unrealized'` → trade cuối có `exit_time=NULL`, `open_trade_count=1`, không làm tăng `trade_count`/Win Rate/profit factor; equity và MDD vẫn bao gồm giá trị mark-to-market của trade đó.
 - [ ] AC-12: Số nến < `warm_up_end` → `422 insufficient_candles` **trước khi** tạo experiment; không có row nào trong `backtest_jobs`.
 - [ ] AC-13: Strategy raise exception ở nến 500 → `backtest_runs.status='failed'`, bảng `trades` có **0 row** cho run đó (không partial commit).
 - [ ] AC-14: Kill worker giữa backtest → sau ≤ 120 s job về `queued`, worker khác chạy lại, kết quả cuối cùng đúng và **không** trùng row.
 - [ ] AC-15: Strategy mua ở 118K, giá xuống 100K rồi lên 125K mới bán → `evaluations.max_drawdown_pct` phản ánh mức −15% (chứng minh mark-to-market mỗi nến, không chỉ tại lúc đóng trade).
 - [ ] AC-16: `grep -rn "float(" app/domain/backtest/` → 0 kết quả (chứng minh dùng `Decimal`).
-- [ ] AC-17: `risk_policy = {stop_loss_pct: 2.0, take_profit_pct: 5.0}` trên fixture có nến chạm SL → trade đóng với `exit_reason='stop_loss'`, `exit_price == sl_price` (đã áp slippage), **không** bằng `candles[t].low`; `trades.sl_price` và `trades.tp_price` được ghi.
+- [ ] AC-17: `risk_policy = {stop_loss_pct: 2.0, take_profit_pct: 5.0}` trên fixture có nến chạm SL → trade đóng với `exit_reason='stop_loss'`, `sl_price` là trigger và `exit_price == fill_price(sl_price, "LONG", is_entry=False, slippage_bps)`, **không** bằng `candles[t].low`; `trades.sl_price` và `trades.tp_price` được ghi.
 - [ ] AC-17b: Fixture có một nến `low < sl_price` **và** `high > tp_price` → với `intrabar_priority='stop_loss_first'` cho `exit_reason='stop_loss'`; đổi sang `'take_profit_first'` trên cùng snapshot cho `'take_profit'` và `total_return_pct` khác nhau đo được. `diagnostics.intrabar_ambiguous_exits == 1` ở cả hai.
-- [ ] AC-17c: SL chạm ở nến `t` **và** strategy trả `SELL` ở cùng nến `t` → trade đóng bằng `stop_loss` tại `sl_price`, **không** phải bằng signal tại `open(t+1)` (chứng minh thứ tự kiểm tra bước 2 trước bước 3).
+- [ ] AC-17c: SL chạm ở nến `t` **và** strategy trả `SELL` ở cùng nến `t` → trade đóng với `exit_reason='stop_loss'`, trigger `sl_price` và execution `exit_price = fill_price(sl_price, "LONG", is_entry=False, slippage_bps)`, **không** phải bằng signal tại `open(t+1)` (chứng minh thứ tự kiểm tra bước 2 trước bước 3).
 - [ ] AC-17d: `risk_policy = NULL` → không trade nào có `exit_reason ∈ ('stop_loss','take_profit')`; `sl_price`/`tp_price` đều `NULL`; `GET /experiments/{id}/overlays` trả 0 marker hai loại đó.
 - [ ] AC-17e: `stop_loss_pct = 0` → `422 invalid_risk_policy`; `stop_loss_pct = 150` → `422`.
 - [ ] AC-18: `GET /experiments/{id}/overlays` cho một run có SL/TP → mỗi trade có marker `stop_loss` và `take_profit` với `line_until = exit_time` (đường ngang, không phải điểm) — khớp contract ở `specs/visualization.md`.

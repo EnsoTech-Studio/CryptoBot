@@ -25,6 +25,27 @@ Module gồm 3 phần:
 
 ## Contract
 
+`GET /api/v1/search-runs/{id}` là read-only public contract. Go ownership-checks bằng
+`read.search_run_v1`, sau đó trả `status`, counters, stop condition/reason, best score,
+dataset provenance và execution config; Go không đọc `search_runs` base table. Mẫu tối
+thiểu:
+
+```json
+{
+  "search_run_id": "a3f1...",
+  "status": "running",
+  "candidates": { "generated": 40, "tested": 32, "failed": 2 },
+  "best_score": 0.8123,
+  "stop_reason": null,
+  "dataset": { "dataset_version": "binance-BTCUSDT-5m-20260601-20260801", "content_hash": "7b41..." },
+  "updated_at": "2026-08-12T09:14:22Z"
+}
+```
+
+`POST /api/v1/search-runs/{id}/actions` chỉ là command public của Go; sau ownership
+check Go gọi Python internal action handler. Python mới INSERT `search_actions` và
+UPDATE `search_runs` trong một transaction với optimistic `lock_version`.
+
 ```python
 class CandidateGenerator(Protocol):
     def generator_id(self) -> str: ...            # 'random_search' | 'domain_guided'
@@ -58,7 +79,7 @@ class SearchHistory:
     tested_hashes: frozenset[str]
     top_k: Sequence[tuple[CompositeSpec, float]]   # (definition, score)
     best_score: float | None
-    non_improving_streak: int
+    non_improving_count: int       # số candidate liên tiếp không cải thiện; persisted trên search_runs
 ```
 
 > **Vì sao `generate()` trả `Iterator` chứ không `list`.** Genetic Search cần biết kết quả thế hệ trước để sinh thế hệ sau. `Iterator` + `SearchHistory` cho phép generator giữ state qua các batch mà interface không đổi. Nếu trả `list[CandidateStrategy]` thì `GeneticGenerator` **không cắm vào được** và ADR-004 sẽ vô nghĩa đúng lúc cần nhất — khi ai đó thực sự muốn thay thuật toán. Đây là ví dụ của việc thiết kế seam phải tính tới use case tương lai cụ thể, không chỉ "thêm một interface cho có".
@@ -93,17 +114,20 @@ Không có field này thì "domain-guided" chỉ là một cái tên — không 
                        "policies": ["weighted_vote"],
                        "parameter_grid": { "rsi": { "period": [14, 21], "buy_threshold": [25, 30] } } },
      "stop_conditions": { "max_candidates": 200, "max_duration_sec": 1800, "max_non_improving": 50 },
-     "market": { "symbol": "BTCUSDT", "timeframe": "5m",
+     "market": { "provider": "binance", "symbol": "BTCUSDT", "timeframe": "5m",
                  "range_from": "2026-01-01T00:00:00Z", "range_to": "2026-03-01T00:00:00Z" },
-     "execution": { "fee_bps": 10, "slippage_bps": 5, "fill_policy": "next_candle_open" },
+     "execution": { "fee_bps": 10, "slippage_bps": 5, "fill_policy": "next_candle_open",
+                     "position_policy": "long_only", "open_position_at_end": "close_at_last_candle",
+                     "risk_policy": { "stop_loss_pct": 2.0, "take_profit_pct": 5.0,
+                                       "intrabar_priority": "stop_loss_first" } },
      "seed": 42,
      "idempotency_key": "run-2026-08-11-a3f8"
    }
    ```
-2. Validate ở Go: `generator_id` tồn tại; `stop_conditions` **có ít nhất 1 điều kiện thật**; `max_candidates ≤ user_quotas.max_candidates_per_run` (500); `cardinality` trong [2,5]; `strategy_ids` đều có trong registry.
-3. Check quota: `count(search_runs WHERE owner_id=? AND status IN ('queued','running','paused')) < max_concurrent_runs` (2) → nếu vượt `409 concurrent_run_limit`.
-4. Đảm bảo dataset: gọi `MarketService` để tạo/dùng lại `market_datasets` (`specs/market-data.md` §E). Nếu số nến > `max_candles_per_experiment` → `422 dataset_too_large`.
-5. `INSERT search_runs (status='queued', stop_conditions, seed, market_dataset_id, execution_config, idempotency_key)`.
+2. Validate cấu trúc ở Go: `generator_id` tồn tại; `stop_conditions` **có ít nhất 1 điều kiện hợp lệ**; mỗi `max_candidates`, `max_duration_sec`, `max_non_improving` phải là số nguyên dương; `max_failure_rate` nằm trong `(0,1]`; `cardinality` trong [2,5]; `strategy_ids` đều có trong registry. Go không tự đọc quota để accept request.
+3. Gọi Python `POST /internal/search-runs/admit`. Python validate lại, gọi `MarketService` để tạo/dùng lại `market_datasets` (`specs/market-data.md` §E), rồi chạy `SearchAdmission` transaction. Nếu số nến > `max_candles_per_experiment` → `422 dataset_too_large` trước khi admission.
+4. `SearchAdmission` khóa `user_quotas` bằng `FOR UPDATE`, kiểm tra `max_concurrent_runs` và `max_candidates_per_run`, rồi INSERT `search_runs (status='queued', stop_conditions, seed, market_dataset_id, execution_config, idempotency_key)` trong **cùng transaction**. Job của từng candidate được tạo sau, cùng transaction với `search_candidates` và `experiments`. Nếu vượt → rollback và trả `409 concurrent_run_limit` hoặc `422 candidate_limit_exceeded`; nếu retry cùng key → trả run cũ.
+5. `execution_config` bao gồm nguyên vẹn `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end` và `risk_policy`; mọi `ExperimentSnapshot` sinh ra từ run phải copy đúng các field này. Các state/counter sau đó luôn cập nhật `updated_at` trong cùng transaction.
 6. Trả `202 { "search_run_id": "…" }`.
 7. `UNIQUE (owner_id, idempotency_key)` → retry cùng key trả về run cũ, không tạo run mới.
 
@@ -137,15 +161,18 @@ sequenceDiagram
         SRS->>GEN: next(iterator)
         GEN-->>SRS: CandidateStrategy(hash=H, generated_by, generation_meta)
 
-        SRS->>DB: INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
+        SRS->>DB: BEGIN · INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
         alt 0 row (hash đã tồn tại)
-            SRS->>SRS: dedup_hits += 1 — KHÔNG backtest lại
+            SRS->>DB: COMMIT · dedup_hits += 1
+            SRS->>SRS: KHÔNG backtest lại
             SRS->>HUB: SearchProgressUpdated
         else row mới
-            SRS->>EXS: create_experiment(candidate, dataset, execution)
-            EXS->>DB: BEGIN · INSERT experiments · INSERT backtest_jobs priority 200 · COMMIT
+            SRS->>EXS: create_experiment(candidate_id, dataset, execution)
+            EXS->>DB: INSERT experiments(search_candidate_id=candidate_id) · INSERT backtest_jobs priority 200 · COMMIT
+            Note over EXS,DB: Candidate, experiment và job cùng transaction; `experiments.search_candidate_id` UNIQUE là liên kết canonical.
             EXS->>HUB: BacktestQueued
             SRS->>DB: UPDATE candidates_generated += 1
+            SRS->>DB: UPDATE updated_at=now()
         end
         SRS->>HUB: SearchProgressUpdated
     end
@@ -153,7 +180,7 @@ sequenceDiagram
     par Worker chạy song song, độc lập với vòng lặp generate
         W->>DB: claim job (FOR UPDATE SKIP LOCKED)
         W->>W: backtest → evaluate → StrategyEvaluated
-        Note over W,DB: Ranking cập nhật best_score / non_improving_streak<br/>qua event, KHÔNG gọi trực tiếp SearchRunService
+        Note over W,DB: Ranking cập nhật best_score / non_improving_count<br/>qua event, KHÔNG gọi trực tiếp SearchRunService
     end
 ```
 
@@ -165,7 +192,7 @@ Nhưng có một giới hạn cần thiết: `SearchRunService` giới hạn s�
 
 | Lớp        | Cơ chế                                                                                                        |
 | ---------- | ------------------------------------------------------------------------------------------------------------- |
-| **Schema** | `CHECK (stop_conditions ? 'max_candidates' OR stop_conditions ? 'max_duration_sec' OR stop_conditions ? 'max_non_improving')` — **không INSERT được** run thiếu stop condition |
+| **Schema** | `CHECK` yêu cầu ít nhất một stop condition có giá trị số dương, gồm `max_failure_rate`, và reject mọi key đã biết sai kiểu/range — **không INSERT được** run thiếu stop condition hợp lệ |
 | **API**    | `422 missing_stop_condition` nếu thiếu; `422` nếu `max_candidates > max_candidates_per_run`                     |
 | **Runtime**| `check_stop_conditions()` gọi ở **đầu** mỗi vòng, trước `generate()`. Không nhánh nào bỏ qua                     |
 
@@ -178,12 +205,12 @@ def check_stop_conditions(run: SearchRun, now: datetime) -> str | None:
         return "max_candidates"
     if "max_duration_sec" in sc and (now - run.started_at).total_seconds() >= sc["max_duration_sec"]:
         return "timeout"
-    if "max_non_improving" in sc and run.non_improving_streak >= sc["max_non_improving"]:
+    if "max_non_improving" in sc and run.non_improving_count >= sc["max_non_improving"]:
         return "no_improvement"
     if "max_failure_rate" in sc and run.candidates_tested >= 20:
         if run.candidates_failed / run.candidates_tested >= sc["max_failure_rate"]:
             return "failure_rate"
-    if run.generator_exhausted:                # search space đã cạn
+    if run.generator_exhausted:                # search space đã cạn; field persisted
         return "space_exhausted"
     return None
 ```
@@ -198,6 +225,8 @@ Bốn loại stop condition và ý nghĩa từng loại:
 | `max_failure_rate`  | An toàn     | 30% candidate fail nghĩa là có gì sai (dataset lỗi, plugin bug) → dừng, không đốt CPU |
 
 > **`space_exhausted` là stop reason thứ 5 dễ bị bỏ sót.** Với `SearchSpace` nhỏ (4 strategy, cardinality [2,3], grid 4 giá trị), tổng số tổ hợp hợp lệ là hữu hạn. `RandomSearchGenerator` sẽ sinh trùng liên tục và `dedup_hits` tăng vô hạn trong khi `candidates_generated` không tăng — vòng lặp thực chất treo mà không vi phạm stop condition nào. Generator phải phát hiện được (ví dụ: 200 lần sinh liên tiếp đều trùng → `StopIteration`) và `SearchRunService` kết thúc run với `stop_reason='space_exhausted'`.
+
+`non_improving_count`, `generator_exhausted` và `updated_at` là state bền vững của `search_runs`, không phải thuộc tính chỉ tồn tại trong process. Ranking cập nhật count trong transaction xử lý `StrategyEvaluated`; generator ghi `generator_exhausted=true` trước khi kết thúc vì `space_exhausted`. Khi `SearchRunService` restart, nó reload đủ state này từ PostgreSQL rồi mới chạy `check_stop_conditions()`.
 
 ### D. Pause / Resume / Cancel
 
@@ -227,7 +256,7 @@ Luồng xử lý command:
 
 1. `POST /api/v1/search-runs/{id}/actions` với `{"action":"pause","command_id":"cmd-a3f8-01"}`.
 2. Ownership check: `run.owner_id == principal.id` **hoặc** role ∈ (`OPERATOR`, `ADMIN`).
-3. `INSERT search_actions (command_id, ...)`:
+3. Go gửi command tới Python `POST /internal/search-runs/{id}/actions`; Python thực hiện transaction domain. Trong transaction, `INSERT search_actions (command_id, ...)`:
    - Conflict trên `UNIQUE (command_id)` → command đã xử lý → trả về kết quả lần đầu (`200`, không phải lỗi). **Đây là idempotency**.
 4. Kiểm tra transition hợp lệ theo state machine; không hợp lệ → `409 invalid_transition` kèm `current_status`.
 5. `UPDATE search_runs SET status=?, lock_version = lock_version + 1 WHERE id=? AND lock_version=?`:
@@ -318,7 +347,7 @@ class DomainGuidedGenerator:
 
 | Tình huống                                                        | Phản ứng                                                                                                       |
 | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `stop_conditions` rỗng hoặc chỉ có key không hợp lệ               | `422 missing_stop_condition`. DB `CHECK` là lớp thứ hai — không INSERT được                                     |
+| `stop_conditions` rỗng, key không hợp lệ, hoặc value không dương     | `422 missing_stop_condition`. DB `CHECK` là lớp thứ hai — không INSERT được                                     |
 | `max_candidates = 100000` vượt quota 500                          | `422` kèm `max_allowed: 500`. Đây là control về worker-second, không phải về request                             |
 | User đã có 2 run đang chạy, tạo run thứ 3                         | `409 concurrent_run_limit` kèm danh sách `run_id` đang chạy                                                      |
 | Search space quá nhỏ, generator sinh trùng liên tục                | Sau 200 lần trùng liên tiếp → `StopIteration` → `stop_reason='space_exhausted'`. **Không** treo vòng lặp          |
@@ -330,19 +359,22 @@ class DomainGuidedGenerator:
 | `pause` từ 2 tab đồng thời (2 command_id khác)                      | Optimistic lock `lock_version` → 1 thắng, 1 nhận `409 concurrent_modification`                                    |
 | `resume` một run đã `completed`                                    | `409 invalid_transition` — state terminal không nhận command                                                      |
 | `cancel` khi có 12 job đang `queued`/`leased`                       | `search_runs.status='cancelled'`; job `queued` đánh `cancelled`; job đang `leased` **chạy xong** rồi mới dừng (không kill giữa transaction) |
-| Process `SearchRunService` chết giữa run                            | Run ở `running` mà không có vòng lặp. Sweeper phát hiện `updated_at` cũ hơn 5 phút và `candidates_generated` không tăng → đưa về `queued` |
+| Process `SearchRunService` chết giữa run                            | Run ở `running` mà không có vòng lặp. Sweeper dùng `updated_at` cũ hơn 5 phút và `candidates_generated` không tăng → đưa về `queued`; state stop/progress vẫn còn nguyên |
 | Worker pool trống hoàn toàn                                        | Job giữ `queued`, **không mất**. UI hiện `queued: N, running: 0` + cảnh báo "no worker available"                 |
 | `max_duration_sec` đạt nhưng còn 8 job đang chạy                   | Không tạo candidate mới; **chờ** job đang chạy xong để `best_score` đúng; rồi mới `completed`                     |
 | Dataset bị revise giữa lúc run đang chạy (`content_hash` đổi)       | Run đã ghim `market_dataset_id` → tiếp tục dùng dataset cũ. Candidate mới **vẫn** so sánh được với candidate cũ    |
 | Hai run của cùng user chạy trên cùng dataset                        | Hợp lệ. `candidate_hash` dedup theo **từng run** (`UNIQUE (search_run_id, candidate_hash)`), nên có thể trùng giữa 2 run — chấp nhận, vì mỗi run là một thí nghiệm độc lập |
 | `seed` không truyền                                                | Sinh seed random và **lưu vào `search_runs.seed`** — vẫn tái lập được sau này                                     |
-| Duplicate event `StrategyEvaluated`                                | `event_consumptions(event_id, consumer)` → bỏ qua lần hai. `non_improving_streak` không bị tính sai                |
+| Duplicate event `StrategyEvaluated`                                | `event_consumptions(event_id, consumer)` → bỏ qua lần hai. `non_improving_count` không bị tính sai                |
 
 ## Ràng buộc
 
 **Tính đúng đắn**
 
-- `stop_conditions` NOT NULL với `CHECK` bắt buộc ≥ 1 điều kiện thật.
+- `stop_conditions` NOT NULL với `CHECK` bắt buộc ≥ 1 điều kiện có giá trị số dương; API kiểm tra thêm type/range và `SearchAdmission` kiểm tra quota atomically.
+- Không có code path nào dùng `read.search_run_quota_v1` để accept request. `SearchAdmission` là transaction boundary duy nhất cho quota check + `search_runs` INSERT; candidate/job transaction có boundary riêng.
+- `non_improving_count`, `generator_exhausted`, `updated_at` nằm trong `search_runs`; Ranking/SRS cập nhật chúng atomically.
+- `seed` là `NOT NULL`; nếu client bỏ qua, API sinh seed trước `INSERT` và lưu lại. Trigger `search_run_touch_updated_at` cập nhật `updated_at` cho mọi state/progress mutation, nên sweeper không dựa vào trí nhớ của process.
 - `check_stop_conditions()` gọi ở đầu **mọi** vòng lặp; không có `continue` nào bỏ qua nó.
 - `UNIQUE (search_run_id, candidate_hash)` — dedup ở tầng DB, không tầng application (tránh race giữa 2 vòng lặp).
 - `UNIQUE (command_id)` trên `search_actions` — idempotency ở tầng DB.
@@ -356,7 +388,7 @@ class DomainGuidedGenerator:
 - `INSERT search_candidates` + `INSERT experiments` + `INSERT backtest_jobs`: **< 20 ms** (1 transaction).
 - `max_inflight = 4 × worker_count` — giới hạn job `queued` chưa xử lý để `pause` có hiệu lực nhanh.
 - `SearchProgressUpdated` throttle **1 lần/giây** tối đa (không phải mỗi candidate) — với 500 candidate trong 30 giây thì mỗi candidate một frame sẽ làm nghẽn WebSocket.
-- Sweeper phát hiện run treo: chu kỳ **60 s**, ngưỡng `updated_at` cũ hơn **5 phút**.
+- Sweeper phát hiện run treo: chu kỳ **60 s**, index theo `updated_at`, ngưỡng cũ hơn **5 phút**.
 
 **Khả năng mở rộng**
 

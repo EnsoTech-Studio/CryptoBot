@@ -20,6 +20,19 @@ Giới hạn phạm vi có ý thức: chỉ dùng **Prometheus + structured log*
 - Metric **không bao giờ** là nguồn sự thật: trạng thái thật của một search run luôn ở PostgreSQL; metric là bản chiếu.
 - Consumer của event là **idempotent** qua `event_consumptions`; một event đến hai lần không làm sai counter nghiệp vụ.
 
+## Contract
+
+- Go public API expose `/healthz`, `/readyz` và `/metrics`; Python Lab expose cùng
+  health/metrics surface chỉ trên internal network. Browser không gọi Python trực tiếp.
+- `/healthz` chỉ kiểm tra process còn phản hồi; `/readyz` kiểm tra DB, migration và
+  dependency bắt buộc theo từng field. `/metrics` dùng Prometheus text format.
+- Mọi log JSON bắt buộc có `timestamp`, `level`, `service`, `message`, `request_id`/
+  `correlation_id` khi có request, và `error_code` khi lỗi; không đưa UUID/user/email
+  vào metric label.
+- Các signal nghiệp vụ chính là `search_run_status`, `search_candidates_total`,
+  `backtest_duration_seconds`, `backtest_jobs_failed_total` và
+  `leaderboard_top1_score`; PostgreSQL vẫn là nguồn sự thật, metric chỉ là projection.
+
 ## Luồng chính
 
 ### A. Năm câu hỏi §32.7 → signal trả lời

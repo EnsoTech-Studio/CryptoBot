@@ -1,6 +1,6 @@
 # Crypto Strategy Lab — Project Proposal
 
-> Phần 1 / Blueprint • Tài liệu đề xuất • Phiên bản 1.1
+> Phần 1 / Blueprint • Tài liệu đề xuất • Phiên bản 1.3
 
 ## 1. Vấn đề
 
@@ -140,7 +140,7 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 
 - Binance adapter: REST historical klines + WebSocket realtime kline stream.
 - Chuẩn hoá về `Candle` nội bộ; frontend **không bao giờ** thấy payload Binance.
-- Dashboard 4 panel độc lập; mỗi panel có `(symbol, timeframe)` riêng, subscription riêng.
+- Dashboard 4 panel độc lập; mỗi panel có `(provider, symbol, timeframe)` riêng, subscription riêng.
 - Overlay: candlestick, volume, MA, Bollinger Bands, Support/Resistance zone, Buy/Sell signal; entry/exit/SL/TP marker khi chọn một experiment result.
 
 **Strategy & Combination**
@@ -215,6 +215,7 @@ Bảng này để không ai — kể cả nhóm — nhầm điều nhóm tự qu
 | Leaderboard Top-K | **[SRC]** | §21–§22, §37 |
 | Stop condition cho loop | **[SRC]** | §23 "Không được để `while(true)` chạy vô hạn mà không kiểm soát" |
 | Tối đa 4 timeframe, mỗi chart đổi độc lập | **[SRC]** | §5 |
+| Chart phải visualize Entry / Stop Loss / Take Profit | **[SRC] + [PD]** | §5 yêu cầu marker; nhóm chọn fixed-percent `risk_policy` và `intrabar_priority` để biến capability đó thành MVP, còn trailing/position sizing là extension |
 | Pipeline news `Collect → Store → Analyze sentiment` | **[SRC]** | §37 |
 | Strategy có version, không overwrite kết quả cũ | **[SRC]** | §36 |
 | Frontend không phụ thuộc payload Binance | **[SRC]** | §4 "Không được để frontend phụ thuộc trực tiếp vào cấu trúc dữ liệu Binance" |
@@ -243,8 +244,8 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | #   | Rủi ro / Ràng buộc                                                                | Tác động                                                        | Hướng giảm thiểu                                                                                            | Tài liệu                        |
 | --- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | R1  | **Binance WebSocket disconnect** (mạng, rate limit, maintenance)                  | Mất nến → chart sai, backtest sai                               | Reconnect exponential backoff (capped) + ghi `last_closed_at` + **backfill REST** khoảng thiếu + de-dup theo `(provider, symbol, timeframe, close_time)` | `specs/market-data.md`          |
-| R2  | **Binance REST rate limit** (weight-based, 1200/phút)                             | 429/418 → ban IP tạm thời                                       | Token bucket **outbound** theo weight + cache nến đã đóng vào PostgreSQL + không refetch dữ liệu đã có       | `specs/market-data.md`          |
-| R3  | **Look-ahead bias** trong backtest                                                | Kết quả đẹp giả tạo → toàn bộ Leaderboard vô nghĩa               | **3 tầng**: (a) `candles[:t+1]` → `IndexError`; (b) `IndicatorView` causal → `LookAheadError` khi đọc `indicators[t+1]`, `[-1]`, `len()`, slice vượt `t`; (c) fill ở `next_candle_open`. Kèm fixture test có kết quả kỳ vọng tính bằng tay | `design.md` §5.2.1 · `specs/backtest.md` |
+| R2  | **Binance REST rate limit** (weight-based, provider-configured; MVP 6000/phút)      | 429/418 → ban IP tạm thời                                       | Token bucket **outbound** theo weight + đọc `X-MBX-USED-WEIGHT-1M` + cache nến đã đóng vào PostgreSQL + không refetch dữ liệu đã có | `specs/market-data.md`          |
+| R3  | **Look-ahead bias** trong backtest                                                | Kết quả đẹp giả tạo → toàn bộ Leaderboard vô nghĩa               | **3 tầng**: (a) `candles[:t+1]` → `IndexError`; (b) `IndicatorView` causal → `LookAheadError` khi đọc indicator tại index `> t`, còn `[-1]`, `len()` và slice được diễn giải trong phạm vi `[0,t]`; (c) fill ở `next_candle_open`. Kèm fixture test có kết quả kỳ vọng tính bằng tay | `design.md` §5.2.1 · `specs/backtest.md` |
 | R4  | **Search space nổ tổ hợp** (4 strategy × nhiều param → hàng vạn candidate)        | Chạy vô hạn, đốt CPU, treo hệ thống                             | Stop condition bắt buộc (candidate/duration/no-improvement) + dedup theo `candidate_hash` + quota per-principal | `specs/search-loop.md`          |
 | R5  | **Backtest chiếm HTTP request** (10.000 nến × 3 strategy có thể mất > 30 s)        | Timeout, connection pool cạn, UI treo                           | `POST /experiments` trả `202 + run_id` ngay; thực thi qua job record; UI polling/stream tiến trình           | `specs/experiment.md`           |
 | R6  | **Kết quả Leaderboard không tái lập được**                                        | Không bảo vệ được đồ án: "+18.2% từ đâu ra?"                    | Snapshot bất biến append-only: strategy version + params + dataset version + fee/slippage + evaluator version | `specs/leaderboard.md`          |
@@ -259,6 +260,8 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | R15 | **Scope trôi thành trading bot**                                                  | Rủi ro pháp lý + lệch mục tiêu môn học                          | §4.3 là ranh giới nhóm tự đặt và **cố ý giữ cứng**; review scope mỗi phase. Đổi ranh giới này phải là quyết định tường minh, không được trôi dần vào | `proposal.md` §4.3              |
 | R16 | **Team 3 người, thời gian giới hạn**                                              | Làm không kịp hoặc over-engineer                                | Phase hoá 7 giai đoạn (`design.md` §12.1), tách khỏi Target Architecture (`design.md` §12.0). Worker bắt buộc từ Phase 3; Redis chỉ vào Phase 6 **nếu** số đo thoả điều kiện | `design.md` §12.0, §12.1 |
 
+> **R6 provenance invariant:** snapshot phải giữ toàn bộ execution assumptions — `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`, `risk_policy` — cùng strategy version, dataset content hash và evaluator version.
+
 ## 6. Tiêu chí thành công (Success Criteria)
 
 Đồ án được xem là thành công khi **10 demo dưới đây chạy được từ `docker compose up` trên máy sạch**. Mỗi tiêu chí là một bài kiểm tra kiến trúc, không phải một tính năng UI.
@@ -271,7 +274,7 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | S4  | **Thay search algorithm (§42)** | Đổi `RandomSearchGenerator` → `DomainGuidedGenerator` qua config.                                                | `git diff` = 1 file generator mới + 1 dòng config. Backtester/Evaluator/Leaderboard **không đổi 1 dòng**.              |
 | S5  | **Backtest đúng và tái lập được** | Chạy fixture 200 nến có kết quả tính tay trước.                                                                | Trades, Return, Win Rate, MDD khớp **chính xác** với giá trị kỳ vọng. Chạy lại lần 2 ra **kết quả byte-identical**.    |
 | S6  | **Search loop có kiểm soát**    | Start search với `max_candidates=50`. Bấm Pause ở candidate ~20, chờ 10 s, Resume, rồi Cancel.                    | UI hiển thị `tested/queued/failed/best_score/current_candidate/elapsed`. Loop dừng đúng 50 hoặc đúng lúc cancel. Không có `while(true)`. |
-| S7  | **Truy nguồn Leaderboard**      | Click Top-1, mở tab Provenance.                                                                                  | Hiển thị `strategy_id@version`, toàn bộ params, `dataset_version`, `from/to`, `fee_bps`, `slippage_bps`, `fill_policy`, `evaluator_version`. Sửa param → **version mới**, entry cũ **không bị ghi đè**. |
+| S7  | **Truy nguồn Leaderboard**      | Click Top-1, mở tab Provenance.                                                                                  | Hiển thị `strategy_id@version`, toàn bộ params, `dataset_version`, `from/to`, toàn bộ execution assumptions (`fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`, `risk_policy`), `evaluator_version`. Sửa param → **version mới**, entry cũ **không bị ghi đè**. |
 | S8  | **Cô lập lỗi**                  | `docker stop` service sentiment (hoặc set news provider = URL chết).                                             | Chart realtime **vẫn chạy**. Backtest technical **vẫn chạy**. News hiển thị `sentiment: unavailable`, **không** có nhãn NEUTRAL giả. |
 | S9  | **Reconnect + backfill**        | `docker network disconnect` service Python khỏi internet 60 s rồi nối lại.                                        | Log có reconnect với backoff. Sau khi nối lại, **0 nến đã đóng bị thiếu** (query `candles` liên tục, không gap).       |
 | S10 | **Scale proof**                 | Chạy cùng 1 search run 40 candidate với `WORKER_REPLICAS=1` rồi `=4`.                                             | Thời gian giảm **≥ 3×**. **0 dòng** thay đổi trong API contract, schema, hay experiment snapshot format.               |
@@ -296,5 +299,7 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 
 ## 9. Phiên bản
 
+- **v1.3** — 2026-08-12 — Đóng contract read projection bằng schema/view/role/grant DDL; thêm DB guard cho artifact bất biến; version dataset `revision_no` + advisory lock; làm rõ ML integration seam, giới hạn public/internal và cách đếm domain port.
+- **v1.2** — 2026-08-12 — Đồng bộ provenance với `risk_policy`; làm rõ SL/TP trigger so với execution fill; thêm virtual composite root cho FK; khóa causal `IndicatorView` và family constraint; xác nhận `requirements.html` là nguồn yêu cầu chính.
 - **v1.1** — 2026-08-11 — Phân loại nguồn gốc yêu cầu [SRC]/[PD]/[NFR] (§2.2, §4.4); thêm điều kiện đo cho mọi SLO; ghi rõ simulation-only là product decision của nhóm (§4.3); chốt Worker bắt buộc từ Phase 3 và Redis là tuỳ chọn có điều kiện (§4.1).
 - **v1.0** — 2026-08-11 — Bản blueprint đầu cho phần thiết kế kiến trúc.

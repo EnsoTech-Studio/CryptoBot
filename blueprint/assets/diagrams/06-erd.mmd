@@ -5,7 +5,7 @@ erDiagram
 
     MARKET_PAIRS ||--o{ CANDLES : has
     MARKET_PAIRS ||--o{ STREAM_CHECKPOINTS : tracked_by
-    CANDLES }o--|| MARKET_DATASETS : "snapshot as"
+    MARKET_DATASETS ||--o{ MARKET_DATASET_CANDLES : "immutable snapshot"
 
     STRATEGY_DEFINITIONS ||--o{ STRATEGY_VERSIONS : versions
     STRATEGY_VERSIONS ||--o{ EXPERIMENTS : "selected by"

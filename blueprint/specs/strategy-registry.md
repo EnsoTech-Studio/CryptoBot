@@ -33,11 +33,13 @@ class Strategy(Protocol):
 class StrategyDefinition:
     strategy_id: str                       # 'rsi' — ổn định, không đổi
     version: str                           # '1.0.0' — semver, append-only
-    family: Literal["trend", "momentum", "volatility", "structure", "information"]
+    family: Literal["trend", "momentum", "volatility", "structure", "information"] | None
+                                            # None chỉ dành cho virtual composite root
     parameters_schema: Mapping[str, Any]   # JSON Schema → validate + sinh form UI
     input_requirements: Sequence[str]      # ['candles.close', 'indicator.rsi']
     overlay_types: Sequence[str]           # ['rsi', 'buy_signal', 'sell_signal']
     warm_up_candles: Callable[[Mapping[str, Any]], int]
+    is_composite: bool = False              # composite root không phải plugin child
     display_name: str = ""
     description: str = ""
 
@@ -59,6 +61,13 @@ class Signal:
     confidence: float | None = None                    # 0..1
     evidence: Mapping[str, Any] | None = None          # {'rsi': 72.4} → ghi vào run_signals
 ```
+
+`composite@1.0.0` là một **virtual root version** được seed vào
+`strategy_definitions`/`strategy_versions` với `is_composite=true` và
+`family=NULL`. Nó tồn tại để `experiments.strategy_version_id` có một FK ổn định
+cho contract của combiner; nó không được đưa vào search space và không thể làm
+child của một composite khác. Các child thật vẫn phải có một trong 5 domain
+family và được resolve theo `(strategy_id, version)` trước khi snapshot được ghi.
 
 **Năm thứ `AnalysisContext` cố ý KHÔNG có:**
 
@@ -121,7 +130,7 @@ _REGISTRY: dict[tuple[str, str], type[Strategy]] = {}
 
 def register_strategy(cls: type[Strategy]) -> type[Strategy]:
     d = cls().definition()
-    _validate_definition(d)                # schema hợp lệ, warm_up khai báo, family ∈ enum
+    _validate_definition(d)                # schema hợp lệ, warm_up khai báo, plugin family ∈ enum
     key = (d.strategy_id, d.version)
     if key in _REGISTRY:
         raise DuplicateStrategyError(f"{key} đã được đăng ký bởi {_REGISTRY[key].__name__}")
@@ -350,7 +359,7 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 | Refactor cosmetic (đổi tên biến, thêm comment)                      | Fingerprint tính trên source đã normalise (strip comment/docstring, chuẩn whitespace) → **không** fail   |
 | `parameters_schema` không phải JSON Schema hợp lệ                   | `_validate_definition` reject → fail startup                                                            |
 | Không khai báo `warm_up_candles`                                    | Fail startup. Không mặc định 0 (mặc định 0 tạo trade giả ở đầu dataset một cách âm thầm)                 |
-| `family` không thuộc 5 giá trị enum                                 | Fail startup — vì Domain-Guided Search phân nhóm theo `family`                                            |
+| `family` không thuộc 5 giá trị enum, hoặc `family=NULL` nhưng không phải virtual composite root | Fail startup — plugin thật phải thuộc một trong 5 domain family; chỉ `composite@1.0.0` được `family=NULL` |
 | `input_requirements` yêu cầu indicator không tồn tại                | Fail startup, liệt kê indicator khả dụng                                                                 |
 | Client gửi `strategy_id` không có trong registry                    | `422 unknown_strategy` kèm danh sách khả dụng (lỗi ở tầng validate, không tới domain)                     |
 | Client gửi `version` không tồn tại cho strategy có tồn tại          | `422 unknown_strategy_version` kèm các version khả dụng                                                   |
@@ -377,7 +386,7 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 - `analyze()` phải là **pure function**: cùng `AnalysisContext` → cùng `Signal`. Không I/O, không random không seed, không `datetime.now()`. Đây là điều kiện để backtest chạy 2 lần cho kết quả byte-identical.
 - `AnalysisContext` là `frozen=True`; `candles` là read-only sequence; `indicators` là `IndicatorView` (chặn đọc > `index`).
 - `candles` được slice `[:index+1]` và `indicators` được bọc `IndicatorView(raw, index)` ở tầng gọi — bảo đảm bằng code, không bằng quy ước.
-- `strategy_versions` là **append-only**. Row đã được experiment tham chiếu không bao giờ UPDATE.
+- `strategy_versions` là **append-only**. Row đã được experiment tham chiếu không bao giờ UPDATE; DB trigger `strategy_versions_immutable` chặn cả UPDATE/DELETE, kể cả khi caller bỏ qua application repository.
 - `code_fingerprint = sha256(normalise(source_of_class))`. `normalise` strip comment/docstring và chuẩn hoá whitespace.
 - **Thứ tự bắt buộc giữa các timeout**: `per_call_timeout` (1 s) < `HARD_LIMIT_SEC` (90 s) < `lease_expires_at` (120 s). Đảo thứ tự bất kỳ cặp nào sẽ tạo cửa sổ hai worker chạy cùng một experiment.
 
@@ -394,7 +403,7 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 **Khả năng mở rộng**
 
 - Thêm strategy = **1 file** trong `plugins/`. Kiểm chứng bằng `git diff --stat` (demo S3).
-- Thêm strategy family mới = mở rộng enum `family` (Python `Literal` + DB `CHECK`) + cập nhật rule của `DomainGuidedGenerator`. Không đụng registry. Trước khi thêm, kiểm tra 5 family hiện có đã đủ chưa — `news_sentiment` thuộc `information`, không cần family riêng (`specs/sentiment.md` §D).
+- Thêm strategy family mới = mở rộng enum `family` (Python `Literal` + DB `CHECK`) + cập nhật rule của `DomainGuidedGenerator`. Không đụng registry. Trước khi thêm, kiểm tra 5 family hiện có đã đủ chưa — `news_sentiment` thuộc `information`, không cần family riêng (`specs/sentiment.md` §D). `composite` không phải domain family; virtual root dùng `family=NULL` và không xuất hiện trong search space.
 - `parameters_schema` là JSON Schema → UI sinh form tự động, không cần code UI cho từng strategy.
 - SMC/Wyckoff cắm được vào `family="structure"` mà không cần contract mới (đề bài §11).
 
@@ -435,3 +444,4 @@ Sau khi restart, **8 thứ xảy ra tự động**:
 - [ ] AC-14b: Plugin thử `ctx.indicators["rsi_14"][ctx.index + 1]` → `LookAheadError`; `[-1]` trả giá trị tại `index`; `len(series) == index + 1`; `series[:]` có đúng `index + 1` phần tử (bốn đường lách ở `design.md` §5.2.1 đều bị chặn).
 - [ ] AC-14c: Plugin đọc indicator chưa khai báo trong `input_requirements` → `UnknownIndicatorError` liệt kê các indicator đang có, **không** phải `KeyError` trần.
 - [ ] AC-15: `test_module_boundaries.py` — thêm `import httpx` vào một plugin → CI **fail**.
+- [ ] AC-16: Thử `UPDATE` hoặc `DELETE` `strategy_versions` đã đăng ký → DB trigger `strategy_versions_immutable` reject; muốn đổi code phải bump version và INSERT row mới.

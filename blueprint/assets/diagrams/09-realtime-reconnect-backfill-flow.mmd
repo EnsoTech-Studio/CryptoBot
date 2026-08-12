@@ -19,7 +19,7 @@ sequenceDiagram
     BN--xAD: connection closed
     AD->>MS: StreamDisconnected
     MS->>CK: is_stale = true, reconnect_count += 1
-    MS->>HUB: StreamStale(symbol, timeframe, last_closed_at=T1)
+    MS->>HUB: StreamStale(provider, symbol, timeframe, last_closed_at=T1)
     HUB->>UI: badge "STALE · cập nhật lần cuối T1"
     Note over UI: Nến lịch sử VẪN render từ DB.<br/>Backtest trên dataset đã có VẪN chạy.
 
@@ -36,5 +36,5 @@ sequenceDiagram
     MS->>DB: UPSERT — PK (provider,symbol,timeframe,close_time) tự de-dup
     Note over DB: Chồng lấp với nến đã có → DO UPDATE, KHÔNG tạo nến trùng.<br/>Vì vậy backfill an toàn để retry bao nhiêu lần cũng được.
     MS->>CK: last_closed_at = Tn, is_stale = false
-    MS->>HUB: StreamRecovered
+    MS->>HUB: StreamRecovered(provider, symbol, timeframe)
     HUB->>UI: bỏ badge STALE, render nến bù

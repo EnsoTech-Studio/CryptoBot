@@ -12,7 +12,7 @@ Nguyên tắc thứ ba: **không metric nào được phép "đoán"**. Khi khô
 
 - **0 phép chia cho 0** trên mọi edge case (0 trade, 1 trade, không có loss, không có win).
 - Metrics tính được **lại** từ `trades` + `equity_points` mà không cần chạy lại backtest.
-- Đổi công thức **không ghi đè** evaluation cũ (`UNIQUE (backtest_run_id, evaluator_version)`).
+- Đổi công thức **không ghi đè** evaluation cũ (`UNIQUE (backtest_run_id, evaluator_version)`); DB trigger `evaluations_immutable` chặn UPDATE/DELETE sau khi publish, kể cả xoá cascade từ run upstream.
 - Duplicate event `BacktestCompleted` **không** tạo 2 row `evaluations` (R12).
 - Mọi phép tính dùng `Decimal`/`NUMERIC`, không `float`.
 - Strategy có 0 hoặc 1 trade **không** vào Leaderboard dù `total_return_pct` dương.
@@ -43,7 +43,8 @@ class Evaluation:
     total_return_pct: Decimal          # NOT NULL
     win_rate_pct: Decimal              # NOT NULL, 0..100
     max_drawdown_pct: Decimal          # NOT NULL, <= 0
-    trade_count: int                   # NOT NULL, >= 0
+    trade_count: int                   # settled trades only, NOT NULL, >= 0
+    open_trade_count: int              # mark_unrealized rows, NOT NULL, >= 0
     profit_factor: Decimal | None      # None khi không có loss
     sharpe_ratio: Decimal | None       # None khi stddev == 0
     avg_trade_pct: Decimal | None      # None khi trade_count == 0
@@ -68,7 +69,11 @@ CREATE TABLE trades (
     pnl_percent      NUMERIC(12,6),
     exit_reason      VARCHAR(32),   -- 'signal'|'stop_loss'|'take_profit'|'end_of_sample'
     UNIQUE (backtest_run_id, sequence_no),
-    CHECK (exit_time IS NULL OR exit_time >= entry_time)
+    CHECK (exit_time IS NULL OR exit_time >= entry_time),
+    CHECK (exit_time IS NULL
+           OR (exit_price IS NOT NULL AND pnl_absolute IS NOT NULL
+               AND pnl_percent IS NOT NULL AND exit_reason IS NOT NULL)),
+    CHECK (exit_reason IS NULL OR exit_time IS NOT NULL)
 );
 
 CREATE TABLE equity_points (
@@ -87,6 +92,7 @@ CREATE TABLE evaluations (
     win_rate_pct      NUMERIC(8,4)  NOT NULL,
     max_drawdown_pct  NUMERIC(10,6) NOT NULL,
     trade_count       INT           NOT NULL,
+    open_trade_count  INT           NOT NULL DEFAULT 0,
     profit_factor     NUMERIC(12,6),
     sharpe_ratio      NUMERIC(12,6),
     avg_trade_pct     NUMERIC(12,6),
@@ -94,7 +100,8 @@ CREATE TABLE evaluations (
     UNIQUE (backtest_run_id, evaluator_version),
     CHECK (win_rate_pct BETWEEN 0 AND 100),
     CHECK (max_drawdown_pct <= 0),
-    CHECK (trade_count >= 0)
+    CHECK (trade_count >= 0),
+    CHECK (open_trade_count >= 0)
 );
 ```
 
@@ -117,7 +124,7 @@ sequenceDiagram
     participant RNK as RankingService
 
     W->>W: backtest xong → ghi trades + equity_points (1 transaction)
-    W->>EVA: BacktestCompleted(event_id, backtest_run_id, trade_count)
+    W->>EVA: BacktestCompleted(event_id, backtest_run_id, settled_trade_count, open_trade_count)
 
     EVA->>EC: INSERT (event_id, consumer='evaluator')
     alt event_id đã tồn tại
@@ -147,8 +154,13 @@ total_return_pct = (final_equity − initial_capital) / initial_capital × 100
 **Win Rate**
 
 ```text
-win_rate_pct = count(trades WHERE pnl_absolute > 0) / trade_count × 100
+settled_trades = trades WHERE exit_time IS NOT NULL
+trade_count    = count(settled_trades)
+open_trade_count = count(trades WHERE exit_time IS NULL)
+win_rate_pct = count(settled_trades WHERE pnl_absolute > 0) / trade_count × 100
 ```
+
+`mark_unrealized` không làm vị thế mở thành một trade thắng/thua: `pnl_absolute` của row mở có thể được ghi để phục vụ snapshot/UI, nhưng mọi metric dựa trên trade (`trade_count`, Win Rate, Profit Factor, Average Trade) chỉ đọc `exit_time IS NOT NULL`. Return và MDD vẫn đọc toàn bộ `equity_points`, nên vẫn phản ánh giá trị mark-to-market.
 
 **Quyết định về `pnl_absolute == 0`: KHÔNG tính là win** (`zero_pnl_counts_as_win = False` trong `EvaluationPolicy` v1). Lý do: `pnl_absolute` đã trừ `fee_paid` và `slippage_cost`, nên một trade có `pnl == 0` sau fee nghĩa là **giá đã chạy đúng hướng vừa đủ để bù phí** — về mặt vốn thì không lãi, về mặt cơ hội thì đã chiếm chỗ và chịu rủi ro mà không nhận gì. Gọi đó là "win" sẽ khiến strategy scalping với biên lợi nhuận bằng đúng phí hiện win rate cao một cách sai lệch. Quyết định này nằm trong `EvaluationPolicy`, không hard-code, nên `v2` có thể chọn khác và cả hai vẫn so sánh được nhờ `evaluator_version`.
 
@@ -167,8 +179,8 @@ Tính trên **equity curve**, tuyệt đối không trên chuỗi `pnl` của tr
 **Profit Factor**
 
 ```text
-gross_profit  = sum(pnl_absolute WHERE pnl_absolute > 0)
-gross_loss    = sum(pnl_absolute WHERE pnl_absolute < 0)      (âm)
+gross_profit  = sum(pnl_absolute WHERE exit_time IS NOT NULL AND pnl_absolute > 0)
+gross_loss    = sum(pnl_absolute WHERE exit_time IS NOT NULL AND pnl_absolute < 0) (âm)
 profit_factor = gross_profit / abs(gross_loss)                 nếu gross_loss ≠ 0
               = NULL                                           nếu gross_loss == 0
 ```
@@ -215,7 +227,7 @@ Crypto giao dịch 24/7 nên dùng 365 ngày, **không** 252 ngày như thị tr
 **Average Trade**
 
 ```text
-avg_trade_pct = mean(pnl_percent)     nếu trade_count > 0
+avg_trade_pct = mean(pnl_percent WHERE exit_time IS NOT NULL) nếu trade_count > 0
               = NULL                   nếu trade_count == 0
 ```
 
@@ -314,14 +326,14 @@ Sharpe trên fixture này: `returns = [+0.097900, −0.092814, 0.000000, +0.1523
 
 | Tình huống | Phản ứng |
 |---|---|
-| `trade_count = 0` | `total_return_pct=0`, `win_rate_pct=0`, `max_drawdown_pct=0`, `avg_trade_pct=NULL`, `profit_factor=NULL`, `sharpe_ratio=NULL`. **Không** chia cho 0. Row vẫn được lưu; bị loại khỏi Top-K bởi `min_trades` |
+| `trade_count = 0` | `total_return_pct=0`, `win_rate_pct=0`, `max_drawdown_pct=0`, `avg_trade_pct=NULL`, `profit_factor=NULL`, `sharpe_ratio=NULL`. **Không** chia cho 0. Row vẫn được lưu; bị loại khỏi Top-K bởi `min_trades`. `open_trade_count` vẫn có thể > 0 với `mark_unrealized` |
 | `trade_count = 1` | `sharpe_ratio=NULL` (chỉ có ≤1 return, stddev không xác định). `win_rate_pct` = 0 hoặc 100. Bị loại khỏi Top-K |
-| Không có trade lỗ (mọi `pnl > 0`) | `profit_factor = NULL`, **không** `Infinity`. `win_rate_pct = 100` |
-| Không có trade lãi (mọi `pnl < 0`) | `profit_factor = 0` (đây là giá trị **có nghĩa**, khác `NULL`). `win_rate_pct = 0` |
-| Có trade `pnl_absolute = 0` | Không tính là win (policy v1). Vẫn đếm trong `trade_count` và trong `avg_trade_pct` |
+| Không có trade lỗ đã settled (mọi settled `pnl > 0`) | `profit_factor = NULL`, **không** `Infinity`. `win_rate_pct = 100` |
+| Không có trade lãi đã settled (mọi settled `pnl < 0`) | `profit_factor = 0` (đây là giá trị **có nghĩa**, khác `NULL`). `win_rate_pct = 0` |
+| Có trade settled `pnl_absolute = 0` | Không tính là win (policy v1). Vẫn đếm trong `trade_count` và trong `avg_trade_pct` |
 | `stddev(returns) = 0` (equity phẳng hoặc mọi return bằng nhau) | `sharpe_ratio = NULL` |
 | `len(returns) < 30` | `sharpe_ratio = NULL` — annualize chuỗi quá ngắn cho số vô nghĩa |
-| Vị thế còn mở khi hết dataset | Đóng theo `experiments.open_position_at_end` (mặc định `close_at_last_candle`), trade có `exit_reason='end_of_sample'`. Bỏ qua sẽ làm Return sai |
+| Vị thế còn mở khi hết dataset | `close_at_last_candle` tạo settled trade với `exit_reason='end_of_sample'`; `discard_open_trade` loại khỏi `trades`; `mark_unrealized` giữ row mở và chỉ tăng `open_trade_count`. Return/MDD lấy equity mark-to-market |
 | `equity_points` rỗng nhưng `trades` có row | `500 inconsistent_backtest_result` — không tính metrics từ dữ liệu nửa vời. Ghi `backtest_runs.error_code`, không INSERT `evaluations` |
 | `equity` âm (cháy tài khoản) | `total_return_pct` âm hợp lệ (tới `−100`); nếu `equity <= 0` thì `peak` sau đó không tính được → dừng equity curve tại điểm đó, `max_drawdown_pct = −100` |
 | `initial_capital = 0` | Chặn ở DB bởi `CHECK (initial_capital > 0)` — không tồn tại tình huống chia cho 0 ở `total_return_pct` |
@@ -329,7 +341,7 @@ Sharpe trên fixture này: `returns = [+0.097900, −0.092814, 0.000000, +0.1523
 | `win_rate` tính ra `0.61` thay vì `61` | `CHECK (win_rate_pct BETWEEN 0 AND 100)` **không** bắt được (0.61 hợp lệ) → phải có unit test riêng so với fixture. Constraint chỉ bắt được chiều ngược (`6100`) |
 | Duplicate `BacktestCompleted` cùng `event_id` | `event_consumptions` conflict → bỏ qua, `evaluations` không thêm row |
 | Duplicate với `event_id` khác (worker retry sau lease timeout) | `ON CONFLICT (backtest_run_id, evaluator_version) DO NOTHING` → 1 row duy nhất; log WARN |
-| Recompute với `evaluator_version` đã tồn tại | `ON CONFLICT DO NOTHING` — muốn ghi lại phải bump version. Bảo vệ tính bất biến của số đã publish |
+| Recompute với `evaluator_version` đã tồn tại | `ON CONFLICT DO NOTHING` — muốn ghi lại phải bump version. Bảo vệ tính bất biến của số đã publish; DB trigger cũng chặn UPDATE/DELETE |
 | `periods_per_year` không xác định cho timeframe | **Không thể xảy ra với `timeframe_enum` hiện tại** — bảng ở §Sharpe phủ đủ 8 giá trị và có test bao phủ enum. Nếu vẫn xảy ra (thêm giá trị enum mà quên `_MINUTES`) → `KeyError` fail ngay ở CI, không phải `500` ở production. **Không** mặc định 365 âm thầm, vì đó là giả định làm sai con số |
 | Metric vượt precision `NUMERIC(14,6)` (return > 99.999.999%) | Clamp + log ERROR kèm `backtest_run_id`. Return 8 chữ số là dấu hiệu lỗi engine, không phải strategy giỏi |
 
@@ -385,6 +397,7 @@ Sharpe trên fixture này: `returns = [+0.097900, −0.092814, 0.000000, +0.1523
 - [ ] AC-16: `for tf in Timeframe: assert periods_per_year(tf) > 0` — pass cho **cả 8** giá trị `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`. Thêm một giá trị vào enum mà không thêm vào `_MINUTES` → test **fail**.
 - [ ] AC-17: Chạy backtest thật với `timeframe='30m'` và `timeframe='2h'` (hai giá trị trước đây thiếu trong bảng annualization) → `evaluations.sharpe_ratio` có giá trị (không `NULL` vì lỗi tra bảng, không `500`), và bằng đúng `mean/stddev × sqrt(17520)` / `sqrt(4380)` tương ứng.
 - [ ] AC-18: `periods_per_year('1h') == 8760` và `periods_per_year('1m') == 525600` — kiểm hàm dẫn xuất cho ra đúng các số trong bảng tài liệu (chống việc tài liệu và code trôi khỏi nhau).
+- [ ] AC-19: Thử `UPDATE` hoặc `DELETE` evaluation đã publish → DB trigger `evaluations_immutable` reject; recompute hợp lệ phải dùng `evaluator_version` mới.
 
 ---
 

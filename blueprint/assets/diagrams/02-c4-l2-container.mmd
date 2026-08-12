@@ -12,7 +12,7 @@ flowchart TB
 
         Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint <code>python -m app.worker</code>]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
-        DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
+        DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, dataset snapshots,<br/>strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
 
         Cache[("<b>Redis 7</b><br/>[Container — tuỳ chọn, có điều kiện §12.0]<br/><br/>Cache overlay đã tính,<br/>outbound rate-limit dùng chung")]
     end

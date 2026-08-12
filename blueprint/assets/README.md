@@ -29,7 +29,7 @@ Giữ cả ba định dạng có lý do: `.mmd` là **nguồn** (sửa ở đây
 | 03 | `03-c4-l3-component-strategy-lab` | C4 Level 3 — component của Strategy Lab, 4 lớp | `design.md` §2.3 | **Component responsibilities** |
 | 04 | `04-high-level-architecture` | HLA — cấu trúc + 6 luồng dữ liệu trong một hình | `design.md` §3 | **Container/HLA**, **Data Flow** |
 | 05 | `05-candle-path-binance-to-pixel` | Đường đi của một nến từ Binance tới pixel | `design.md` §3.2 | **Data Flow**, **Realtime Flow** |
-| 06 | `06-erd` | ERD — quan hệ giữa 24 bảng | `design.md` §4.3 | **ERD** |
+| 06 | `06-erd` | ERD — quan hệ giữa 25 bảng | `design.md` §4.3 | **ERD** |
 | 07 | `07-outbox-scenarios` | Outbox: 4 kịch bản (thành công, handler fail, dispatcher chết, duplicate) | `design.md` §5.7.5 | **Data Flow** |
 | 08 | `08-outbox-event-state` | State machine của một event trong outbox | `design.md` §5.7.6 | **Data Flow** |
 | 09 | `09-realtime-reconnect-backfill-flow` | Realtime Flow — disconnect → reconnect → backfill | `design.md` §6.1 | **Realtime/Reconnect Flow** |

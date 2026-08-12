@@ -22,6 +22,22 @@ Hai lỗ hổng **đang tồn tại trong scaffold** phải được đóng như
 - Anonymous **không tạo được work**: mọi endpoint sinh job (`POST /experiments`, `POST /search-runs`, `POST /ai/predict`) đều cần auth.
 - Response lỗi chỉ chứa `code`/`message`/`field`/`request_id` — không stack trace, không tên bảng, không SQL error, không model internals.
 
+## Contract
+
+- Browser chỉ gọi public Go API. Go xác thực, RBAC, ownership và validate payload;
+  Python Lab không có public auth surface.
+- `POST /api/v1/search-runs` không tự quyết định quota bằng một read rồi gọi Python.
+  Sau khi Go kiểm tra syntax, nó gọi `POST /internal/search-runs/admit`; Python thực
+  hiện `SearchAdmission` atomically bằng transaction function có `SELECT user_quotas
+  FOR UPDATE` + đếm run active + INSERT `search_runs`.
+- `read.search_run_quota_v1` chỉ là projection phục vụ diagnostics. Nó **không** là
+  nguồn quyết định admission và không được dùng để pass/fail request.
+- Ownership lookup trong Go nhận `resourceKind` từ allowlist cố định và chỉ query
+  `read.experiment_summary_v1` hoặc `read.search_run_v1`; không nhận tên bảng từ
+  request và không query domain base table.
+- Python chỉ được gọi domain command với principal/internal token hợp lệ. Go không
+  INSERT/UPDATE domain table trực tiếp.
+
 ## Luồng chính
 
 ### A. Đăng ký và đăng nhập
@@ -85,12 +101,16 @@ sequenceDiagram
     Note over AU,DB: cache 30 giây trong process, key user_id
     AU->>AZ: principal user_id, role
     AZ->>AZ: L3 RBAC route cho phép RESEARCHER
-    AZ->>DB: COUNT search_runs đang running của user
-    Note over AZ,DB: >= max_concurrent_runs → 409 concurrent_run_limit
     AZ->>AZ: L4a validate schema, enum, range, symbol
-    AZ->>PY: POST /internal/search-runs kèm X-Correlation-ID
+    AZ->>PY: POST /internal/search-runs/admit kèm principal, idempotency_key, X-Correlation-ID
     PY->>PY: L4b validate LẠI toàn bộ payload
-    PY->>DB: INSERT search_runs, backtest_jobs
+    PY->>DB: SearchAdmission: lock user_quotas + count active + INSERT run trong 1 transaction
+    alt quota vượt hoặc candidate limit vượt
+        DB-->>PY: rollback → concurrent_run_limit/candidate_limit_exceeded
+        PY-->>AZ: 409/422 error
+    else accepted hoặc idempotency hit
+        DB-->>PY: run mới hoặc run cũ
+    end
     PY-->>AZ: 202 search_run_id
     AZ-->>B: 202 search_run_id, status queued
 ```
@@ -147,14 +167,15 @@ RBAC một mình không đủ: hai `RESEARCHER` cùng role nhưng A không đư�
 // ponytail: một hàm cho mọi resource có owner_id. Không cần interface
 // per-resource khi câu SQL chỉ khác tên bảng.
 func (a *Authz) RequireOwnership(
-    ctx context.Context, p Principal, table string, resourceID uuid.UUID,
+    ctx context.Context, p Principal, resourceKind string, resourceID uuid.UUID,
 ) error {
     if p.Role == RoleOperator || p.Role == RoleAdmin {
         return nil // xem §7.2: operator phải dừng được run của người khác
     }
     var ownerID uuid.UUID
-    // table đến từ hằng số trong code, KHÔNG từ input người dùng.
-    err := a.db.QueryRow(ctx, ownerQuery[table], resourceID).Scan(&ownerID)
+    // resourceKind đến từ allowlist trong code, KHÔNG từ input người dùng.
+    // Các query này chỉ đọc read projection; Go không có quyền trên domain table.
+    err := a.db.QueryRow(ctx, ownerQuery[resourceKind], resourceID).Scan(&ownerID)
     switch {
     case errors.Is(err, pgx.ErrNoRows):
         return ErrNotFound // 404, không phải 403 — xem ghi chú dưới
@@ -167,9 +188,20 @@ func (a *Authz) RequireOwnership(
 }
 ```
 
+`ownerQuery` là map bất biến, ví dụ:
+
+```go
+var ownerQuery = map[string]string{
+    "experiment": `SELECT owner_id FROM read.experiment_summary_v1
+                    WHERE experiment_id = $1 LIMIT 1`,
+    "search_run": `SELECT owner_id FROM read.search_run_v1
+                   WHERE search_run_id = $1`,
+}
+```
+
 > **Vì sao trả `404` chứ không `403` khi resource thuộc người khác?** `403` xác nhận "UUID này tồn tại nhưng không phải của bạn" — đó là một oracle cho phép dò sự tồn tại của resource. `404` cho cả hai trường hợp (không tồn tại / không phải của bạn) khiến hai trạng thái không phân biệt được từ ngoài. Đánh đổi: log phía server phải ghi rõ `reason: ownership_denied` để debug không bị mù, vì response đã cố tình mất thông tin.
 
-> **`ownerQuery[table]` là map hằng số, không phải string nối.** Nếu tên bảng đến từ input thì đây là SQL injection. Đây là lý do tham số là một key vào map đã biết trước, không phải tên bảng tự do.
+> **`ownerQuery[resourceKind]` là map hằng số, không phải string nối.** Nếu tên bảng/view đến từ input thì đây là SQL injection. Đây là lý do tham số là một key vào map đã biết trước, không phải tên bảng tự do; các query cũng bị giới hạn trong schema `read`.
 
 Mọi hành động vượt ownership của `OPERATOR`/`ADMIN` để lại vết bắt buộc trong `search_actions.actor_id`. Nhờ đó câu hỏi "ai cancel run của tôi" luôn có câu trả lời — đó là điều kiện để trao quyền override mà vẫn giữ trách nhiệm giải trình.
 
@@ -261,7 +293,7 @@ services:
 | Hai tab refresh đồng thời | `FOR UPDATE` tuần tự hoá; tab thắng nhận T2, tab thua thấy `revoked_at IS NOT NULL` → bị coi là reuse. Frontend chống bằng single-flight refresh, chỉ một request refresh tại một thời điểm |
 | `RESEARCHER` gọi `GET /experiments/{id}` của người khác | `404 not_found` (không `403` — tránh oracle dò tồn tại). Log server ghi `reason=ownership_denied` |
 | `RESEARCHER` gọi `GET /metrics` | `403 forbidden`. Đây là quyền theo role thuần, không có oracle nào để bảo vệ |
-| User đang có 2 run `running`, tạo run thứ 3 | `409 concurrent_run_limit` kèm `current` và `limit`. Kiểm tra trong cùng transaction với `INSERT search_runs`, nếu không thì hai request đồng thời cùng vượt qua |
+| User đang có 2 run `queued`/`running`/`paused`, tạo run thứ 3 | `409 concurrent_run_limit` kèm `current` và `limit`. `SearchAdmission` khóa `user_quotas` và kiểm tra + INSERT trong cùng transaction, nên hai request đồng thời không cùng vượt qua |
 | `max_candidates=100000` trong `POST /search-runs` | `422 candidate_limit_exceeded` kèm ngưỡng thực tế 500. Chặn ở Go **và** ở Python (`specs/search-loop.md`) |
 | Request body > 1 MiB | `413 payload_too_large` từ `bodyLimit`, xảy ra **trước** khi parse JSON và trước JWT verify |
 | Vượt token bucket | `429` + `Retry-After` tính từ thời điểm bucket có đủ 1 token, không phải giá trị cố định |
@@ -277,7 +309,7 @@ services:
 **Tính đúng đắn**
 
 - Rotation refresh token nằm trong **một** transaction có `SELECT ... FOR UPDATE`; không có đường nào tạo được hai chuỗi token song song từ một token.
-- Quota check và `INSERT search_runs` nằm trong **cùng** transaction. Check ngoài transaction là TOCTOU: 2 request đồng thời đều thấy `count=1 < 2` rồi đều insert.
+- `SearchAdmission` khóa row `user_quotas` bằng `FOR UPDATE`; quota check, idempotency lookup và INSERT `search_runs` nằm trong **cùng** transaction. Job của từng candidate được tạo ở transaction sau cùng `search_candidates` + `experiments` + `backtest_jobs`. Check bằng read projection trước khi gọi Python chỉ là advisory và không được dùng để accept request.
 - `users.role` có `CHECK IN ('RESEARCHER','OPERATOR','ADMIN')` ở DB — lớp cuối cùng nếu code có bug (Lớp 4, `design.md` §7.4).
 - `refresh_tokens.token_hash` là `CHAR(64) UNIQUE`: hash trùng là bất khả thi về mặt xác suất, nhưng constraint biến "bất khả thi" thành "được DB bảo đảm".
 - Mọi timestamp là `TIMESTAMPTZ` UTC. So sánh `expires_at` với `now()` của DB, không với clock của process.
@@ -330,6 +362,6 @@ services:
 - [ ] AC-11: `POST /api/v1/experiments` có cookie hợp lệ nhưng thiếu `X-CSRF-Token` → `403 csrf_failed`; thêm header đúng → `202`.
 - [ ] AC-12: Gửi 6 `POST /search-runs` trong 60 giây → request thứ 6 `429` kèm `Retry-After` là số nguyên giây > 0.
 - [ ] AC-13: Body 2 MiB tới `POST /ai/predict` → `413`, và log cho thấy **không** có bước JWT verify nào chạy cho request đó.
-- [ ] AC-14: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up` rồi `curl localhost:8000/health` từ host → **connection refused**; `curl` cùng URL từ trong container `api` → `200`.
-- [ ] AC-15: Gọi trực tiếp Python `POST /internal/search-runs` với `max_candidates=999999` (bỏ qua Go) → `422`, **không** có row nào được thêm vào `search_runs`.
+- [ ] AC-14: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up` rồi `curl localhost:8000/healthz` từ host → **connection refused**; `curl` cùng URL từ trong container `api` → `200`.
+- [ ] AC-15: Gọi trực tiếp Python `POST /internal/search-runs/admit` với `max_candidates=999999` (bỏ qua Go) → `422`, **không** có row nào được thêm vào `search_runs`.
 - [ ] AC-16: `grep -riE "password|token_hash|set-cookie" logs/` → **0** dòng chứa giá trị thật; chỉ có tên field trong thông điệp validation.

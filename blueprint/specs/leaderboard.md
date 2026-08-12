@@ -11,12 +11,12 @@ Leaderboard trả lời một câu hỏi duy nhất nhưng phải trả lời đ
 Đặc biệt phải đảm bảo:
 
 - `leaderboard_entries` **không bao giờ UPDATE**. Không có endpoint, không có job nào sửa `score` của một row đã ghi.
-- Hai strategy chỉ được xếp cùng bảng khi **cùng `market_dataset_id`** và **cùng `score_policy_version`**.
+- Hai strategy chỉ được xếp cùng bảng khi **cùng `market_dataset_id`** và **cùng `score_policy_version`**. `market_dataset_id` trên entry là denormalized index key, và DB trigger bắt buộc nó khớp `evaluation → backtest_run → experiment`.
 - Duplicate `StrategyEvaluated` / `BacktestCompleted` **không** tạo hai entry (rủi ro R12).
-- Đúng **một** `score_policies` row có `is_active = TRUE` tại mọi thời điểm — được DB bảo đảm, không bằng quy ước.
-- Strategy có `trade_count < min_trades` **không** vào Top-K, dù `total_return_pct` dương.
+- Đúng **một** `score_policies` row có `is_active = TRUE` ở mọi trạng thái đã commit — seed migration tạo policy đầu tiên, còn mọi lần activate sau đó chỉ đi qua `activate_score_policy()` có advisory lock và invariant cuối transaction.
+- Strategy có `trade_count < min_trades` **không** vào Top-K, dù `total_return_pct` dương. `trade_count` chỉ tính trade đã settled; `open_trade_count` được hiển thị riêng khi policy là `mark_unrealized`.
 - Đổi công thức score **không** chạy lại backtest và **không** làm mất entry cũ.
-- Mọi entry truy nguyên được về `strategy_id@version` + `parameters` + `dataset.content_hash` + `fee_bps`/`slippage_bps`/`fill_policy`.
+- Mọi entry truy nguyên được về `strategy_id@version` + `parameters` + `dataset.content_hash` + toàn bộ execution assumptions: `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end` và `risk_policy`.
 
 ## Contract
 
@@ -35,11 +35,21 @@ score_policies(version VARCHAR(24) PK,
                formula TEXT NOT NULL,   -- '0.5*return_norm + 0.2*win_rate_norm + 0.3*risk_score'
                weights JSONB NOT NULL,  -- trọng số + anchor chuẩn hoá + min_trades + top_k_tracked
                is_active BOOLEAN DEFAULT FALSE, created_at);
--- Đúng 1 policy active tại một thời điểm — do DB bảo đảm
+-- Không có hai policy active tại một thời điểm — do DB bảo đảm
 CREATE UNIQUE INDEX idx_one_active_policy ON score_policies(is_active) WHERE is_active;
 
+-- score_policies là append-only. Formula/weights/version không thể sửa; cột
+-- is_active chỉ đổi qua command DB có lock và kiểm tra invariant.
+CREATE TRIGGER score_policies_immutable
+    BEFORE UPDATE OR DELETE ON score_policies
+    FOR EACH ROW EXECUTE FUNCTION reject_score_policy_mutation();
+
+CREATE FUNCTION activate_score_policy(version VARCHAR(24)) RETURNS VOID;
+-- Function thật dùng pg_advisory_xact_lock, tắt policy cũ + bật policy mới
+-- trong cùng transaction, rồi assert count(is_active)=1.
+
 leaderboard_entries(id UUID PK,
-                    evaluation_id UUID NOT NULL FK evaluations(id) ON DELETE CASCADE,
+                    evaluation_id UUID NOT NULL FK evaluations(id) ON DELETE RESTRICT,
                     score_policy_version VARCHAR(24) NOT NULL FK score_policies(version),
                     score NUMERIC(12,4) NOT NULL, rank_at_insert SMALLINT NOT NULL,
                     market_dataset_id UUID NOT NULL FK market_datasets(id),
@@ -47,9 +57,15 @@ leaderboard_entries(id UUID PK,
                     UNIQUE (evaluation_id, score_policy_version));
 CREATE INDEX idx_leaderboard_topk
     ON leaderboard_entries(market_dataset_id, score_policy_version, score DESC, observed_at DESC);
+
+-- Bắt buộc ở DB, không dựa vào RankingService:
+-- trigger kiểm tra market_dataset_id của entry =
+-- experiments.market_dataset_id qua evaluation → backtest_run.
+-- DDL đầy đủ của trigger nằm trong design.md §4.2.
+-- FK RESTRICT chặn xoá cascade từ evaluation; trigger append-only chặn UPDATE/DELETE entry.
 ```
 
-> **Vì sao `market_dataset_id` phải nằm trên entry, dù đã suy ra được qua `evaluation → backtest_run → experiment`?** Hai lý do. Thứ nhất về tính đúng đắn: nó chặn một so sánh vô nghĩa — strategy chạy BTCUSDT 5m tháng 1 và strategy chạy BTCUSDT 1h tháng 6 **không thể** xếp cùng bảng. Không có cột này thì Leaderboard trộn táo với cam và Top-1 chỉ phản ánh dataset nào dễ ăn nhất, chứ không phản ánh strategy nào tốt. Thứ hai về hiệu năng: nó là cột dẫn đầu của `idx_leaderboard_topk`, nên query Top-K không phải join ba bảng rồi mới lọc được.
+> **Vì sao vẫn giữ `market_dataset_id` trên entry, dù đã suy ra được qua `evaluation → backtest_run → experiment`?** Đây là denormalized leading key cho `idx_leaderboard_topk`, nên query Top-K không phải join ba bảng rồi mới lọc. Nó không còn là một invariant do convention: trigger DB từ chối entry nếu dataset trên entry không khớp provenance của evaluation. FK `ON DELETE RESTRICT` và trigger append-only cũng chặn việc xoá upstream hoặc sửa entry làm mất lịch sử. Nhờ vậy vừa có read path nhanh, vừa không mở cửa cho cross-dataset corruption.
 
 > **`UNIQUE (evaluation_id, score_policy_version)`** làm hai việc cùng lúc: nó là lớp phòng thủ thứ hai chống duplicate event (lớp thứ nhất là `event_consumptions`), và nó phát biểu chính xác ngữ nghĩa của bảng — một evaluation có **một** điểm cho **mỗi** policy version, không nhiều hơn, không ít hơn.
 
@@ -132,15 +148,15 @@ sequenceDiagram
             RNK->>DB: INSERT leaderboard_entries, APPEND không UPDATE
             RNK->>HUB: LeaderboardUpdated entry_id, rank, score, dataset_version
             HUB->>UI: cập nhật bảng, không refresh trang
-            RNK->>DB: best_score cải thiện thì reset non_improving_count
+            RNK->>DB: best_score cải thiện thì reset non_improving_count (cùng transaction)
         else không vào Top-K
-            RNK->>DB: non_improving_count += 1 của search run
+            RNK->>DB: non_improving_count += 1 của search run (cùng transaction)
             Note over RNK,DB: Vẫn cần ghi: đây là đầu vào của<br/>stop condition max_non_improving
         end
     end
 ```
 
-> **Chi tiết dễ bỏ sót: nhánh "không vào Top-K" vẫn phải làm việc.** Nó cập nhật `non_improving_count`, thứ mà `max_non_improving` của `specs/search-loop.md` dùng để dừng search khi space đã cạn. Nếu chỉ xử lý nhánh thành công, stop condition "thông minh" nhất sẽ không bao giờ kích hoạt và search chạy tới hết `max_candidates` trong mọi trường hợp.
+> **Chi tiết dễ bỏ sót: nhánh "không vào Top-K" vẫn phải làm việc.** Nó cập nhật `search_runs.non_improving_count` trong cùng transaction với việc consume event, thứ mà `max_non_improving` của `specs/search-loop.md` dùng để dừng search khi space đã cạn. Nếu chỉ xử lý nhánh thành công, stop condition "thông minh" nhất sẽ không bao giờ kích hoạt và search chạy tới hết `max_candidates` trong mọi trường hợp.
 
 > **Vì sao so với entry thứ K thay vì insert mọi evaluation?** `top_k_tracked = 50` giới hạn tốc độ tăng row: một search run 500 candidate chỉ sinh khoảng vài chục entry thay vì 500. Đánh đổi: một candidate xếp thứ 51 không có vết trong `leaderboard_entries` — nhưng nó **vẫn còn nguyên** trong `evaluations`, nên không mất dữ liệu, chỉ mất thứ hạng lịch sử của một entry mà không ai quan tâm.
 
@@ -175,19 +191,19 @@ sequenceDiagram
     autonumber
     actor A as ADMIN
     participant GO as Go API
+    participant PY as Python Lab
     participant RNK as RankingService
     participant DB as PostgreSQL
 
-    A->>GO: POST /admin/score-policies formula v2, weights v2
+    A->>GO: POST /api/v1/admin/score-policies formula v2, weights v2
     GO->>GO: RBAC chỉ ADMIN, validate weights tổng 1.0 và anchor hợp lệ
-    GO->>DB: INSERT score_policies version v2, is_active false
-    A->>GO: POST /admin/score-policies/v2/activate
-    GO->>DB: BEGIN
-    GO->>DB: UPDATE score_policies SET is_active = false WHERE is_active
-    GO->>DB: UPDATE score_policies SET is_active = true WHERE version = v2
-    GO->>DB: COMMIT
-    Note over GO,DB: Cùng transaction: idx_one_active_policy sẽ<br/>từ chối trạng thái có 2 policy active
-    GO->>RNK: recompute dataset_id, policy v2
+    GO->>PY: POST /internal/score-policies version v2, sau khi Go RBAC ADMIN
+    PY->>DB: INSERT score_policies version v2, is_active false
+    A->>GO: POST /api/v1/admin/score-policies/v2/activate
+    GO->>PY: POST /internal/score-policies/v2/activate
+    PY->>DB: activate_score_policy(v2): advisory lock + switch + assert exactly one
+    Note over PY,DB: Go không ghi domain table; function là command duy nhất đổi active policy
+    PY->>RNK: recompute dataset_id, policy v2
     RNK->>DB: SELECT metrics từ evaluations, KHÔNG chạy lại backtest
     RNK->>DB: INSERT leaderboard_entries policy v2 cho từng evaluation đủ điều kiện
     Note over RNK,DB: Entry policy v1 giữ NGUYÊN.<br/>So sánh được: v1 Top-1 là X, v2 Top-1 là Y.
@@ -195,7 +211,7 @@ sequenceDiagram
 
 Đây là lợi ích cụ thể, đo được của việc tách **fact** (`trades`, `equity_points`) khỏi **metric dẫn xuất** (`evaluations`) khỏi **score** (`leaderboard_entries`): đổi công thức chấm điểm tốn một query trên `evaluations` thay vì 500 lần backtest (khoảng 5,5 giờ CPU). Nếu score được tính và lưu chung với run, việc đổi công thức sẽ đồng nghĩa với chạy lại toàn bộ — và trên thực tế điều đó có nghĩa là không ai dám đổi công thức nữa.
 
-Đổi `is_active` phải nằm trong **một** transaction cùng với việc tắt policy cũ. `idx_one_active_policy` là partial unique index nên trạng thái hai policy cùng active bị DB từ chối; nếu tách hai transaction, sẽ có cửa sổ 0 policy active và mọi `StrategyEvaluated` trong cửa sổ đó bị bỏ.
+Đổi `is_active` phải nằm trong **một** transaction cùng với việc tắt policy cũ. `activate_score_policy()` khóa activation, partial unique index chặn trạng thái hai policy cùng active, và invariant cuối transaction chặn trạng thái không có active policy. UPDATE trực tiếp bị trigger từ chối; không có cửa sổ hợp lệ nào để RankingService chạy mà không có policy.
 
 ### F. Provenance API — `GET /api/v1/leaderboard/{entryId}/provenance`
 
@@ -203,9 +219,9 @@ Trả về toàn bộ chuỗi truy nguồn (payload đầy đủ ở `design.md`
 
 ```text
 LEADERBOARD_ENTRIES.score → EVALUATIONS (evaluator_version, metrics) → BACKTEST_RUNS (worker, duration)
-  → EXPERIMENTS (fee_bps, slippage_bps, fill_policy, position_policy)
+  → EXPERIMENTS (fee_bps, slippage_bps, fill_policy, position_policy, open_position_at_end, risk_policy)
     ├→ STRATEGY_VERSIONS (strategy_id, version, params_schema, code_fingerprint)
-    └→ MARKET_DATASETS (symbol, timeframe, from, to, content_hash)
+    └→ MARKET_DATASETS (provider, symbol, timeframe, from, to, content_hash)
 ```
 
 Bốn cơ chế làm chuỗi này **đáng tin**, chứ không chỉ là "có một API trả về JSON đẹp":
@@ -228,13 +244,14 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 | Hai `RankingService` (2 process) xử lý cùng event | `event_consumptions` có PK `(event_id, consumer)`; process thua nhận conflict và bỏ. Không có hai INSERT |
 | `evaluations.trade_count = 2`, return `+40%` | Không vào Top-K (`min_trades = 10`). Ghi log DEBUG `reason=insufficient_trades`, **không** phải lỗi, không tăng `jobs_failed_total` |
 | `evaluations.trade_count = 0` | Cùng nhánh trên. Ngoài ra `score` không được tính (chia cho 0 ở `win_rate` là bug tiềm ẩn khi công thức tiến hoá) |
-| Không có policy nào `is_active` | `RankingService` log ERROR `error_code=no_active_score_policy`, **không** insert entry với policy đoán bừa. Event được đánh dấu chưa tiêu thụ để xử lý lại sau khi ADMIN kích hoạt policy |
-| Cố `UPDATE score_policies SET is_active = true` cho policy thứ hai | `idx_one_active_policy` vi phạm unique → transaction rollback. Ràng buộc do DB, không do code |
-| Hai request activate hai policy khác nhau đồng thời | Một thành công, một nhận unique violation → `409 policy_activation_conflict`. Không tồn tại trạng thái hai policy active |
+| Không có policy nào `is_active` (bootstrap/migration lỗi) | `/readyz` fail và `RankingService` log ERROR `error_code=no_active_score_policy`; event chưa được ack. Không có runtime path hợp lệ nào cho phép trạng thái này tồn tại sau migration |
+| Cố `UPDATE score_policies SET is_active = true` trực tiếp | Trigger `score_policies_immutable` từ chối → transaction rollback. Chỉ `activate_score_policy()` được đổi active flag |
+| Hai request activate hai policy khác nhau đồng thời | Advisory lock serialize; một thành công, request còn lại đọc policy hiện tại hoặc nhận `409 policy_activation_conflict`. Không tồn tại trạng thái hai policy active |
 | Đổi policy khi 20 job đang chạy | Job đang chạy vẫn ghi `evaluations` bình thường; entry của chúng dùng policy **đang active lúc chấm điểm**. `score_policy_version` trên entry ghi rõ nên không có sự nhập nhằng |
+| Ranking gửi nhầm `market_dataset_id` | DB trigger `leaderboard_dataset_match` reject transaction; không tạo entry sai provenance |
 | So sánh entry của hai dataset khác nhau | Không thể: `market_dataset_id` là điều kiện lọc bắt buộc của query Top-K. Thiếu `dataset_version` trong request → `422 dataset_version_required` |
 | `dataset_version` không tồn tại | `404 dataset_not_found`, không trả mảng rỗng — mảng rỗng khiến người dùng nghĩ chưa có strategy nào thay vì gõ sai tên |
-| Xoá `evaluations` row (retention) | `ON DELETE CASCADE` xoá entry tương ứng. Đây là chủ ý: một entry trỏ tới evaluation không còn tồn tại là entry không truy nguyên được, tệ hơn là không có |
+| Xoá `evaluations` row (retention) | `ON DELETE RESTRICT` từ `leaderboard_entries` reject transaction. Evaluation và toàn bộ provenance artifact phải được archive cùng nhau, không hard-delete upstream |
 | Xoá `market_datasets` đang được entry tham chiếu | FK chặn. Retention chỉ xoá dataset không còn ai trỏ tới (`design.md` §4.4) |
 | `sort_by=score; DROP TABLE` | Validate theo allowlist enum trước khi map sang tên cột; giá trị ngoài allowlist → `422 unsupported_sort_field`. Không nội suy chuỗi vào SQL |
 | `limit=100000` | Clamp về **100** và trả kèm `limit_applied`. Top-K là "danh sách ngắn để đọc", không phải endpoint export |
@@ -246,10 +263,13 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 
 **Tính đúng đắn**
 
-- `leaderboard_entries` append-only: test static `grep -rn "UPDATE leaderboard_entries\|DELETE FROM leaderboard_entries" ai/app/` → **0** khớp.
+- `leaderboard_entries` append-only ở **hai lớp**: test static `grep -rn "UPDATE leaderboard_entries\|DELETE FROM leaderboard_entries" ai/app/` → **0** khớp, và DB trigger `leaderboard_entries_immutable` chặn UPDATE/DELETE ngay cả khi code application bị gọi sai.
+- FK `evaluation_id ... ON DELETE RESTRICT` chặn xoá cascade làm mất entry; muốn retention phải archive toàn bộ provenance artifact, không hard-delete upstream.
 - `score` là **hàm thuần** của `(evaluations metrics, score_policies row)`. Không phụ thuộc thời điểm tính, không phụ thuộc population hiện tại — điều kiện cần để entry bất biến có nghĩa.
 - `INSERT event_consumptions` và `INSERT leaderboard_entries` nằm trong **cùng** transaction. Tách ra thì crash ở giữa cho một trong hai lỗi: event bị đánh dấu đã xử lý mà không có entry, hoặc entry trùng khi xử lý lại.
-- Đúng một policy `is_active` — do partial unique index bảo đảm, không do quy ước.
+- `leaderboard_dataset_match` là DB trigger bắt buộc; test phải thử insert entry với dataset khác evaluation và xác nhận transaction bị reject.
+- Đúng một policy `is_active` ở mọi commit — partial unique index chặn hai active, còn `activate_score_policy()` + readiness invariant chặn zero active.
+- `score_policies` immutable: sửa formula/weights/version hoặc DELETE đều bị trigger từ chối; thay đổi nghĩa phải INSERT version mới.
 - Tổng trọng số trong `weights` phải bằng `1.0` (kiểm tra khi tạo policy), nếu không `score` không còn nằm trong `[0, scale]` và không so sánh được giữa các policy.
 - `min_trades` và mọi anchor chuẩn hoá nằm trong `score_policies`, **không** trong code Python.
 
@@ -266,7 +286,7 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 
 - `GET /leaderboard` và `/provenance` là **public** nhưng rate-limited 120 req/phút/IP: đây là kết quả mô phỏng công khai, không có gì bí mật (`design.md` §7.3).
 - Provenance **không** trả `owner_id`, email, hay bất kỳ PII nào của người tạo experiment — nó trả tính chất kỹ thuật của kết quả, không trả danh tính.
-- `POST /admin/score-policies` và `/activate` chỉ **ADMIN**: đổi công thức chấm điểm là đổi nghĩa của toàn bộ leaderboard, ngang với một thay đổi schema về mức tác động.
+- `POST /api/v1/admin/score-policies` và `/activate` chỉ **ADMIN**: đổi công thức chấm điểm là đổi nghĩa của toàn bộ leaderboard, ngang với một thay đổi schema về mức tác động.
 - `formula` là **tài liệu người đọc**, không phải biểu thức được `eval()`. Tính toán thật nằm trong code Python đọc `weights`; nếu `formula` được thực thi động thì `POST /admin/score-policies` trở thành RCE cho tài khoản ADMIN bị chiếm.
 - `sort_by`, `dataset_version`, `score_policy_version` validate theo allowlist/tồn tại trong DB trước khi vào truy vấn; mọi tham số đi qua prepared statement.
 
@@ -290,18 +310,21 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 - [ ] AC-01: Test static `grep -rn "UPDATE leaderboard_entries\|DELETE FROM leaderboard_entries" ai/app/` → **0** khớp.
 - [ ] AC-02: Chạy search run 50 candidate → mọi row trong `leaderboard_entries` có `observed_at` tăng dần và **không** row nào có `score` bị sửa (so sánh snapshot DB trước/sau bằng checksum trên `(id, score)`).
 - [ ] AC-03: Publish cùng `StrategyEvaluated` **10 lần** → `count(*) FROM leaderboard_entries WHERE evaluation_id=$1` bằng **1**; `ranking_skipped_total{reason="duplicate_event"}` tăng 9.
-- [ ] AC-04: `UPDATE score_policies SET is_active=true WHERE version='v2'` trong khi `v1` đang active → lỗi unique violation, `SELECT count(*) FROM score_policies WHERE is_active` vẫn bằng **1**.
+- [ ] AC-04: `UPDATE score_policies SET is_active=true WHERE version='v2'` trực tiếp trong khi `v1` đang active → lỗi `score policy activation must use activate_score_policy()`, transaction rollback, count active vẫn bằng **1**.
+- [ ] AC-04b: `UPDATE score_policies SET weights='{}'` hoặc `DELETE FROM score_policies` → trigger immutable từ chối; policy cũ và mọi leaderboard entry không đổi.
 - [ ] AC-05: Evaluation với `trade_count=3`, `total_return_pct=+40` → **không** có entry; log DEBUG `reason=insufficient_trades`. Đặt `min_trades=2` trong policy mới rồi recompute → entry xuất hiện, **không** sửa code.
 - [ ] AC-06: Hai evaluation trên hai `market_dataset_id` khác nhau, `GET /leaderboard?dataset_version=A` → chỉ trả entry của A; không request nào trả cả hai.
+- [ ] AC-06b: Cố insert `leaderboard_entries` với `market_dataset_id` khác dataset thật của `evaluation` → DB trigger `leaderboard_dataset_match` reject và transaction không để lại row.
+- [ ] AC-06c: Cố `DELETE evaluation` đang được leaderboard tham chiếu hoặc `DELETE/UPDATE leaderboard_entries` → `ON DELETE RESTRICT`/trigger reject; entry, evaluation và provenance vẫn nguyên vẹn.
 - [ ] AC-07: `GET /leaderboard` thiếu `dataset_version` → `422 dataset_version_required`; với `dataset_version` không tồn tại → `404`, **không** phải `200` với mảng rỗng.
 - [ ] AC-08: Bump policy `v2` (đổi trọng số return 0.5 → 0.7), activate, recompute → entry `v1` **còn nguyên** với `score` cũ; `GET /leaderboard?score_policy_version=v1` và `=v2` cho hai thứ tự Top-3 khác nhau và cả hai đều đọc được.
 - [ ] AC-09: Recompute policy mới cho 10.000 evaluation → **0** row mới trong `backtest_runs` và `trades`; hoàn tất trong **< 30 s**.
-- [ ] AC-10: `GET /leaderboard/{entryId}/provenance` của Top-1 → chứa đủ `strategy_id@version` của **từng** child, `parameters`, `weight`, `code_fingerprint`, `dataset.content_hash`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `evaluator_version`, `score_policy_version`.
+- [ ] AC-10: `GET /leaderboard/{entryId}/provenance` của Top-1 → chứa đủ `strategy_id@version` của **từng** child, `parameters`, `weight`, `code_fingerprint`, `dataset.content_hash`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`, `risk_policy` (`stop_loss_pct`, `take_profit_pct`, `intrabar_priority`), `evaluator_version`, `score_policy_version`.
 - [ ] AC-11: Sửa một dòng logic trong `rsi.py` mà không bump version → **startup fail** với thông điệp nêu rõ `rsi@1.0.0 changed, bump version`; không job nào chạy được trong trạng thái đó.
 - [ ] AC-12: Sửa RSI period 14 → 21, chạy lại, so hai entry → hai `evaluation_id` khác nhau, hai entry riêng, entry cũ **không** bị ghi đè (demo bước 12).
 - [ ] AC-13: `GET /leaderboard?sort_by=mdd` → thứ tự theo `max_drawdown_pct` giảm dần về độ lớn, `score` vẫn có trong response. `sort_by=owner_id` → `422 unsupported_sort_field`.
 - [ ] AC-14: `GET /leaderboard?limit=100000` → trả **≤ 100** row kèm `limit_applied: 100`, không timeout.
 - [ ] AC-15: Đo p95 của `GET /leaderboard?limit=10` sau khi seed **100.000** entry → **< 200 ms**; `EXPLAIN ANALYZE` cho thấy dùng `idx_leaderboard_topk`, không có `Seq Scan`.
 - [ ] AC-16: Một entry mới vào Top-1 → UI đổi trong **< 1 s** qua `LeaderboardUpdated`, **không** có request HTTP nào từ browser trong khoảng đó (kiểm tra bằng DevTools Network).
-- [ ] AC-17: `RESEARCHER` gọi `POST /admin/score-policies` → `403 forbidden`; `OPERATOR` → `403`; `ADMIN` → `201`.
+- [ ] AC-17: `RESEARCHER` gọi `POST /api/v1/admin/score-policies` → `403 forbidden`; `OPERATOR` → `403`; `ADMIN` → `201`.
 - [ ] AC-18: Test static `grep -rn "eval(\|exec(" ai/app/domain/ranking/` → **0** khớp (`formula` không bao giờ được thực thi động).

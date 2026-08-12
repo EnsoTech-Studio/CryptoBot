@@ -9,7 +9,7 @@ sequenceDiagram
     DB-->>W: job_id, experiment_id, lease_token T, attempt 1 of 3
     W->>DB: UPSERT backtest_runs (status=running, worker_id, lease_token=T)<br/>WHERE status IN (queued, running, failed)
     Note over W,DB: 0 row trả về = run đã completed →<br/>đọc kết quả cũ, đánh job completed, KHÔNG chạy engine.
-    W->>DB: SELECT snapshot và nến của market_dataset_id
+    W->>DB: SELECT snapshot + market_dataset_candles<br/>WHERE market_dataset_id = snapshot.market_dataset_id<br/>ORDER BY close_time
     W->>DB: INSERT domain_events BacktestStarted (outbox, pending)
     par Vòng lặp backtest
         W->>ENG: run snapshot, candles

@@ -9,6 +9,7 @@ flowchart TB
 
     Binance["🌐 Binance<br/><i>Sàn giao dịch</i><br/>REST klines + WebSocket stream<br/><b>read-only, public endpoint</b>"]
     NewsSrc["🌐 News Sources<br/><i>RSS feeds, News API</i><br/><b>allowlist cấu hình server-side</b>"]
+    MLModel["Sentiment Model / ML Runtime<br/><i>Python module ở MVP;<br/>remote GPU adapter khi cần</i>"]
 
     Researcher -->|"HTTPS: xem chart, tạo experiment,<br/>đọc leaderboard/trades/news"| System
     Operator -->|"HTTPS: pause/resume/cancel run,<br/>đọc metrics & progress"| System
@@ -17,10 +18,11 @@ flowchart TB
     System -->|"HTTPS REST<br/>lấy nến lịch sử"| Binance
     System <-->|"WSS<br/>nhận kline realtime"| Binance
     System -->|"HTTPS<br/>thu thập tin tức"| NewsSrc
+    System -.->|"SentimentAnalyzer port<br/>in-process hoặc adapter remote"| MLModel
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef system fill:#1168bd,stroke:#0b4884,color:#fff
     classDef external fill:#999,stroke:#6b6b6b,color:#fff
     class Researcher,Operator,Developer person
     class System system
-    class Binance,NewsSrc external
+    class Binance,NewsSrc,MLModel external
