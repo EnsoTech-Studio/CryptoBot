@@ -8,9 +8,9 @@ flowchart TB
 
         API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
 
-        Lab["<b>Strategy Lab</b><br/>[Container: Python 3.12 + FastAPI]<br/><br/>Market normalization, indicator, strategy registry,<br/>composite, experiment, evaluate, rank,<br/>news orchestration, sentiment."]
+        Lab["<b>Strategy Service</b><br/>[Container: Go 1.23]<br/><br/>Market normalization, indicator, strategy registry,<br/>composite, experiment, backtest, evaluate, rank,<br/>news orchestration."]
 
-        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint <code>python -m app.worker</code>]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
+        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Go,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
         DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, dataset snapshots,<br/>strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
 
@@ -22,9 +22,6 @@ flowchart TB
 
     Researcher -->|"HTTPS"| Web
     Web -->|"REST JSON + WebSocket<br/><code>/api/v1/*</code>"| API
-    API -->|"HTTP JSON nội bộ<br/><code>/internal/*</code><br/>+ request-id, deadline, principal"| Lab
-    Lab -.->|"push event: CandleClosed,<br/>ChartOverlayUpdated,<br/>LeaderboardUpdated"| API
-
     Lab -->|"SQL"| DB
     Worker -->|"SQL: FOR UPDATE SKIP LOCKED<br/>+ ghi trades/evaluations"| DB
     Lab -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB

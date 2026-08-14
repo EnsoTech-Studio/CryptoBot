@@ -33,11 +33,11 @@ Hệ thống **không** có một style duy nhất. Nó là một **polyglot mul
 | Thành phần                | Style của chính nó                                      | Trách nhiệm                                            |
 | ------------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
 | **Web Dashboard** (Next.js) | **Presentation layer** — client-side rendering + SSR   | Render, không tính toán domain                          |
-| **Public API** (Go)       | **Edge service / BFF** (Backend-for-Frontend)            | Public boundary: auth, RBAC, rate limit, validate, WS fan-out |
-| **Strategy Lab** (Python) | **Modular Monolith + Hexagonal** (Ports & Adapters)      | Toàn bộ domain: market, strategy, experiment, evaluate, rank, news |
-| **Backtest Worker** (Python) | Cùng codebase với Strategy Lab, khác entrypoint       | Consume job queue, chạy `BacktestEngine`                |
+| **Strategy Service** (Go) | **Modular Monolith + Hexagonal** (Ports & Adapters)      | Public boundary và toàn bộ domain: market, strategy, experiment, evaluate, rank, news |
+| **Backtest Worker** (Go) | Cùng codebase với Strategy Service, khác entrypoint       | Consume job queue, chạy `BacktestEngine`                |
+| **AI Inference** (Python) | Adapter service | Chỉ phân loại sentiment; không sở hữu strategy/backtest |
 
-Cách gọi đúng: **"Python Strategy Lab là một Modular Monolith / Hexagonal domain core"**, không phải "toàn hệ thống là một modular monolith". Toàn hệ thống là nhiều deployable; chỉ **domain core** mới là modular monolith.
+Cách gọi đúng: **"Go Strategy Service là một Modular Monolith / Hexagonal domain core"**, không phải "toàn hệ thống là một modular monolith". Toàn hệ thống là nhiều deployable; chỉ **domain core** mới là modular monolith.
 
 Trên nền topology đó có hai quyết định style áp riêng cho phần domain:
 
@@ -48,18 +48,18 @@ Trên nền topology đó có hai quyết định style áp riêng cho phần do
 
 **Vì sao domain core là Modular Monolith, không phải microservice-per-module**
 
-Đây là chỗ dễ bị hiểu nhầm nhất, nên nói thẳng: hệ thống **có** nhiều process, nhưng ranh giới process **không** trùng ranh giới module domain. Go/Python là ranh giới *kỹ thuật* (edge vs computation), không phải phân rã domain thành service. Sáu module domain — Market Data, Strategy Engine, Experiment, Search, Ranking, News — nằm **cùng một process** Python và giao tiếp qua port in-process, không qua network.
+Đây là chỗ dễ bị hiểu nhầm nhất, nên nói thẳng: hệ thống **có** nhiều process, nhưng ranh giới process **không** trùng ranh giới module domain. Go/Python là ranh giới *kỹ thuật* (domain execution vs AI inference), không phải phân rã domain thành service. Sáu module domain — Market Data, Strategy Engine, Experiment, Search, Ranking, News — nằm **cùng một process** Go và giao tiếp qua port in-process, không qua network.
 
 - Đề bài nói rõ: *"Không có cộng điểm chỉ vì sử dụng công nghệ phức tạp. Nhóm phải chứng minh: công nghệ đó giải quyết vấn đề kiến trúc nào?"* (§38). Tách 6 module thành 6 service HTTP chỉ thêm service discovery, distributed tracing, eventual consistency — không giải quyết vấn đề nào trong §32.
 - Cả 7 architectural driver của đề bài (§32) đạt được bằng **ranh giới module trong process** + **ports/adapters**, không cần ranh giới network cho từng module.
-- Team 3 người: một codebase Python cho domain giúp refactor contract đồng bộ, không phải version 6 API nội bộ.
+- Team 3 người: một codebase Go cho domain giúp refactor contract đồng bộ, không phải version 6 API nội bộ.
 - Modular hoá đúng cách khiến việc tách sau này là *deployment change*, không phải *rewrite*: mỗi module chỉ nói chuyện qua port, không import repository của module khác.
 
 Chi tiết ranh giới và ownership giữa Go và Python ở **§1.2 Service Boundary & Ownership**; lý do chọn topology này thay vì gộp hoặc chia nhỏ hơn ở **ADR-011** và **ADR-015**.
 
 **Vì sao Plugin Architecture cho strategy, không Factory-with-switch**
 
-Kiến trúc phải chịu được scenario đánh giá của đề bài (§41): giảng viên yêu cầu thêm MACD tại chỗ. Với `if strategy == "MA" ... else if ...` thì phải sửa Controller + Backtester + UI + Database + Combination Engine + Evaluator. Với Registry + decorator `@register_strategy`, thêm MACD là **1 file mới, 0 dòng sửa**. Chi tiết ở §8.1 và ADR-002.
+Kiến trúc phải chịu được scenario đánh giá của đề bài (§41): giảng viên yêu cầu thêm MACD tại chỗ. Với `if strategy == "MA" ... else if ...` thì phải sửa Controller + Backtester + UI + Database + Combination Engine + Evaluator. Với Go `StrategyRegistry` và self-registration của plugin, thêm MACD là **1 file mới, 0 dòng sửa core**. Chi tiết ở §8.1 và ADR-002.
 
 **Vì sao Event-driven cho pipeline, không gọi trực tiếp**
 
@@ -77,33 +77,33 @@ Nhưng "event-driven" ở đây **không** có nghĩa "in-process dispatcher là
 
 #### 1.2.1 Ranh giới trách nhiệm
 
-| | **Public API (Go)** | **Strategy Lab (Python)** |
+| | **Go Strategy Service** | **Python AI Inference** |
 | --- | --- | --- |
-| Vai trò | Public backend / boundary — **edge service** | Internal computation domain service |
-| Ai gọi tới | Browser (internet công khai) | **Chỉ** Go API và Worker (internal network) |
-| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, request validation, error mapping, request/correlation ID, WS subscription registry và fan-out; khởi tạo quota admission qua command atomic | Market normalization, indicator, strategy registry, composite, experiment snapshot, backtest, evaluation, ranking, news orchestration, sentiment; thực thi quota admission transaction và domain writes |
-| **Không** được sở hữu | Thuật toán strategy, backtest math, công thức metric/score, quyết định domain | Trình bày HTTP cho browser, session người dùng, phát hành/xác thực token |
-| Ngôn ngữ được chọn vì | Goroutine + channel: fan-out WebSocket I/O-bound, không GIL | numpy/pandas cho indicator CPU-bound; hệ sinh thái ML cho sentiment |
+| Vai trò | Public backend / boundary và computation domain service | Internal sentiment inference adapter |
+| Ai gọi tới | Browser (internet công khai); worker dùng cùng codebase | **Chỉ** Go Strategy Service (internal network) |
+| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, request validation, error mapping, request/correlation ID, WS fan-out; market normalization, indicators, strategy registry, composite, snapshots, backtest, evaluation, ranking, news orchestration, quota transaction và domain writes | Model loading và inference `POSITIVE | NEUTRAL | NEGATIVE` + score/model version |
+| **Không** được sở hữu | Không gọi Python cho strategy/backtest math hoặc metric/score | Không trình bày HTTP cho browser, không sở hữu strategy/backtest, experiment, DB writes hay token/session |
+| Ngôn ngữ được chọn vì | Goroutine + channel cho WebSocket và worker; type-safe, deterministic domain core | Hệ sinh thái ML cho sentiment |
 
-#### 1.2.2 Vì sao indicator, backtest, search, ranking, sentiment đều ở Python
+#### 1.2.2 Vì sao strategy và backtest ở Go
 
-Không phải vì "Python có sẵn trong scaffold". Bốn lý do kiến trúc:
+Không phải vì "Go có sẵn trong scaffold". Bốn lý do kiến trúc:
 
 1. **Cùng dữ liệu, cùng vòng đời.** Indicator/overlay realtime đọc operational cache `candles`; backtest đọc `market_dataset_candles` + `ExperimentSnapshot`; evaluation đọc `trades`; ranking đọc `evaluations`. Đây là **một chuỗi biến đổi trên cùng một dataset snapshot**. Tách ra process khác nhau nghĩa là mỗi bước phải serialize hàng chục nghìn nến qua network — chi phí thuần, không mua được gì.
-2. **Reproducibility đòi hỏi một implementation duy nhất.** Nếu indicator tồn tại ở cả Go (cho overlay realtime) và Python (cho backtest), sẽ có ngày RSI trên chart khác RSI mà backtest đã dùng. Đó là hai nguồn chân lý (§9.3). Một implementation, ở Python, là ràng buộc về tính đúng đắn.
-3. **CPU-bound nên tách khỏi I/O-bound.** Backtest chiếm CPU liên tục 2–40 s. Nếu nó chạy cùng process với WebSocket loop thì GIL và CPU contention làm độ trễ realtime tăng vọt. Tách Go ra để backtest nặng **không** ảnh hưởng độ trễ chart.
-4. **Sentiment model là Python.** Model ML sống trong Python. Crawler chỉ collect và publish `NewsCollected`; Sentiment Service subscribe (§9.5) — cả hai đều trong domain core nên không phát sinh network hop cho một pipeline nội bộ.
+2. **Reproducibility đòi hỏi một implementation duy nhất.** Indicator dùng cho overlay và backtest cùng nằm trong Go domain core, nên không có hai nguồn chân lý.
+3. **CPU-bound nên tách theo workload, không theo ngôn ngữ.** Backtest chiếm CPU liên tục 2–40 s, nên worker Go chạy process riêng với API/WS hub. Scale worker không đổi domain code.
+4. **Sentiment model là Python-only seam.** Crawler Go collect và gọi Python inference qua `SentimentAnalyzer` port; response được version hoá, không đưa Python vào strategy/backtest pipeline.
 
 #### 1.2.3 Vì sao browser chỉ nói chuyện với Go
 
 | Nếu browser gọi thẳng Python | Hệ quả |
 | --- | --- |
-| Python phải tự làm auth, RBAC, rate limit, CORS | Trách nhiệm edge trộn vào domain — đúng anti-pattern God Service (§9.1) |
+| Python phải tự làm auth, RBAC, rate limit, CORS | Trách nhiệm edge trộn vào AI adapter — đúng anti-pattern God Service (§9.1) |
 | Có **hai** public surface cần hardening | Gấp đôi diện tích tấn công, hai chỗ phải giữ đồng bộ chính sách bảo mật |
 | Browser biết cấu trúc nội bộ | Đổi phân rã domain thành breaking change với frontend |
-| Fan-out WebSocket ở Python | GIL + CPU contention với backtest (lý do 3 ở trên) |
+| Fan-out WebSocket ở Python | AI adapter lộ ra public surface không cần thiết |
 
-Vì thế: **Python service không publish port ra host trong profile production**. Browser **chỉ** biết Go API tồn tại — không biết PostgreSQL, không biết Binance, không biết Python service. Đây là cái làm câu hỏi §40.3 (*"thêm OKX có phải sửa frontend không?"*) có câu trả lời "không".
+Vì thế: **Python AI service không publish port ra host trong profile production**. Browser **chỉ** biết Go Strategy Service tồn tại — không biết PostgreSQL, không biết Binance, không biết Python service. Đây là cái làm câu hỏi §40.3 (*"thêm OKX có phải sửa frontend không?"*) có câu trả lời "không".
 
 #### 1.2.4 Ownership của database
 
@@ -111,10 +111,9 @@ Ranh giới này được chốt để không có ownership chồng chéo ngầm
 
 | Nhóm bảng | Owner (write + migration) | Bên còn lại |
 | --- | --- | --- |
-| **Domain**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs`, `domain_events`, `event_consumptions` | **Python Strategy Lab** (+ Worker, cùng codebase) | Go: **read-only projection**, xem §1.2.5 |
-| **Edge**: `users`, `refresh_tokens`, `user_quotas` | **Go API** | Python không có quyền đọc/ghi trực tiếp. Ngoại lệ duy nhất là command `SearchAdmission` chạy qua một `SECURITY DEFINER` transaction function, được migration owner cấp `EXECUTE` có kiểm soát để atomically đọc quota và tạo domain run. |
+| **Domain + Edge**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs`, `domain_events`, `event_consumptions`, `users`, `refresh_tokens`, `user_quotas` | **Go Strategy Service** (+ Worker, cùng codebase) | Python AI chỉ nhận inference input và không có quyền DB. |
 
-Alembic migration của bảng domain nằm trong repo Python. Go **không** có migration cho bảng domain và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
+Migration của bảng domain nằm trong repo Go. Python AI **không** có migration và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
 
 #### 1.2.5 Read projection — CQRS read path của Go
 
@@ -124,21 +123,21 @@ phải ownership chồng chéo mà là một **read path riêng biệt, có tên
 
 | Thuộc tính | Quy định |
 | --- | --- |
-| Tên gọi | **Read projection** — CQRS read path. Write đi qua Python; read có thể đi trực tiếp. |
+| Tên gọi | **Read projection** — CQRS read path. Go domain writes và reads dùng contract versioned. |
 | Schema được phép đọc | **Chỉ** các view trong schema `read`: `read.candles_v1`, `read.market_datasets_v1`, `read.dataset_candles_v1`, `read.experiment_summary_v1`, `read.trades_v1`, `read.run_signals_v1`, `read.equity_v1`, `read.leaderboard_v1`, `read.news_v1`, `read.search_run_v1`, `read.search_run_quota_v1`. Không đọc bảng gốc. |
-| Quyền DB | Go dùng role `api_reader` có `SELECT` trên schema `read` và **không** có quyền gì trên bảng gốc. Ownership được cưỡng chế bằng `GRANT`, không bằng quy ước. |
-| View là contract | Python sở hữu định nghĩa view. Đổi bảng gốc mà giữ nguyên view → Go không phải sửa. Đổi view = breaking change, phải version (`_v1` → `_v2`, giữ song song một phase). |
+| Quyền DB | **Go API read pool** dùng role `api_reader` có `SELECT` trên schema `read` và **không** có quyền gì trên bảng gốc. **Go domain command/Worker** dùng write role riêng (`domain_writer`); migration runner dùng schema-owner role. Không process nào dùng chung read/write grants; ownership được cưỡng chế bằng `GRANT`, không bằng quy ước. |
+| View là contract | Go Strategy Service sở hữu định nghĩa view. Đổi bảng gốc mà giữ nguyên view → handler không phải sửa. Đổi view = breaking change, phải version (`_v1` → `_v2`, giữ song song một phase). |
 | Consistency model | Cùng một PostgreSQL nên **không có replication lag**. Nhưng "vừa `202 Accepted` mà `status` vẫn `queued`" là **đúng**, không phải stale — job chưa chạy. UI biết khi nào refetch qua WS event (`BacktestCompleted`, `LeaderboardUpdated`), không poll cho tới khi thấy dữ liệu. |
-| Không được làm gì trong read path | Không JOIN để tính toán domain (score, metric, PnL). Nếu Go cần một con số phái sinh, con số đó phải đã được Python tính và ghi vào cột. Go chỉ `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`. |
-| Vì sao không route mọi read qua Python | `GET /markets/candles` trả tới 1000 nến và là endpoint bị gọi nhiều nhất. Thêm một hop Go→Python chỉ để chuyển tiếp một `SELECT` không thêm bảo đảm nào (Python cũng đọc đúng bảng đó) mà cộng 1–3 ms và một điểm hỏng nữa. |
-| Khi nào **phải** route qua Python | Mọi read cần **áp dụng logic domain**: overlay (cần indicator + fill policy), provenance resolution có resolve nested artifact, aggregate sentiment theo giờ. Summary/provenance phẳng đã được ghi trong `read.experiment_summary_v1` thì Go đọc trực tiếp; read snapshot candles dùng `read.dataset_candles_v1`, không query live cache. |
+| Không được làm gì trong read path | Không JOIN để tính toán domain (score, metric, PnL). Nếu handler cần một con số phái sinh, nó phải đã được Go domain tính và ghi vào cột. Handler chỉ `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`. |
+| Vì sao không route mọi read qua Python | Python chỉ làm sentiment inference. `GET /markets/candles` trả tới 1000 nến và Go đọc projection trực tiếp, không thêm network hop vô ích. |
+| Khi nào gọi Python | Chỉ khi `SentimentAnalyzer` cần model inference. Overlay, provenance resolution và aggregate sentiment là Go domain logic. |
 
-Quy tắc một dòng để nhớ: **Go đọc cái Python đã ghi, qua view Python định nghĩa, và không tính gì thêm.**
+Quy tắc một dòng để nhớ: **Go sở hữu domain facts và views; Python chỉ trả inference versioned.**
 
 Các route public không có view trong danh sách trên (`/markets/pairs`,
 `/markets/status`, `/strategies`, `/markets/chart-overlays`, `/news/aggregate`) là
-domain reads có logic/registry/provider resolution nên Go proxy qua Python internal
-command. Chúng không được phép rơi xuống query bảng gốc từ Go.
+domain reads có logic/registry/provider resolution nên Go xử lý trong domain
+process, không qua Python.
 
 Contract tối thiểu của các view mới/quan trọng là:
 
@@ -149,7 +148,7 @@ Contract tối thiểu của các view mới/quan trọng là:
 - `read.search_run_v1`: projection cho GET progress và ownership check của search run.
 - `read.search_run_quota_v1(owner_id UUID PRIMARY KEY, running_count INT NOT NULL, max_concurrent_runs SMALLINT NOT NULL, available_slots INT NOT NULL)`: **chỉ informational**. Go không dùng view này làm admission decision; quota được chốt atomically bởi `SearchAdmission` command.
 
-Read projection là **migration contract thật**, không phải tên gọi trong sequence diagram. Migration Python/Alembic chạy bằng schema-owner phải tạo schema/view và quyền dưới đây; Go chỉ được cấp quyền đọc các view đã version hoá:
+Read projection là **migration contract thật**, không phải tên gọi trong sequence diagram. Go migration/schema-owner phải tạo schema/view và quyền dưới đây; Go API/Worker chỉ được cấp đúng quyền cần thiết qua versioned roles:
 
 ```sql
 -- Chạy bằng migration/schema owner; không chạy từ Go API.
@@ -159,6 +158,16 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'api_reader') THEN
         CREATE ROLE api_reader NOLOGIN;
+    END IF;
+END $$;
+
+-- Domain command/Worker dùng write role riêng; migration runner không dùng
+-- runtime role. Quyền cụ thể trên domain tables được cấp trong migration của
+-- từng bảng, không cấp cho api_reader.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'domain_writer') THEN
+        CREATE ROLE domain_writer NOLOGIN;
     END IF;
 END $$;
 
@@ -195,7 +204,8 @@ SELECT x.id AS experiment_id, x.owner_id,
        x.strategy_version_id, sv.strategy_id,
        sv.version AS strategy_version, sv.code_fingerprint,
        x.candidate_definition, x.candidate_hash,
-       x.initial_capital, x.fee_bps, x.slippage_bps,
+       x.initial_equity, x.fixed_notional, x.leverage,
+       x.fee_bps, x.slippage_bps,
        x.fill_policy, x.position_policy, x.open_position_at_end,
        CASE
            WHEN x.stop_loss_pct IS NULL AND x.take_profit_pct IS NULL THEN NULL
@@ -240,7 +250,7 @@ JOIN public.experiments x ON x.id = br.experiment_id;
 
 CREATE VIEW read.equity_v1 AS
 SELECT ep.backtest_run_id, br.experiment_id, x.owner_id,
-       x.initial_capital, ep.point_time, ep.equity, ep.drawdown_pct
+       x.initial_equity, ep.point_time, ep.equity, ep.drawdown_pct
 FROM public.equity_points ep
 JOIN public.backtest_runs br ON br.id = ep.backtest_run_id
 JOIN public.experiments x ON x.id = br.experiment_id;
@@ -253,7 +263,8 @@ SELECT le.id AS entry_id, le.score_policy_version, le.score,
        le.evaluation_id, e.backtest_run_id, br.experiment_id, x.owner_id,
        x.strategy_version_id, sv.strategy_id, sv.version AS strategy_version,
        sv.code_fingerprint, x.candidate_definition, x.candidate_hash,
-       x.initial_capital, x.fee_bps, x.slippage_bps,
+       x.initial_equity, x.fixed_notional, x.leverage,
+       x.fee_bps, x.slippage_bps,
        x.fill_policy, x.position_policy, x.open_position_at_end,
        CASE
            WHEN x.stop_loss_pct IS NULL AND x.take_profit_pct IS NULL THEN NULL
@@ -329,13 +340,12 @@ TO api_reader;
 
 #### Atomic command boundary — quota admission
 
-Go vẫn là nơi nhận request, xác thực principal, RBAC và validate syntax. Nhưng Go
-**không** được đọc `read.search_run_quota_v1` rồi mới gọi Python để quyết định quota:
+Go nhận request, xác thực principal, RBAC và validate syntax. Nhưng Go
+**không** được đọc `read.search_run_quota_v1` rồi quyết định quota:
 đó là hai transaction và tạo TOCTOU race. Admission là một command duy nhất:
 
-1. Go gọi `POST /internal/search-runs/admit` tới Python với principal đã được Go xác thực,
-   payload đã validate và `idempotency_key`.
-2. Python gọi `SearchAdmission` transaction function do migration owner tạo. Function
+1. Go gọi `SearchAdmission` transaction function do migration owner tạo, với principal,
+   payload đã validate và `idempotency_key`. Function
    khóa đúng row `public.user_quotas` bằng `SELECT ... FOR UPDATE`, đếm các
    `search_runs` ở `queued|running|paused`, kiểm tra cả `max_concurrent_runs` và
    `max_candidates_per_run`, rồi INSERT `search_runs` trong **cùng một transaction**.
@@ -344,16 +354,13 @@ Go vẫn là nơi nhận request, xác thực principal, RBAC và validate synta
    `(owner_id, idempotency_key)` đã tồn tại, trả lại run cũ. Không có cửa sổ giữa
    quota check và INSERT.
 
-Python application role không được `SELECT`/`UPDATE` trực tiếp `user_quotas`; nó chỉ
-được `EXECUTE` function này. Function cố định `search_path`, nhận owner từ principal
-đã được Go ký/xác thực ở internal boundary, và là ngoại lệ duy nhất đối với ownership
-table ở §1.2.4. `read.search_run_quota_v1` chỉ phục vụ diagnostics/UI, **không** là
-security gate.
+Function cố định `search_path`, nhận owner từ principal đã được Go xác thực.
+`read.search_run_quota_v1` chỉ phục vụ diagnostics/UI, **không** là security gate.
 
 Các view được sở hữu bởi migration role; thay đổi schema gốc phải giữ nguyên shape của `_v1`, hoặc tạo `_v2` và chạy song song một phase. Nếu view cần ownership predicate, Go vẫn phải truyền `owner_id` sau khi xác thực principal; view không được biến thành nơi tính business metric.
 
 Migration contract của command (body JSON chỉ là shorthand cho payload đã được
-Python validate; application thực tế có thể dùng các tham số typed tương ứng):
+Go validate; application thực tế có thể dùng các tham số typed tương ứng):
 
 ```sql
 CREATE FUNCTION public.admit_search_run_v1(
@@ -424,16 +431,15 @@ INSERT `search_runs` cùng một function call.
 | Thành phần                | Vai trò                                                                                              | Công nghệ                             | Không được sở hữu                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------- |
 | **Web Dashboard**         | 4 chart panel độc lập, strategy picker, search control panel, leaderboard, trade table, news view      | Next.js 16 App Router + React 19 + TypeScript | Logic trading, tính indicator, tính profit/ranking, parse payload Binance |
-| **Public API (Go)**       | REST + WebSocket boundary, validation, rate limit, auth/RBAC, request ID, error mapping, fan-out stream | Go 1.23 (stdlib `net/http`, `gorilla/websocket`) | Thuật toán strategy, backtest math, persistence business logic |
-| **Strategy Lab (Python)** | Market normalization, indicator, strategy registry, composite, experiment, backtest, evaluate, rank, news/sentiment orchestration | Python 3.12 + FastAPI + numpy/pandas | Trình bày HTTP/browser, session người dùng               |
-| **Backtest Worker**       | Consume `backtest_jobs`, chạy backtest, publish `BacktestCompleted`                                  | **Cùng image Python**, entrypoint khác | Nhận request HTTP từ browser                             |
+| **Go Strategy Service**       | REST + WebSocket boundary, validation, auth/RBAC, request ID, market/strategy/backtest/evaluation/ranking/news domain | Go 1.23 | Python inference implementation details |
+| **Backtest Worker**       | Consume `backtest_jobs`, chạy backtest, publish `BacktestCompleted`                                  | **Cùng image Go**, entrypoint khác | Nhận request HTTP từ browser                             |
 | **Sentiment Model**       | Phân loại `POSITIVE/NEUTRAL/NEGATIVE` + score + `model_version`                                      | Module trong Python service (Phase 5 tách nếu cần GPU) | Crawl news, biết về strategy               |
 | **PostgreSQL**            | Nguồn sự thật: candles, strategy versions, experiments, trades, evaluations, leaderboard, news, sentiment, jobs | PostgreSQL 16                | Logic quyết định của strategy                            |
 | **Redis** *(tuỳ chọn, có điều kiện — §12.0)* | Cache overlay đã tính, outbound rate-limit token bucket dùng chung khi có > 1 worker         | Redis 7                               | Nguồn sự thật cho bất kỳ dữ liệu nào                     |
 | **Binance**               | Nguồn market data (REST klines + WebSocket kline stream)                                             | Public API, read-only                 | —                                                        |
 | **News Providers**        | Nguồn tin (RSS feeds + News API), allowlist server-side                                              | HTTPS                                 | —                                                        |
 
-Lưu ý về **Backtest Worker**: đây là *cùng một image, cùng một class `BacktestEngine`*, chỉ khác entrypoint (`python -m app.worker` thay vì uvicorn). Điều này quan trọng: nghĩa là không có code path riêng cho "chạy inline" và "chạy trong worker" — cùng một `ExperimentSnapshot` vào, cùng một `BacktestResult` ra. Đó là cái làm cho ADR-005 (scale bằng cách đổi deployment, không đổi code) đứng vững.
+Lưu ý về **Backtest Worker**: đây là *cùng một image Go, cùng một `BacktestEngine`*, chỉ khác entrypoint. Điều này quan trọng: nghĩa là không có code path riêng cho "chạy inline" và "chạy trong worker" — cùng một `ExperimentSnapshot` vào, cùng một `BacktestResult` ra. Đó là cái làm cho ADR-005 (scale bằng cách đổi deployment, không đổi code) đứng vững.
 
 #### 1.3.1 Code artifact so với runtime workload
 
@@ -445,7 +451,7 @@ Lưu ý về **Backtest Worker**: đây là *cùng một image, cùng một clas
 | - | -------- | -------- | ------------- |
 | 1 | `web` image | `web/Dockerfile` (Next.js) | 1 process |
 | 2 | `api` image | `server/Dockerfile` (Go) | 1 process |
-| 3 | `lab` image | `ai/Dockerfile` (Python) | **2 loại process**: API server (`uvicorn app.main:app`) và Worker (`python -m app.worker`) |
+| 3 | `ai` image | `ai/Dockerfile` (Python) | AI inference service |
 
 **Runtime workloads / processes — 4 loại (5 container ở MVP, 4+N khi scale)**
 
@@ -453,27 +459,25 @@ Lưu ý về **Backtest Worker**: đây là *cùng một image, cùng một clas
 | -------- | ----- | ---------- | ------------ | ------------------ |
 | `web` | `web` | `next start` | 1 | 1 |
 | `api` | `api` | `/app/api` | 1 | 1 |
-| `lab` | `lab` | `uvicorn app.main:app` | 1 | 1 |
-| `worker` | `lab` | `python -m app.worker` | **1** | **N** (`--scale worker=N`) |
+| `worker` | `api` | worker entrypoint | **1** | **N** (`--scale worker=N`) |
+| `ai` | `ai` | `uvicorn app.main:app` | 1 | 1 |
 | `postgres` | `postgres:16` | — | 1 | 1 |
 | `redis` *(có điều kiện)* | `redis:7` | — | **0** | 0 hoặc 1, xem §12.1 |
 
-Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container ở MVP**. `worker` không phải image thứ tư — nó là workload thứ tư dùng image thứ ba. Đây chính là điều làm demo S10 (`--scale worker=4`) không cần build lại gì.
+Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container ở MVP**. `worker` không phải image thứ tư — nó dùng lại image Go của API. Đây chính là điều làm demo S10 (`--scale worker=4`) không cần build lại gì.
 
 ### 1.4 Cách các thành phần giao tiếp
 
 | Cặp                          | Giao thức                                            | Chi tiết                                                                                                                            |
 | ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Browser ↔ Go API             | HTTPS REST + **WebSocket** (`/api/v1/markets/stream`) | JSON. WebSocket vì cần client→server message (`subscribe`/`unsubscribe` từng panel), SSE một chiều không đủ. Xem ADR-001.            |
-| Go API → Python Lab          | HTTP/1.1 JSON trên **internal network**              | Không publish port ra ngoài trong profile production. Propagate `X-Request-ID`, `X-Correlation-ID`, deadline (`X-Deadline-Ms`), principal context. Commands gồm `/internal/search-runs/admit`, `/internal/search-runs/{id}/actions` và `/internal/score-policies/*`; Go không ghi domain table trực tiếp. |
-| Go API → PostgreSQL (read)   | TCP, role `api_reader`, **chỉ schema `read`**        | Read projection / CQRS read path. `SELECT` trên view `read.*`; không quyền trên bảng gốc. Xem §1.2.5. |
-| Python Lab ↔ PostgreSQL      | TCP, connection pool (asyncpg / SQLAlchemy)          | Owner của bảng domain: write + migration (Alembic), chạy **trước** khi readiness báo healthy. Parameterized query. |
-| Python Lab ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
-| Python Lab ↔ Binance WS      | WSS, persistent                                      | 1 connection multiplexed nhiều stream. Reconnect capped exponential backoff + backfill (§6.1).                                       |
-| Python Lab → Go API (push)   | **HTTP POST `/internal/events`** (đã chốt, xem §5.8) | Đẩy `CandleClosed` / `ChartOverlayUpdated` / `LeaderboardUpdated` để Go fan-out theo subscription. Internal auth + idempotency theo `event_id` + retry backoff. |
-| Python Lab ↔ Worker          | **Qua PostgreSQL** (`backtest_jobs` + `FOR UPDATE SKIP LOCKED`) | Không gọi trực tiếp. Job record là contract. Đổi sang broker = đổi adapter.                                                |
+| Go Service ↔ PostgreSQL      | TCP, connection pool                                | Owner của domain: write + migration, chạy **trước** khi readiness báo healthy. Parameterized query. |
+| Go Service ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
+| Go Service ↔ Binance WS      | WSS, persistent                                      | 1 connection multiplexed nhiều stream. Reconnect capped exponential backoff + backfill (§6.1).                                       |
+| Go Service ↔ Worker          | **Qua PostgreSQL** (`backtest_jobs` + `FOR UPDATE SKIP LOCKED`) | Không gọi trực tiếp. Job record là contract. Đổi sang broker = đổi adapter.                                                |
+| Go Service → Python AI       | HTTP/1.1 JSON, internal network                     | Chỉ gọi `SentimentAnalyzer` inference; propagate correlation ID and deadline. |
 | Worker → Evaluator / Ranking | **Transactional outbox** trên `domain_events` (§5.7) | **Cross-process**: worker và consumer là process khác nhau nên không dùng in-process dispatcher. Publisher ghi state + event cùng transaction; dispatcher claim/retry; consumer idempotent theo `event_id`. |
-| Module ↔ Module **trong cùng process** | **In-process event dispatcher** + port interface | Chỉ dùng khi publisher và consumer chắc chắn cùng process (ví dụ `CandleClosed` → `OverlayCalculator` trong `lab`). `MarketService` không import `LeaderboardRepository`. Event payload có `schema_version` giữ nguyên khi tách process. |
+| Module ↔ Module **trong cùng process** | **In-process event dispatcher** + port interface | Chỉ dùng khi publisher và consumer chắc chắn cùng process (ví dụ `CandleClosed` → `OverlayCalculator` trong Go Service). `MarketService` không import `LeaderboardRepository`. Event payload có `schema_version` giữ nguyên khi tách process. |
 
 **Ranh giới quan trọng**: browser **chỉ** nói chuyện với Go API. Nó không biết PostgreSQL tồn tại, không biết Binance tồn tại, không biết Python service tồn tại. Đây là cái làm câu hỏi kiến trúc §40.3 ("thêm OKX có phải sửa frontend không?") có câu trả lời "không".
 
@@ -483,7 +487,7 @@ Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container 
 | -------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Binance WebSocket**      | Không có nến mới                            | Chart hiển thị badge `STALE` + `last_update`. Nến lịch sử vẫn render từ DB. Adapter reconnect backoff; sau khi nối lại **backfill REST** khoảng thiếu, de-dup theo unique key → 0 nến mất. |
 | **Binance REST**           | Không load được lịch sử mới                 | Request bị ảnh hưởng trả `502` với `error.code = market_provider_unavailable`. Nến đã cache trong PostgreSQL vẫn phục vụ. Backtest trên dataset đã có **vẫn chạy**. |
-| **Python Strategy Lab**    | Không tính overlay, không tạo experiment    | Go API trả `503` cho các route domain; `/healthz` của Go vẫn `200` (liveness ≠ readiness). WebSocket giữ connection, gửi frame `{"type":"lab_unavailable"}`.      |
+| **Go Strategy Service**    | Không phục vụ domain API hoặc overlay | `/healthz` của Go vẫn `200` (liveness ≠ readiness); worker tiếp tục xử lý job đã claim. |
 | **Backtest Worker (tất cả)** | Job không được xử lý                      | Job giữ trạng thái `queued`, **không mất**. UI hiển thị `queued: N, running: 0` + cảnh báo "no worker available". Khi worker lên, tiếp tục từ chỗ dừng.        |
 | **PostgreSQL**             | Không đọc/ghi được gì                       | Readiness fail → API `503`. **Không** trả kết quả partial như completed. Job đang chạy fail và **không** commit evaluation nửa vời.                            |
 | **News Provider**          | Không thu được tin mới                      | Job news đó fail, ghi `failure_reason`, retry theo schedule. Chart, backtest technical, leaderboard **không bị ảnh hưởng**. Trang News hiển thị dữ liệu cũ + `last_collected_at`. |
@@ -532,7 +536,7 @@ flowchart TB
 
 **Đọc gì từ Level 1**
 
-- Có **2 network dependency ở MVP** (sàn giao dịch và nguồn tin) cùng một **ML integration seam**. Model hiện chạy trong Python process; node ML ở context diagram biểu diễn khả năng thay bằng runtime/GPU endpoint bên ngoài mà không đổi `NewsCollector`, `SentimentAnalyzer` hay strategy contract. Binance/news đều **một chiều đọc**.
+- Có **2 network dependency ở MVP** (sàn giao dịch và nguồn tin) cùng một **ML integration seam**. Model hiện chạy trong Python AI process; node ML ở context diagram biểu diễn khả năng thay bằng runtime/GPU endpoint bên ngoài mà không đổi Go `NewsCollector`, `SentimentAnalyzer` port hay strategy contract. Binance/news đều **một chiều đọc**.
 - Không có mũi tên nào từ hệ thống đi ra để **ghi** vào Binance. Đây là biểu diễn của ranh giới simulation-only — một **product decision của nhóm** (`proposal.md` §4.3), không phải yêu cầu trích từ đề bài.
 - `Strategy Developer` nối bằng đường nét đứt và **không đi qua UI**: strategy được thêm bằng code + deploy, không bằng form. Đây là chủ ý — cho phép upload code strategy qua UI là một lỗ RCE.
 
@@ -549,9 +553,9 @@ flowchart TB
 
         API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
 
-        Lab["<b>Strategy Lab</b><br/>[Container: Python 3.12 + FastAPI]<br/><br/>Market normalization, indicator, strategy registry,<br/>composite, experiment, evaluate, rank,<br/>news orchestration, sentiment."]
+        Lab["<b>Strategy Service</b><br/>[Container: Go 1.23]<br/><br/>Market normalization, indicator, strategy registry,<br/>composite, experiment, backtest, evaluate, rank,<br/>news orchestration."]
 
-        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint <code>python -m app.worker</code>]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
+        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Go,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
         DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, dataset snapshots,<br/>strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
 
@@ -563,9 +567,6 @@ flowchart TB
 
     Researcher -->|"HTTPS"| Web
     Web -->|"REST JSON + WebSocket<br/><code>/api/v1/*</code>"| API
-    API -->|"HTTP JSON nội bộ<br/><code>/internal/*</code><br/>+ request-id, deadline, principal"| Lab
-    Lab -.->|"push event: CandleClosed,<br/>ChartOverlayUpdated,<br/>LeaderboardUpdated"| API
-
     Lab -->|"SQL"| DB
     Worker -->|"SQL: FOR UPDATE SKIP LOCKED<br/>+ ghi trades/evaluations"| DB
     Lab -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB
@@ -590,17 +591,17 @@ flowchart TB
 
 **Ba điều đáng chú ý ở Level 2**
 
-1. **Worker dùng cùng image với Lab.** Không có container "backtest service" riêng với code riêng. Cùng `BacktestEngine`, khác entrypoint. Đây là điều khiến việc scale (§40.4) không cần viết lại gì.
-2. **Lab và Worker không nói chuyện trực tiếp.** Chúng giao tiếp qua bảng `backtest_jobs`. Nghĩa là: worker chết giữa job → job quay về `queued` sau lease timeout; thêm worker → chỉ cần `docker compose up --scale worker=4`.
+1. **Worker dùng cùng image với Go Strategy Service.** Không có container "backtest service" riêng với code riêng. Cùng `BacktestEngine`, khác entrypoint. Đây là điều khiến việc scale (§40.4) không cần viết lại gì.
+2. **API và Worker không nói chuyện trực tiếp.** Chúng giao tiếp qua bảng `backtest_jobs`. Nghĩa là: worker chết giữa job → job quay về `queued` sau lease timeout; thêm worker → chỉ cần `docker compose up --scale worker=4`.
 3. **Redis vẽ nét đứt vì nó là tuỳ chọn, không phải "chưa tới phase".** Nó không tồn tại ở MVP và có thể **không bao giờ** được thêm — điều kiện thêm nằm ở §12.0 và phải đo mới biết. Đưa vào diagram để thấy chỗ nó *sẽ* nằm nếu cần, không phải để trông cho "đủ enterprise". Ngược lại, `Worker` vẽ nét liền: nó là workload bắt buộc từ Phase 3 (§1.3.1, §12.0).
 
-### 2.3 Level 3 — Component (Strategy Lab)
+### 2.3 Level 3 — Component (Go Strategy Service)
 
-Level 3 chỉ vẽ cho container quan trọng nhất — Strategy Lab — vì đây là nơi chứa toàn bộ architectural driver của đề bài.
+Level 3 chỉ vẽ cho container quan trọng nhất — Go Strategy Service — vì đây là nơi chứa toàn bộ architectural driver của đề bài.
 
 ```mermaid
 flowchart TB
-    subgraph Lab["<b>Strategy Lab</b> [Python]"]
+    subgraph Lab["<b>Strategy Service</b> [Go]"]
         direction TB
 
         subgraph AppLayer["Application Layer — điều phối, không tính toán domain"]
@@ -612,10 +613,10 @@ flowchart TB
         end
 
         subgraph DomainLayer["Domain Layer — thuần, không I/O"]
-            Registry["<b>StrategyRegistry</b><br/><i>@register_strategy</i>"]
+            Registry["<b>StrategyRegistry</b><br/><i>Register(factory, Definition)</i>"]
             Strategies["MAStrategy · RSIStrategy<br/>BollingerStrategy · SupportResistanceStrategy<br/>NewsSentimentStrategy<br/><i>(MACDStrategy chỉ cần thêm file)</i>"]
             Combiner["SignalCombiner<br/><i>MajorityVote · WeightedVote</i>"]
-            Engine["<b>BacktestEngine</b><br/><i>chronological, next_candle_open</i>"]
+            Engine["<b>BacktestEngine</b><br/><i>BBO LIMIT replay, one-net position</i>"]
             Evaluator["<b>Evaluator</b><br/><i>Return · WinRate · MDD · Trades<br/>ProfitFactor · Sharpe</i>"]
             Indicators["IndicatorLibrary<br/><i>SMA/EMA · RSI · BB · S/R zone</i>"]
         end
@@ -636,7 +637,7 @@ flowchart TB
             ARss["RssNewsAdapter · NewsApiAdapter"]
             AModel["SentimentModelAdapter"]
             APg["PostgresJobDispatcher<br/><i>(BrokerJobDispatcher nếu đo được cần)</i>"]
-            ASql["SQLAlchemy Repositories"]
+            ASql["PostgreSQL Repositories"]
         end
     end
 
@@ -688,15 +689,15 @@ Diagram này gộp cả **cấu trúc** (ai gọi ai) và **6 luồng dữ liệ
 flowchart LR
     subgraph Ext["NGUỒN NGOÀI"]
         direction TB
-        BN_R["Binance REST<br/>/api/v3/klines"]
+        BN_R["Binance USDⓈ-M REST<br/>/fapi/v1/klines"]
         BN_W["Binance WSS<br/>@kline_5m"]
         NEWS["RSS / News API<br/><i>allowlist</i>"]
     end
 
     subgraph Client["CLIENT — chỉ render"]
         direction TB
-        P1["Chart Panel 1<br/>BTCUSDT 5m"]
-        P2["Chart Panel 2<br/>BTCUSDT 15m"]
+        P1["Chart Panel 1<br/>ETHUSDT 5m"]
+        P2["Chart Panel 2<br/>ETHUSDT 15m"]
         P3["Chart Panel 3<br/>1h"]
         P4["Chart Panel 4<br/>4h"]
         LB_UI["Leaderboard<br/>+ Trade Table"]
@@ -711,7 +712,7 @@ flowchart LR
         WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(provider,symbol,timeframe,strategy,config_hash)</i>"]
     end
 
-    subgraph LabBox["STRATEGY LAB — Python"]
+    subgraph LabBox["STRATEGY SERVICE — Go"]
         direction TB
 
         subgraph MD["① Market Data Module"]
@@ -800,13 +801,13 @@ flowchart LR
     classDef ext fill:#e8e8e8,stroke:#999,color:#000
     classDef client fill:#dbeafe,stroke:#3b82f6,color:#000
     classDef go fill:#cffafe,stroke:#06b6d4,color:#000
-    classDef py fill:#fef3c7,stroke:#f59e0b,color:#000
+    classDef domain fill:#fef3c7,stroke:#f59e0b,color:#000
     classDef wk fill:#fce7f3,stroke:#ec4899,color:#000
     classDef db fill:#dcfce7,stroke:#22c55e,color:#000
     class BN_R,BN_W,NEWS ext
     class P1,P2,P3,P4,LB_UI,SR_UI,NW_UI client
     class MW,REST,WSHUB go
-    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS py
+    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS domain
     class W1 wk
     class DB db
 ```
@@ -815,9 +816,9 @@ flowchart LR
 
 **① Binance → Market Data Adapter**
 
-- Adapter là **lớp duy nhất** trong toàn hệ thống biết field name của Binance (`t`, `o`, `h`, `l`, `c`, `v`, `x`). Nó dịch sang `Candle` nội bộ và **không** để rò rỉ shape gốc đi đâu.
-- Nến `is_closed = false` được đánh dấu `provisional` và **không** ghi làm nguồn sự thật lịch sử. Chỉ nến đã đóng (`x: true`) mới upsert vào `candles`.
-- De-dup bằng `UNIQUE (provider, symbol, timeframe, close_time)`. Nghĩa là backfill có thể chạy chồng lấp bao nhiêu lần cũng không tạo nến trùng — an toàn để retry.
+- Adapter là **lớp duy nhất** biết raw Binance Kline (`e`, `E`, `s`, `k.t/T/o/h/l/c/v/n/x`). Nó map sang `KlineUpdate` cho chart, không để raw shape rò rỉ.
+- `KlineUpdate.Final=false` là transient chart state; không ghi DB, không vào `AnalysisContext`. Chỉ `Final=true` mới tạo `market.Candle` closed-only để upsert vào `candles`, tính overlay và chạy strategy.
+- De-dup bằng `UNIQUE (provider, symbol, timeframe, open_time)`. Nghĩa là backfill có thể chạy chồng lấp bao nhiêu lần cũng không tạo nến trùng — an toàn để retry.
 - Cam kết: **thêm `OKXAdapter` không sửa `MarketService`, không sửa API contract, không sửa frontend**. Xem `specs/market-data.md`.
 
 **② Strategy Engine ← Registry**
@@ -873,19 +874,19 @@ sequenceDiagram
     participant P1 as Panel 1 (5m)
     participant P2 as Panel 2 (15m)
 
-    BN->>AD: {"e":"kline","k":{"t":...,"c":"118150","x":false}}
-    AD->>AD: validate schema + normalize → Candle(provisional)
-    AD->>MS: MarketPriceUpdated(binance, BTCUSDT, 5m, provisional)
-    MS->>HUB: candle delta qua POST /internal/events
-    HUB->>P1: frame khớp subscription (binance,BTCUSDT,5m)
-    Note over P2: KHÔNG nhận — subscription là (binance,BTCUSDT,15m)
+    BN->>AD: raw Kline event: {"e":"kline","k":{"t":...,"c":"118150","x":false}}
+    AD->>AD: validate + normalize → KlineUpdate(Final=false)
+    AD->>MS: KlineUpdated(binance, ETHUSDT, 5m, update)
+    MS->>HUB: ChartKline delta (presentation DTO)
+    HUB->>P1: frame khớp subscription (binance,ETHUSDT,5m)
+    Note over P2: KHÔNG nhận — subscription là (binance,ETHUSDT,15m)
 
-    BN->>AD: {"k":{...,"x":true}} — nến đóng
-    AD->>MS: CandleClosed(binance, BTCUSDT, 5m, close_time=T)
-    MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,close_time) DO UPDATE
+    BN->>AD: {"k":{...,"x":true}} — Kline final
+    AD->>MS: KlineUpdated(Final=true) → market.Candle
+MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,open_time) DO UPDATE
     Note over DB: candles là operational cache<br/>backtest đọc immutable dataset snapshot
     MS->>MS: cập nhật last_closed_at (dùng cho backfill)
-    MS->>EV: publish CandleClosed (in-process, cùng process lab)
+    MS->>EV: publish CandleClosed (in-process, Go service)
     EV->>OC: CandleClosed
     OC->>OC: tính overlay cho các config_hash đang được subscribe
     OC->>HUB: ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
@@ -896,9 +897,9 @@ sequenceDiagram
 
 Đề bài coi "Frontend chứa business logic" là anti-pattern (§44). Nhưng lý do thực tế mạnh hơn lý do hình thức:
 
-1. Nếu React tự tính RSI, và backtest tính RSI ở Python, thì **hai chỗ có thể lệch nhau** — user thấy tín hiệu BUY trên chart nhưng backtest không sinh trade. Không debug được.
+1. Nếu React tự tính RSI, và backtest tính RSI ở Go, thì **hai chỗ có thể lệch nhau** — user thấy tín hiệu BUY trên chart nhưng backtest không sinh trade. Không debug được.
 2. Overlay cho backtest result (entry/exit/SL/TP) **bắt buộc** phải từ backend vì nó phụ thuộc fill policy và position state đã ghi lại. Nếu overlay live tính ở client mà overlay result tính ở server thì hai loại marker cùng chart nhưng khác nguồn chân lý.
-3. Thêm strategy mới sẽ phải implement **2 lần** (Python cho backtest, TypeScript cho chart) → vi phạm trực tiếp mục tiêu "thêm strategy = 1 file".
+3. Thêm strategy mới sẽ phải implement **2 lần** (Go cho backtest, TypeScript cho chart) → vi phạm trực tiếp mục tiêu "thêm strategy = 1 file".
 
 Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; frontend chỉ vẽ. Xem `specs/chart-overlay.md`.
 
@@ -907,8 +908,8 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 Đây là yêu cầu §5 của đề bài và là một trong 10 tiêu chí thành công (S1). Cơ chế:
 
 - Mỗi panel là một **subscription độc lập** với khoá `(provider, symbol, timeframe, strategy_id@version, config_hash)`.
-- WS Hub (Go) giữ registry `subscription_key → set[connection]`. Khi có `CandleClosed` cho `(binance, BTCUSDT, 5m)`, hub chỉ gửi tới connection nào đã subscribe đúng khoá đó.
-- Khi user đổi Chart 1 từ `5m → 1h`: client gửi `{"action":"unsubscribe", key:"binance|BTCUSDT|5m|..."}` rồi `{"action":"subscribe", key:"binance|BTCUSDT|1h|..."}`, và fetch `GET /markets/candles?...provider=binance&timeframe=1h`. Chart 2–4 không gửi gì, không nhận gì, state không đổi → React không re-render chúng.
+- WS Hub (Go) giữ registry `subscription_key → set[connection]`. Khi có `CandleClosed` cho `(binance, ETHUSDT, 5m)`, hub chỉ gửi tới connection nào đã subscribe đúng khoá đó.
+- Khi user đổi Chart 1 từ `5m → 1h`: client gửi `{"action":"unsubscribe", key:"binance_usdm|ETHUSDT|5m|..."}` rồi `{"action":"subscribe", key:"binance_usdm|ETHUSDT|1h|..."}`, và fetch `GET /markets/candles?...provider=binance_usdm&timeframe=1h`. Chart 2–4 không gửi gì, không nhận gì, state không đổi → React không re-render chúng.
 - Ở phía frontend, state của mỗi panel nằm trong component của panel đó (hoặc một entry riêng trong store keyed by `panelId`), **không** nằm trong một object `dashboardState` chung. Một object chung là cách phổ biến nhất để phá vỡ tính độc lập này mà vẫn "trông đúng".
 
 ---
@@ -923,7 +924,7 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 
 | Nhóm dữ liệu             | Đặc điểm truy cập                                                            | Lựa chọn                        | Lý do                                                                                                     |
 | ------------------------ | ---------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Candles**              | Cache vận hành của nến đã đóng, đọc range query `WHERE provider,symbol,timeframe AND close_time BETWEEN` | **PostgreSQL** (partition theo tháng nếu số row đòi hỏi) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Row có thể được cập nhật khi provider revise dữ liệu; nó **không** là nguồn đọc của backtest. |
+| **Candles**              | Cache vận hành của nến đã đóng, đọc range query `WHERE provider,symbol,timeframe AND open_time BETWEEN` | **PostgreSQL** (partition theo tháng nếu số row đòi hỏi) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Row có thể được cập nhật khi provider revise dữ liệu; nó **không** là nguồn đọc của backtest. |
 | **Market dataset candles** | Ghi một lần theo `market_dataset_id`, đọc tuần tự cho backtest | **PostgreSQL** | Bản sao vật lý bất biến của đúng tập nến đã hash. Backtest chỉ đọc bảng này, nên việc refresh cache `candles` không làm thay đổi kết quả cũ. |
 | **Strategy definitions / versions** | Ghi rất ít, đọc nhiều, **bất biến sau khi dùng**                    | **PostgreSQL**                  | Cần FK từ `experiments` để đảm bảo referential integrity của provenance. Đây là lý do không dùng file JSON. |
 | **Experiments (snapshot)** | Ghi 1 lần, đọc lại nhiều, schema cố tình mở rộng được                      | **PostgreSQL + JSONB**          | Cột chuẩn hoá cho field cần query/index (`symbol`, `timeframe`, `status`); `JSONB` cho `candidate_definition` vì cấu trúc composite lồng nhau và sẽ tiến hoá. |
@@ -964,10 +965,10 @@ CREATE TYPE search_status  AS ENUM ('queued','running','paused','completed','fai
 CREATE TYPE job_status     AS ENUM ('queued','leased','completed','failed','cancelled');
 CREATE TYPE sentiment_enum AS ENUM ('POSITIVE','NEUTRAL','NEGATIVE');
 CREATE TYPE trade_side     AS ENUM ('LONG','SHORT');
-CREATE TYPE fill_policy_enum AS ENUM ('next_candle_open','same_candle_close');
-CREATE TYPE position_policy_enum AS ENUM ('long_only','long_short');
+CREATE TYPE fill_policy_enum AS ENUM ('bbo_limit');
+CREATE TYPE position_policy_enum AS ENUM ('one_net_position');
 CREATE TYPE open_position_policy_enum AS ENUM
-    ('close_at_last_candle','discard_open_trade','mark_unrealized');
+    ('last_executable_bbo');
 -- Trạng thái dispatch của transactional outbox (§5.7)
 CREATE TYPE event_dispatch_status AS ENUM ('pending','claimed','delivered','dead');
 ```
@@ -1013,10 +1014,10 @@ CREATE TABLE user_quotas (
 -- =============================================================
 CREATE TABLE market_pairs (
     id       SMALLSERIAL PRIMARY KEY,
-    symbol   VARCHAR(24) NOT NULL,                    -- 'BTCUSDT'
-    base     VARCHAR(12) NOT NULL,                    -- 'BTC'
+    symbol   VARCHAR(24) NOT NULL,                    -- 'ETHUSDT'
+    base     VARCHAR(12) NOT NULL,                    -- 'ETH'
     quote    VARCHAR(12) NOT NULL,                    -- 'USDT'
-    provider VARCHAR(24) NOT NULL DEFAULT 'binance',
+    provider VARCHAR(24) NOT NULL DEFAULT 'binance_usdm',
     is_active BOOLEAN    NOT NULL DEFAULT TRUE,
     UNIQUE (provider, symbol)
 );
@@ -1036,7 +1037,7 @@ CREATE TABLE candles (
     trade_count INT,
     fetched_at  TIMESTAMPTZ    NOT NULL DEFAULT now(),  -- provenance
     -- Khoá này LÀ cơ chế de-dup của backfill: retry bao nhiêu lần cũng an toàn
-    PRIMARY KEY (provider, symbol, timeframe, close_time),
+    PRIMARY KEY (provider, symbol, timeframe, open_time),
     FOREIGN KEY (provider, symbol) REFERENCES market_pairs(provider, symbol),
     CHECK (high >= low),
     CHECK (high >= open AND high >= close),
@@ -1045,7 +1046,7 @@ CREATE TABLE candles (
     CHECK (close_time > open_time)
 );
 CREATE INDEX idx_candles_range
-    ON candles(provider, symbol, timeframe, close_time DESC);
+    ON candles(provider, symbol, timeframe, open_time DESC);
 
 -- Vết của stream: dùng để biết cần backfill từ đâu sau reconnect
 CREATE TABLE stream_checkpoints (
@@ -1095,7 +1096,7 @@ CREATE TABLE market_dataset_candles (
     close             NUMERIC(24,8)  NOT NULL,
     volume            NUMERIC(30,8)  NOT NULL,
     trade_count       INT,
-    PRIMARY KEY (market_dataset_id, close_time),
+    PRIMARY KEY (market_dataset_id, open_time),
     CHECK (high >= low),
     CHECK (high >= open AND high >= close),
     CHECK (low <= open AND low <= close),
@@ -1103,7 +1104,7 @@ CREATE TABLE market_dataset_candles (
     CHECK (close_time > open_time)
 );
 CREATE INDEX idx_dataset_candles_range
-    ON market_dataset_candles(market_dataset_id, close_time);
+    ON market_dataset_candles(market_dataset_id, open_time);
 ```
 
 > **`content_hash` và `market_dataset_candles` giải quyết hai nửa của cùng một vấn đề**: nếu backfill sửa một nến (Binance đôi khi revise), thì cùng một `(provider, symbol, timeframe, from, to)` có thể cho ra hai tập nến khác nhau ở hai thời điểm. Hash phát hiện sự khác nhau; snapshot vật lý giữ nguyên tập cũ. Vì vậy `candles` có thể được cập nhật thành giá trị mới, nhưng experiment cũ vẫn đọc bản copy cũ qua `market_dataset_id`, còn dataset `-r2`, `-r3`, ... nhận snapshot mới. `revision_no` được cấp dưới `pg_advisory_xact_lock` để hai worker không tranh cùng một version.
@@ -1276,14 +1277,16 @@ CREATE TABLE experiments (
     -- Dataset: FK → biết chính xác tập nến nào
     market_dataset_id    UUID NOT NULL REFERENCES market_datasets(id),
     -- Execution assumptions: KHÔNG mặc định ngầm, luôn ghi rõ
-    initial_capital      NUMERIC(20,8) NOT NULL DEFAULT 10000,
+    bbo_dataset_hash     CHAR(64),
+    initial_equity       NUMERIC(20,8) NOT NULL DEFAULT 100,
+    fixed_notional       NUMERIC(20,8) NOT NULL DEFAULT 10,
+    leverage             NUMERIC(12,4) NOT NULL DEFAULT 1,
     fee_bps              SMALLINT NOT NULL DEFAULT 10,   -- 10 bps = 0.10%
-    slippage_bps         SMALLINT NOT NULL DEFAULT 5,
-    fill_policy          fill_policy_enum     NOT NULL DEFAULT 'next_candle_open',
-    position_policy      position_policy_enum NOT NULL DEFAULT 'long_only',
-    open_position_at_end open_position_policy_enum NOT NULL DEFAULT 'close_at_last_candle',
-    -- Risk policy: SL/TP là MVP vì chart phải vẽ được chúng (specs/backtest.md §C1).
-    -- NULL = không có SL/TP → vị thế chỉ đóng bằng signal hoặc end_of_sample.
+    slippage_bps         SMALLINT NOT NULL DEFAULT 0,
+    fill_policy          fill_policy_enum     NOT NULL DEFAULT 'bbo_limit',
+    position_policy      position_policy_enum NOT NULL DEFAULT 'one_net_position',
+    open_position_at_end open_position_policy_enum NOT NULL DEFAULT 'last_executable_bbo',
+    -- Risk policy: NULL = không có SL/TP trong fixture.
     stop_loss_pct        NUMERIC(6,3),
     take_profit_pct      NUMERIC(6,3),
     intrabar_priority    VARCHAR(20) NOT NULL DEFAULT 'stop_loss_first'
@@ -1293,7 +1296,7 @@ CREATE TABLE experiments (
     search_candidate_id  UUID UNIQUE REFERENCES search_candidates(id),
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (fee_bps >= 0 AND slippage_bps >= 0),
-    CHECK (initial_capital > 0),
+    CHECK (initial_equity > 0 AND fixed_notional > 0 AND leverage > 0),
     -- 0% bị từ chối vì nghĩa là đóng ngay lúc vào lệnh; ≥ 100% là mức giá ≤ 0
     CHECK (stop_loss_pct   IS NULL OR (stop_loss_pct   > 0 AND stop_loss_pct < 100)),
     CHECK (take_profit_pct IS NULL OR take_profit_pct > 0)
@@ -1613,7 +1616,7 @@ CREATE TRIGGER evaluations_immutable
     FOR EACH ROW EXECUTE FUNCTION reject_immutable_artifact_mutation();
 ```
 
-> **`market_dataset_id` trên leaderboard entry** chặn một so sánh vô nghĩa: strategy chạy trên BTCUSDT 5m tháng 1 và strategy chạy trên BTCUSDT 1h tháng 6 không thể xếp cùng bảng. Không có cột này thì Leaderboard sẽ trộn táo với cam và Top-1 chỉ phản ánh dataset nào dễ ăn nhất. FK `evaluation_id ... ON DELETE RESTRICT` và trigger append-only cũng bảo đảm lịch sử không bị xoá cascade hoặc ghi đè.
+> **`market_dataset_id` trên leaderboard entry** chặn một so sánh vô nghĩa: strategy chạy trên ETHUSDT 5m tháng 1 và strategy chạy trên ETHUSDT 1h tháng 6 không thể xếp cùng bảng. Không có cột này thì Leaderboard sẽ trộn táo với cam và Top-1 chỉ phản ánh dataset nào dễ ăn nhất. FK `evaluation_id ... ON DELETE RESTRICT` và trigger append-only cũng bảo đảm lịch sử không bị xoá cascade hoặc ghi đè.
 
 Các trigger trên là lớp bảo vệ DB, không chỉ là quy ước application. Vì `api_reader` không có quyền bảng gốc và domain write role không có đường UPDATE/DELETE artifact trong repository, cả lỗi code lẫn thao tác xoá cascade đều bị chặn. Muốn sửa strategy, dataset hoặc evaluation phải INSERT version/artifact mới.
 
@@ -1797,7 +1800,7 @@ Mọi con số trên Leaderboard đi ngược được về metadata provenance 
 | `news_items.content`    | 90 ngày cho full content; giữ `title` + hash lâu hơn | Không render raw HTML — sanitize hoặc chỉ hiện text                |
 | `backtest_jobs`         | Xoá row `completed` sau 7 ngày (`backtest_runs` giữ lại) | —                                                             |
 
-Giới hạn ở cột phải **không phải validation UI** — chúng là control về hiệu năng và tính khả dụng. Một request `from=2017-01-01&to=2026-01-01&timeframe=1m` là 4.7 triệu nến; không chặn ở boundary thì nó sẽ làm hết memory của Python process và kéo cả hệ thống xuống.
+Giới hạn ở cột phải **không phải validation UI** — chúng là control về hiệu năng và tính khả dụng. Một request `from=2017-01-01&to=2026-01-01&timeframe=1m` là 4.7 triệu nến; không chặn ở boundary thì nó sẽ làm hết memory của Go API/worker process và kéo cả hệ thống xuống.
 
 ---
 
@@ -1809,254 +1812,188 @@ Giới hạn ở cột phải **không phải validation UI** — chúng là con
 
 Cú pháp chỉ để minh hoạ; cam kết thiết kế là **contract và hướng phụ thuộc**.
 
-```python
-# ---------- 1. Nguồn dữ liệu thị trường ----------
-class MarketDataProvider(Protocol):
-    def list_candles(self, symbol: str, timeframe: Timeframe,
-                     from_: datetime, to: datetime) -> list[Candle]: ...
-    def stream_candles(self, subscriptions: list[StreamKey],
-                       publish: Callable[[CandleEvent], None]) -> Subscription: ...
-    def provider_id(self) -> str: ...
-# Implement: BinanceAdapter. Thêm OKX = thêm OKXAdapter. Không sửa gì phía trên.
+```go
+// ---------- 1. Nguồn dữ liệu thị trường ----------
+type MarketDataProvider interface {
+	ProviderID() string
+	ListClosedCandles(ctx context.Context, q CandleQuery) ([]market.Candle, error)
+	Stream(ctx context.Context, keys []market.StreamKey) (<-chan market.Event, error)
+}
+// Implement: BinanceAdapter. Thêm OKX = thêm OKXAdapter; domain không đổi.
 
-# ---------- 2. Strategy (lõi Plugin Architecture) ----------
-class Strategy(Protocol):
-    def definition(self) -> StrategyDefinition: ...      # metadata cho registry + UI
-    def analyze(self, ctx: AnalysisContext) -> Signal: ...
-# Implement: MAStrategy, RSIStrategy, BollingerStrategy,
-#            SupportResistanceStrategy, NewsSentimentStrategy, (MACDStrategy...)
+// ---------- 2. Strategy (lõi Plugin Architecture) ----------
+type Strategy interface {
+	Definition() strategy.Definition
+	Analyze(strategy.AnalysisContext) (strategy.Signal, error)
+}
+// Implement: MACrossStrategy, RSIStrategy, BollingerStrategy,
+// SupportResistanceStrategy, NewsSentimentStrategy, (MACDStrategy...).
 
-# ---------- 3. Kết hợp tín hiệu ----------
-class SignalCombiner(Protocol):
-    def combine(self, children: list[tuple[ChildSpec, Signal]],
-                policy: CombinationPolicy) -> Signal: ...
-# Implement: MajorityVoteCombiner, WeightedVoteCombiner
+// ---------- 3. Kết hợp tín hiệu ----------
+type SignalCombiner interface {
+	Combine([]strategy.ChildSignal, strategy.CombinationPolicy) (strategy.Signal, error)
+}
+// Implement: MajorityVoteCombiner, WeightedVoteCombiner.
 
-# ---------- 4. Sinh candidate (lõi replaceability của search) ----------
-class CandidateGenerator(Protocol):
-    def generator_id(self) -> str: ...
-    def generate(self, space: SearchSpace, limit: int,
-                 seed: int | None, history: SearchHistory) -> Iterator[CandidateStrategy]: ...
-# Implement: RandomSearchGenerator, DomainGuidedGenerator, (GeneticGenerator...)
+// ---------- 4. Sinh candidate (lõi replaceability của search) ----------
+type CandidateGenerator interface {
+	GeneratorID() string
+	Generate(context.Context, search.Space, int, *int64, search.History) ([]search.Candidate, error)
+}
+// Implement: RandomSearchGenerator, DomainGuidedGenerator, (GeneticGenerator...).
 
-# ---------- 5. Thực thi backtest ----------
-class BacktestEngine(Protocol):
-    def run(self, snapshot: ExperimentSnapshot,
-            candles: Sequence[Candle]) -> BacktestResult: ...
-# Implement: ChronologicalBacktestEngine
+// ---------- 5. Thực thi backtest ----------
+type BacktestEngine interface {
+	Run(context.Context, backtest.ExperimentSnapshot,
+		[]market.Candle, []market.BBO) (backtest.Result, error)
+}
+// Implement: ChronologicalBacktestEngine; replay policy là BBO LIMIT.
 
-# ---------- 6. Nguồn tin ----------
-class NewsProvider(Protocol):
-    def collect(self, source: ApprovedNewsSource,
-                since: datetime) -> list[NewsItem]: ...
-# Implement: RssNewsAdapter, NewsApiAdapter
+// ---------- 6. Nguồn tin ----------
+type NewsProvider interface {
+	Collect(context.Context, news.ApprovedSource, time.Time) ([]news.Item, error)
+}
+// Implement: RSSNewsAdapter, NewsAPIAdapter trong Go NewsService.
 
-# ---------- 7. Phân tích sentiment ----------
-class SentimentAnalyzer(Protocol):
-    def model_version(self) -> str: ...
-    def analyze(self, text: str) -> Sentiment: ...
-# Implement: SentimentModelAdapter (bọc model hiện tại trong ai/app/services/predictor.py)
+// ---------- 7. Phân tích sentiment ----------
+type SentimentAnalyzer interface {
+	ModelVersion() string
+	Analyze(context.Context, string) (sentiment.Result, error)
+}
+// Implement: internal Go port gọi Python AI adapter; Python không sở hữu DB.
 
-# ---------- Phụ: điều phối job (seam để scale) ----------
-class JobDispatcher(Protocol):
-    def enqueue(self, job: BacktestJob) -> None: ...
-    def claim(self, worker_id: str, lease_sec: int) -> BacktestJob | None: ...
-    def complete(self, job_id: UUID) -> None: ...
-    def fail(self, job_id: UUID, error: str, retryable: bool) -> None: ...
-# Implement: PostgresJobDispatcher (bắt buộc) → BrokerJobDispatcher (nếu đo được cần)
+// ---------- Phụ: điều phối job (seam để scale) ----------
+type JobDispatcher interface {
+	Enqueue(context.Context, job.BacktestJob) error
+	Claim(context.Context, string, time.Duration) (job.BacktestJob, error)
+	Complete(context.Context, uuid.UUID) error
+	Fail(context.Context, uuid.UUID, error, bool) error
+}
+// Implement: PostgresJobDispatcher (bắt buộc) → BrokerJobDispatcher (nếu đo được cần).
 ```
 
 **Bảng seam — thay gì thì cái gì không đổi**
 
 | Thay đổi                        | Thêm/thay                                     | **Không** thay đổi                                                          |
 | ------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------- |
-| Thêm strategy (MACD, SMC, Wyckoff) | 1 class `Strategy` + `@register_strategy`   | Registry code, Combiner, BacktestEngine, Evaluator, Ranking, API, DB schema, UI |
-| Thêm combination policy         | 1 class `SignalCombiner`                      | Strategy đơn lẻ, BacktestEngine, snapshot format                            |
-| Thêm search algorithm           | 1 class `CandidateGenerator`                  | Experiment, Backtest, Evaluator, Leaderboard, UI                            |
-| Thêm sàn (OKX, Bybit)           | 1 class `MarketDataProvider`                  | MarketService, API contract, **frontend**                                   |
-| Thêm nguồn tin                  | 1 class `NewsProvider` + 1 row `news_sources` | News pipeline, sentiment, strategy                                          |
-| Đổi model sentiment             | 1 class `SentimentAnalyzer` + bump `model_version` | News ingestion, `NewsSentimentStrategy` contract                       |
-| Đổi công thức score             | 1 row `score_policies` + recompute            | Trades, evaluations, backtest                                               |
-| Scale backtest 100 → 100.000    | 1 class `JobDispatcher` + `--scale worker=N`  | `ExperimentSnapshot`, job/result event, API, schema                         |
+| Thêm strategy (MACD, SMC, Wyckoff) | 1 file Go plugin + registration factory   | Registry code, Combiner, BacktestEngine, Evaluator, Ranking, API, DB schema, UI |
+| Thêm combination policy         | 1 implementation `SignalCombiner`        | Strategy đơn lẻ, BacktestEngine, snapshot format                            |
+| Thêm search algorithm           | 1 implementation `CandidateGenerator`   | Experiment, Backtest, Evaluator, Leaderboard, UI                            |
+| Thêm sàn (OKX, Bybit)           | 1 adapter `MarketDataProvider`           | MarketService, API contract, **frontend**                                   |
+| Thêm nguồn tin                  | 1 adapter `NewsProvider` + 1 row `news_sources` | News pipeline, sentiment, strategy                                          |
+| Đổi model sentiment             | 1 `SentimentAnalyzer` adapter + bump `model_version` | News ingestion, `NewsSentimentStrategy` contract                       |
+| Đổi công thức score             | 1 row `score_policies` + recompute       | Trades, evaluations, backtest                                               |
+| Scale backtest 100 → 100.000    | 1 `JobDispatcher` adapter + `--scale worker=N` | `ExperimentSnapshot`, job/result event, API, schema                         |
 
 ### 5.2 AnalysisContext — cái strategy được phép thấy
 
-Đây là chỗ ranh giới "Strategy không truy cập Database" (anti-pattern §44) được thực thi bằng cấu trúc dữ liệu, không bằng lời nhắc trong code review:
+Đây là chỗ ranh giới “Strategy không truy cập Database” (anti-pattern §44) được
+thực thi bằng cấu trúc dữ liệu, không bằng lời nhắc trong code review. Context
+chỉ chứa dữ liệu đã chuẩn bị trước cho thời điểm `Index`; nó không chứa
+repository, network client, wall clock hay raw provider payload.
 
-```python
-@dataclass(frozen=True)
-class AnalysisContext:
-    symbol: str
-    timeframe: Timeframe
-    candles: Sequence[Candle]         # nến tới thời điểm t — KHÔNG có nến tương lai
-    index: int                        # vị trí nến hiện tại; candles[index] là "bây giờ"
-    indicators: IndicatorView         # causal view — chặn truy cập > index (xem dưới)
-    news_sentiment: NewsSentimentWindow | None        # aggregate đã tính, None nếu không có
-    params: Mapping[str, Any]         # đã validate theo parameters_schema
+```go
+type AnalysisContext struct {
+	Provider      string
+	Symbol        string
+	Timeframe     market.Timeframe
+	Candles       CausalCandles
+	Index         int
+	Indicators     IndicatorView
+	NewsSentiment  *NewsSentimentWindow
+	Params         Params
+}
 ```
 
-Bốn điều dữ liệu của `AnalysisContext` **cố ý không có**, cộng thêm thời gian hệ thống:
+Bốn điều dữ liệu của `AnalysisContext` **cố ý không có**:
 
-1. **Không có DB session / repository.** Strategy không query được gì. Dữ liệu nó cần phải được `MarketService` hoặc `NewsService` chuẩn bị trước và đưa vào.
-2. **Không có HTTP client.** Strategy không gọi được Binance, không gọi được API nào.
-3. **Không có nến sau `index`.** Slice `candles[:index+1]` được đảm bảo ở tầng gọi.
-4. **Không có giá trị indicator sau `index`.** Đây là lỗ hổng dễ bỏ sót nhất và được xử lý riêng ở §5.2.1.
-5. **Không có thời gian hệ thống.** Strategy không được gọi `datetime.now()`; mọi mốc thời gian dùng trong phân tích phải đến từ candle/news window được truyền vào để backtest tái lập được.
+1. **Không có DB session/repository.** Strategy không query được gì; MarketService
+   và NewsService phải chuẩn bị input trước.
+2. **Không có HTTP client/exchange SDK.** Strategy không gọi Binance hoặc API nào.
+3. **Không có candle sau `Index`.** `CausalCandles` chỉ expose prefix tới nến
+   hiện tại.
+4. **Không có indicator sau `Index`.** `IndicatorView` trả
+   `LookAheadError` cho mọi truy cập tương lai.
+5. **Không có system time/random.** Mọi mốc thời gian và randomness phải nằm trong
+   snapshot để cùng input cho cùng kết quả.
 
-Hệ quả kiểm chứng được: **file `strategies/rsi.py` import được và test được trong môi trường không có PostgreSQL, không có network.** Nếu một lúc nào đó nó không còn như vậy, tức là contract đã bị vi phạm — và điều đó phát hiện được bằng một unit test chạy trong CI.
+Hệ quả kiểm chứng được: strategy package build/test khi PostgreSQL và network
+không tồn tại. Static boundary test cấm strategy import repository, HTTP,
+Binance transport hoặc Python AI client.
 
-#### 5.2.1 `IndicatorView` — cắt nến là chưa đủ
+#### 5.2.1 `IndicatorView` — cắt candle là chưa đủ
 
-Cắt `candles[:index+1]` chặn được việc strategy đọc **nến** tương lai. Nhưng nếu `indicators` là `Mapping[str, Sequence[float]]` chứa **toàn bộ** mảng đã precompute cho cả dataset, thì lỗ hổng vẫn còn nguyên:
+Cắt candle tới `Index` chưa đủ nếu strategy nhận toàn bộ mảng indicator đã
+precompute. Một plugin có thể đọc `rsi[t+1]` mà không gây lỗi và tạo kết quả
+look-ahead “hợp lý”. Vì vậy engine luôn truyền causal view:
 
-```python
-def analyze(self, ctx: AnalysisContext) -> Signal:
-    # candles bị cắt — dòng này IndexError, đúng như thiết kế
-    # future_close = ctx.candles[ctx.index + 1].close
+```go
+type LookAheadError struct {
+	Name  string
+	Index int
+	Limit int
+}
 
-    # nhưng indicators thì không — dòng này TRẢ VỀ GIÁ TRỊ THẬT
-    future_rsi = ctx.indicators["rsi_14"][ctx.index + 1]        # ✕ look-ahead
-    tomorrow   = ctx.indicators["sma_20"][ctx.index + 5]        # ✕ look-ahead
-    the_end    = ctx.indicators["sma_20"][-1]                   # ✕ nến cuối dataset
-    return Signal("BUY" if future_rsi < 30 else "HOLD")         # kết quả hoàn hảo giả tạo
+type IndicatorView interface {
+	At(name string, index int) (decimal.Decimal, bool, error)
+	Current(name string) (decimal.Decimal, bool, error)
+}
+
+func (v causalIndicatorView) At(name string, index int) (decimal.Decimal, bool, error) {
+	if index < 0 || index > v.current {
+		return decimal.Zero, false, LookAheadError{Name: name, Index: index, Limit: v.current}
+	}
+	return v.raw[name][index], true, nil
+}
 ```
 
-`rsi_14[t+1]` được tính từ `close[t+1]`, nên đọc nó tương đương đọc giá tương lai. Lỗ hổng này **tệ hơn** việc đọc nến trực tiếp vì nó không gây lỗi, không để lại dấu vết, và kết quả trả về "hợp lý" — chỉ là Return cao bất thường mà không ai giải thích được từ đâu.
-
-**Quyết định: `indicators` là một causal view, không phải mảng thô.**
-
-```python
-class LookAheadError(RuntimeError):
-    """Strategy cố đọc dữ liệu ở thời điểm > index. Đây là bug của plugin."""
-
-
-class CausalSeries:
-    """View read-only của một chuỗi indicator, chặn cứng tại `index`.
-
-    Không copy dữ liệu: giữ tham chiếu tới mảng gốc và chỉ chặn ở __getitem__.
-    Đây là lý do không dùng cách đơn giản hơn (slice từng indicator mỗi nến):
-    slice tạo bản copy O(n), làm vòng lặp thành O(n²) — với 20.000 nến ×
-    4 indicator là ~800M phép copy phần tử.
-    """
-
-    __slots__ = ("_data", "_index", "_name")
-
-    def __init__(self, data: Sequence[float | None], index: int, name: str):
-        self._data, self._index, self._name = data, index, name
-
-    def __len__(self) -> int:
-        return self._index + 1                      # strategy "thấy" đúng t+1 phần tử
-
-    def __getitem__(self, i: int | slice):
-        if isinstance(i, slice):
-            start, stop, step = i.indices(self._index + 1)   # clamp về [0, index]
-            return self._data[start:stop:step]
-        if i < 0:
-            i += self._index + 1                    # [-1] = phần tử tại index, KHÔNG phải cuối dataset
-        if not 0 <= i <= self._index:
-            raise LookAheadError(
-                f"{self._name}[{i}] vượt index hiện tại {self._index}. "
-                f"Strategy chỉ được đọc dữ liệu tới thời điểm hiện tại."
-            )
-        return self._data[i]
-
-    def __iter__(self):
-        return iter(self._data[: self._index + 1])
-
-
-class IndicatorView(Mapping[str, CausalSeries]):
-    """Bọc dict indicator đã precompute, trả CausalSeries cho mọi key."""
-
-    __slots__ = ("_raw", "_index")
-
-    def __init__(self, raw: Mapping[str, Sequence[float | None]], index: int):
-        self._raw, self._index = raw, index
-
-    def __getitem__(self, name: str) -> CausalSeries:
-        try:
-            return CausalSeries(self._raw[name], self._index, name)
-        except KeyError:
-            # Lỗi tường minh: chỉ ra ngay là plugin thiếu khai báo input_requirements
-            raise UnknownIndicatorError(
-                f"'{name}' chưa được precompute. Thêm nó vào input_requirements "
-                f"của strategy. Đang có: {sorted(self._raw)}"
-            ) from None
-
-    def __iter__(self): return iter(self._raw)
-    def __len__(self):  return len(self._raw)
-```
-
-Bốn chi tiết trong đoạn code trên đáng giải thích, vì mỗi cái đóng một đường lách:
-
-| Chi tiết | Đường lách nó chặn |
-| -------- | ------------------ |
-| `__len__` trả `index + 1` | `series[len(series) - 1]` là cách rất tự nhiên để viết "phần tử cuối". Nếu `len` trả độ dài thật của dataset thì dòng đó đọc nến cuối cùng của toàn bộ backtest |
-| `i < 0` quy về `index + 1 + i` | `series[-1]` phải là **giá trị hiện tại**, không phải cuối dataset. Đây là cách lách phổ biến nhất và trông vô hại nhất |
-| `slice` dùng `i.indices(index + 1)` | `series[:]` và `series[t:t+10]` bị clamp về `[0, index]` thay vì trả dữ liệu tương lai. Strategy tính stddev trên `series[-20:]` vẫn chạy đúng |
-| `__iter__` chỉ tới `index + 1` | `max(series)` / `sum(series)` / `list(series)` không quét được vùng tương lai |
-
-`AnalysisContext.__post_init__` bọc mảng thô một lần:
-
-```python
-def __post_init__(self):
-    if not isinstance(self.indicators, IndicatorView):
-        object.__setattr__(self, "indicators", IndicatorView(self.indicators, self.index))
-```
-
-**Đánh đổi.** Mỗi lần đọc indicator giờ đi qua một lời gọi Python thay vì index trực tiếp: ~100 ns thay vì ~30 ns. Với 20.000 nến × 3 strategy × 4 lần đọc/nến ≈ 240.000 lời gọi ≈ **24 ms cho cả run** — nằm trong ngân sách `< 100 µs/nến`. Không có chế độ `-O` hay trusted-run nào được trả mảng thô: bỏ qua causal view dù plugin là code nội bộ vẫn biến một invariant dữ liệu thành quy ước dễ bị cấu hình sai. Nếu profiling thật sự tìm thấy bottleneck, tối ưu bên trong `CausalSeries` hoặc tạo bounded view khác nhưng vẫn giữ cùng contract và phải có fixture look-ahead chạy trong CI.
-
-> **Vì sao không chọn cách đơn giản hơn — slice từng indicator mỗi nến.** `{k: v[:t+1] for k, v in indicators.items()}` đúng về ngữ nghĩa và không cần class mới. Nhưng nó tạo bản copy ở **mỗi** nến: 20.000 nến × 4 indicator × trung bình 10.000 phần tử ≈ 800 triệu phép copy. Vòng lặp trở thành O(n²) và một backtest 20.000 nến sẽ mất hàng chục giây chỉ để copy mảng. Đây là ví dụ của việc lựa chọn "ít code nhất" và "đúng nhất" không trùng nhau — và khi chúng không trùng, ràng buộc hiệu năng có số đo cụ thể sẽ quyết định.
-
-Lớp phòng thủ chống look-ahead vì thế có **ba** tầng, không phải hai:
+`Current(name)` chỉ trả giá trị tại `Index`; không có `len`, negative index
+hoặc slice escape hatch. View không copy toàn bộ mảng mỗi nến, nên precompute vẫn
+O(n) và backtest 20.000 candle không biến thành O(n²).
 
 | Tầng | Cơ chế | Chặn gì |
-| ---- | ------ | ------- |
-| 1 | `candles[:index+1]` | Đọc nến tương lai → `IndexError` |
-| 2 | `IndicatorView` / `CausalSeries` | Đọc indicator tương lai → `LookAheadError` |
-| 3 | `fill_policy = next_candle_open` (§6.3, ADR-007) | Giao dịch tại giá chưa biết lúc quyết định |
+| --- | --- | --- |
+| 1 | `CausalCandles` | Đọc candle tương lai → `LookAheadError` |
+| 2 | `IndicatorView` | Đọc indicator tương lai → `LookAheadError` |
+| 3 | `fill_policy = bbo_limit` | LIMIT chỉ khớp khi BBO executable side thỏa điều kiện |
 
-Cả ba đều có acceptance test riêng: `specs/backtest.md` AC-04, AC-05, AC-05b, AC-05c.
+`NewsSentimentWindow` cũng là aggregate Go đã tính, không phải danh sách news
+thô:
 
-
-`NewsSentimentWindow` là aggregate đã tính, không phải danh sách news thô:
-
-```python
-@dataclass(frozen=True)
-class NewsSentimentWindow:
-    window_sec: int          # 3600
-    avg_score: float         # -1..+1 (POSITIVE=+score, NEGATIVE=-score, NEUTRAL=0)
-    item_count: int
-    model_version: str       # phần của provenance
+```go
+type NewsSentimentWindow struct {
+	WindowSec    int
+	AvgScore     decimal.Decimal
+	ItemCount    int
+	ModelVersion string
+}
 ```
 
-Điều này khiến `NewsSentimentStrategy` là một strategy hoàn toàn bình thường — nó không biết news đến từ RSS hay API, không biết model là BERT hay logistic regression. Đó là ý nghĩa kiến trúc của §30 đề bài: *"kiến trúc không còn giới hạn ở Technical Analysis."*
-
-Hai chi tiết trong cách tính window quyết định tính đúng đắn, và chúng dễ bị làm sai theo hướng không có triệu chứng:
-
-- **Cắt cửa sổ theo `published_at + analysis_lag_sec` (mặc định 300 s), không theo `analyzed_at`.** Lọc theo `analyzed_at` làm mọi backtest lịch sử thấy `item_count = 0` sau khi backfill news (vì `analyzed_at` là thời điểm hiện tại, không phải thời điểm tin xuất hiện). Nhưng để `lag = 0` thì lại là look-ahead: một backtest ở thời điểm `t` sẽ thấy tin mà trong thực tế phải mất vài phút để crawl và phân loại xong.
-- **`item_count = 0` → `ctx.news_sentiment` là `None`, không phải window có `avg_score = 0`.** `avg_score = 0` nghĩa "trung tính"; `None` nghĩa "không biết". Đây là ADR-013 áp ở tầng aggregate — và là lý do `NewsSentimentStrategy` có tham số `min_items` (mặc định 3): không có nó thì một bài duy nhất `score = 0.95` đủ vượt ngưỡng 0.7 và sinh BUY.
-
-Chi tiết query và các quyết định kèm theo ở `specs/sentiment.md`.
+`ItemCount == 0` truyền `nil`, không chuyển thành NEUTRAL giả. Vì vậy
+`NewsSentimentStrategy` vẫn là strategy thuần; nó không biết news đến từ RSS
+hay API và chỉ nhận sentiment versioned qua context.
 
 ### 5.3 Signal và CandidateStrategy
 
-```python
-@dataclass(frozen=True)
-class Signal:
-    action: Literal["BUY", "SELL", "HOLD"]
-    confidence: float | None = None            # 0..1
-    evidence: Mapping[str, Any] | None = None  # {"ma_fast": 118050, "ma_slow": 117800}
+```go
+type Signal struct {
+	Action     Action // BUY | SELL | HOLD
+	Confidence *decimal.Decimal
+	Price      *decimal.Decimal
+	SignedSize *decimal.Decimal
+	Evidence   json.RawMessage
+}
 ```
 
 `evidence` là lý do UI có thể trả lời "vì sao strategy này BUY ở đây" mà không cần chạy lại strategy — nó được ghi vào `run_signals.child_signals`.
 
-```python
-@dataclass(frozen=True)
-class CandidateStrategy:
-    definition: CompositeSpec   # hoặc SingleSpec
-    candidate_hash: str         # sha256(canonical_json(definition))
-    generated_by: str           # 'random_search@1.0.0' | 'domain_guided@1.0.0'
-    generation_meta: Mapping[str, Any]  # với domain-guided: rule nào đã áp dụng
+```go
+type CandidateStrategy struct {
+	Definition    strategy.CompositeSpec
+	CandidateHash string // sha256(canonical JSON của Definition)
+	GeneratedBy   string
+	GenerationMeta json.RawMessage
+}
 ```
 
 `generation_meta` trả lời yêu cầu §17 của đề bài: *"Domain knowledge được đưa vào quá trình search như thế nào?"* — với `DomainGuidedGenerator`, meta ghi rõ `{"rule": "required_families_plus_optional", "families_required": ["trend","momentum","structure"], "families_optional": ["volatility","information"], "chosen": {...}}`. Không có field này thì "domain-guided" chỉ là một cái tên. Vì sao `information` (news sentiment) và `volatility` là **tuỳ chọn** chứ không bắt buộc: xem `specs/search-loop.md` §E.
@@ -2153,11 +2090,11 @@ Quy tắc **không thương lượng** ở boundary:
 
 | Event                   | Publisher            | Consumer                          | Delivery | Payload chính                                                    |
 | ----------------------- | -------------------- | --------------------------------- | -------- | ---------------------------------------------------------------- |
-| `MarketPriceUpdated`    | BinanceAdapter       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, provisional candle |
-| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | **In-proc** (`lab`)                     | provider, symbol, timeframe, close_time, OHLCV |
+| `KlineUpdated`          | BinanceAdapter       | WS Hub (Go)                       | In-process                              | provider, symbol, timeframe, `ChartKline`, final |
+| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | In-process (Go Service)                 | provider, symbol, timeframe, close_time, closed OHLCV |
 | `ChartOverlayUpdated`   | OverlayCalculator    | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, strategy@ver, `config_hash`, delta series |
 | `StreamStale`           | MarketService        | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, last_closed_at, reconnect_count |
-| `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | **In-proc** (`lab`)                     | search_run_id, candidate_hash, definition, generation_meta |
+| `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | In-process (Go Service)                 | search_run_id, candidate_hash, definition, generation_meta |
 | `BacktestQueued`        | ExperimentService    | metrics, WS Hub                   | **Outbox** → metrics; HTTP → WS Hub     | experiment_id, job_id, priority |
 | `BacktestStarted`       | Worker               | metrics, WS Hub                   | **Outbox** (worker → dispatcher)        | experiment_id, worker_id, candle_count |
 | `BacktestCompleted`     | Worker               | Evaluator                         | **Outbox** (worker → dispatcher)        | backtest_run_id, settled_trade_count, open_trade_count, duration_ms |
@@ -2240,34 +2177,29 @@ Cấu hình B hợp lệ nhưng có một đánh đổi phải biết: dispatche
 
 #### 5.7.3 Publish — state và event trong cùng transaction
 
-```python
-# app/infrastructure/events/outbox.py  (rút gọn)
-async def publish_transactional(conn, event: DomainEvent) -> None:
-    """PHẢI gọi trong transaction đang mở của caller, không tự BEGIN."""
-    await conn.execute(
-        """INSERT INTO domain_events
-             (event_id, event_type, schema_version, aggregate_type, aggregate_id,
-              correlation_id, payload, dispatch_status, next_attempt_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending', now())""",
-        event.event_id, event.event_type, event.schema_version,
-        event.aggregate_type, event.aggregate_id,
-        event.correlation_id, json.dumps(event.payload),
-    )
+```go
+// server/internal/application/events/outbox.go (rút gọn)
+func PublishTransactional(ctx context.Context, tx *sql.Tx, event DomainEvent) error {
+	// PHẢI gọi trong transaction đang mở của caller, không tự BEGIN.
+	_, err := tx.ExecContext(ctx, `INSERT INTO domain_events
+		(event_id, event_type, schema_version, aggregate_type, aggregate_id,
+		 correlation_id, payload, dispatch_status, next_attempt_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',now())`,
+		event.ID, event.Type, event.SchemaVersion, event.AggregateType,
+		event.AggregateID, event.CorrelationID, event.Payload)
+	return err
+}
 
-# Worker: ghi kết quả VÀ event trong MỘT transaction
-async with conn.transaction():
-    await repo.insert_trades(conn, run_id, trades)
-    await repo.insert_equity_points(conn, run_id, equity)
-    await repo.update_run_completed(conn, run_id, duration_ms, candles_read)
-    await repo.update_job_completed(conn, job_id)
-    await publish_transactional(
-        conn,
-        BacktestCompleted(run_id, settled_trade_count, open_trade_count, duration_ms),
-    )
-# COMMIT: hoặc cả kết quả lẫn event được ghi, hoặc không gì cả.
+// Worker: ghi kết quả VÀ event trong MỘT transaction.
+tx, err := db.BeginTx(ctx, nil)
+// ... insert trades/equity, update run/job, PublishTransactional(...)
+if err != nil { return err }
+return tx.Commit()
 ```
 
-Đây là điểm cốt lõi: **không tồn tại trạng thái "kết quả đã ghi nhưng event mất"**, cũng không tồn tại "event đã gửi nhưng kết quả rollback". Với một broker riêng, đúng chỗ này là dual-write và cần Outbox pattern để đạt cùng bảo đảm — nên ta dùng outbox luôn, và vì queue cũng ở PostgreSQL thì nó miễn phí (ADR-005).
+Đây là điểm cốt lõi: **không tồn tại trạng thái “kết quả đã ghi nhưng event
+mất”**, cũng không tồn tại “event đã gửi nhưng kết quả rollback”. Queue, domain
+state và outbox đều do Go migration/repository owner quản lý trong PostgreSQL.
 
 #### 5.7.4 Dispatch — claim, retry, ack
 
@@ -2277,70 +2209,44 @@ WITH claimed AS (
     SELECT event_id
     FROM domain_events
     WHERE (dispatch_status = 'pending' AND next_attempt_at <= now())
-       OR (dispatch_status = 'claimed' AND claim_expires_at < now())  -- dispatcher chết
+       OR (dispatch_status = 'claimed' AND claim_expires_at < now())
     ORDER BY occurred_at ASC
     FOR UPDATE SKIP LOCKED
     LIMIT 32
 )
 UPDATE domain_events e
-SET dispatch_status  = 'claimed',
-    claimed_by       = $1,
-    claim_expires_at = now() + interval '60 seconds',
-    attempt          = e.attempt + 1
+SET dispatch_status='claimed', claimed_by=$1,
+    claim_expires_at=now()+interval '60 seconds', attempt=e.attempt+1
 FROM claimed c
-WHERE e.event_id = c.event_id
-RETURNING e.event_id, e.event_type, e.payload, e.attempt, e.max_attempts, e.correlation_id;
+WHERE e.event_id=c.event_id
+RETURNING e.event_id, e.event_type, e.payload, e.attempt, e.max_attempts,
+          e.correlation_id;
 ```
 
-Với mỗi event đã claim, dispatcher gọi lần lượt các handler đã đăng ký cho `event_type`. Mỗi handler chạy trong **transaction riêng của nó**, và bước đầu tiên trong transaction đó là ghi `event_consumptions`:
+Mỗi handler chạy trong transaction riêng nhưng ghi
+`event_consumptions` và tác dụng của handler cùng transaction:
 
-```python
-async def deliver(conn, event, handler_name, handler) -> bool:
-    async with conn.transaction():
-        inserted = await conn.fetchval(
-            """INSERT INTO event_consumptions (event_id, consumer)
-               VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING TRUE""",
-            event.event_id, handler_name,
-        )
-        if not inserted:
-            return True          # đã xử lý ở lần giao trước → coi như thành công
-        await handler(conn, event)   # cùng transaction với event_consumptions
-    return True
+```go
+func deliver(ctx context.Context, db *sql.DB, event DomainEvent,
+	handlerName string, handler Handler) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil { return err }
+	defer tx.Rollback()
+
+	inserted, err := insertConsumption(ctx, tx, event.ID, handlerName)
+	if err != nil { return err }
+	if !inserted { return tx.Commit() } // duplicate → coi như thành công
+	if err := handler(ctx, tx, event); err != nil { return err }
+	return tx.Commit()
+}
 ```
 
-`event_consumptions` và tác dụng của handler nằm **cùng transaction** — đó là điều làm idempotency đúng. Nếu ghi `event_consumptions` ở transaction riêng rồi mới chạy handler, sẽ có cửa sổ mà event bị đánh "đã tiêu thụ" nhưng handler chưa chạy, và retry sẽ bỏ qua nó vĩnh viễn.
-
-Chỉ khi **mọi** handler của `event_type` đã có row trong `event_consumptions` thì event mới được đánh `delivered`:
-
-```sql
-UPDATE domain_events
-SET dispatch_status = 'delivered', delivered_at = now(), claimed_by = NULL, claim_expires_at = NULL
-WHERE event_id = $1
-  AND (SELECT count(*) FROM event_consumptions WHERE event_id = $1) = $2;
--- $2 = len(HANDLERS[event.event_type]) — tính từ registry lúc startup, KHÔNG viết tay.
--- Bảng expected_handlers theo event_type ở §5.7.5; hiện mọi event có đúng 1 handler.
-```
-
-Nếu một handler fail: event về `pending` với backoff, `last_error` ghi rõ. Các handler **đã** thành công không chạy lại (đã có `event_consumptions`), chỉ handler còn thiếu được thử lại.
-
-```python
-BACKOFF_SECONDS = [1, 5, 30, 120, 600]   # attempt 1..5
-
-async def on_handler_failure(conn, event, err):
-    if event.attempt >= event.max_attempts:
-        await conn.execute(
-            """UPDATE domain_events SET dispatch_status='dead', last_error=$2,
-                   claimed_by=NULL, claim_expires_at=NULL WHERE event_id=$1""",
-            event.event_id, str(err)[:2000])
-    else:
-        delay = BACKOFF_SECONDS[min(event.attempt, len(BACKOFF_SECONDS)) - 1]
-        await conn.execute(
-            """UPDATE domain_events SET dispatch_status='pending', last_error=$2,
-                   next_attempt_at = now() + make_interval(secs => $3),
-                   claimed_by=NULL, claim_expires_at=NULL WHERE event_id=$1""",
-            event.event_id, str(err)[:2000], delay)
-```
-
+Chỉ khi mọi handler của `event_type` đã có row trong
+`event_consumptions` thì dispatcher đánh `delivered`. Handler lỗi đưa event
+về `pending` với backoff `1s → 5s → 30s → 120s → 600s`; quá
+`max_attempts` thì `dead`, có `last_error`. Consumer registry được kiểm tra
+lúc startup để mỗi event có đúng một handler trong MVP; idempotency vẫn là lớp
+phòng thủ thứ hai.
 #### 5.7.5 Bốn kịch bản, đọc theo sequence diagram
 
 Trước khi đọc diagram, cần rõ **chuỗi event là tuần tự, không fan-out**:
@@ -2439,7 +2345,12 @@ stateDiagram-v2
 
 **Vì sao không dùng `LISTEN/NOTIFY` để đẩy thay vì polling.** `NOTIFY` không bền: consumer không kết nối lúc đó thì mất thông báo, và đúng lúc cần bảo đảm nhất (process vừa restart) là lúc nó không có. Cách đúng là dùng `NOTIFY` như một **tín hiệu đánh thức** cho dispatcher đang polling, không phải như kênh giao event. Dispatcher poll mỗi 200 ms; `NOTIFY` chỉ giảm latency, không phải nguồn chân lý. Ở MVP, polling 200 ms là đủ và bỏ `NOTIFY` cho đơn giản.
 
-**Điều gì đổi và không đổi khi thay outbox bằng broker.** Handler signature (`async def handler(conn, event)`) không đổi. `event_consumptions` vẫn cần vì broker cũng chỉ cho at-least-once. Cái đổi là `OutboxDispatcher` được thay bằng một consumer group của broker — tức một adapter, đúng như `JobDispatcher` (ADR-005). Đây là lý do outbox không phải "giải pháp tạm": nó là **cùng một contract** mà broker sẽ phải thoả mãn.
+**Điều gì đổi và không đổi khi thay outbox bằng broker.** Handler signature
+(`Handler(ctx context.Context, tx *sql.Tx, event DomainEvent) error`) không đổi.
+`event_consumptions` vẫn cần vì broker cũng chỉ cho at-least-once. Cái đổi là
+`OutboxDispatcher` được thay bằng một consumer group của broker — tức một
+adapter, đúng như `JobDispatcher` (ADR-005). Đây là lý do outbox không phải
+"giải pháp tạm": nó là **cùng một contract** mà broker sẽ phải thoả mãn.
 
 ### 5.8 Protocol nội bộ Python → Go: `POST /internal/events`
 
@@ -2466,7 +2377,7 @@ Idempotency-Key: 01JB2X9K7M4NQZ8V3T5W6Y7Z8A      # = event_id của event đầu
       "correlation_id": "req_01JB2X9K7M4NQZ",
       "occurred_at": "2026-08-11T09:14:22.481Z",
       "seq": 8472,
-      "subscription_key": "binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1f…",
+      "subscription_key": "binance_usdm|ETHUSDT|5m|rsi@1.0.0|sha256:4d1f…",
       "payload": { }
     }
   ]
@@ -2483,52 +2394,49 @@ Response:
 | --- | --- |
 | Method + path | `POST /internal/events`. Batch tới **64 event** một request để tránh một HTTP call cho mỗi tick. |
 | **Internal auth** | Bearer token tĩnh từ env `INTERNAL_EVENT_TOKEN`, so sánh **constant-time** (`hmac.Equal`, không `==`). Route nằm sau một middleware chỉ nhận request từ CIDR nội bộ của compose network, và **không** đăng ký trên listener public. Không dùng JWT của user: đây là service-to-service, không có principal. |
-| Timeout | Python client: 2 s. Ngắn có chủ ý — đây là đường realtime, chậm hơn 2 s thì frame đã vô nghĩa với UI. |
+| Timeout | Go internal-event client: 2 s. Ngắn có chủ ý — đây là đường realtime, chậm hơn 2 s thì frame đã vô nghĩa với UI. |
 | **Idempotency** | Go giữ một ring buffer `event_id` đã nhận (dung lượng 10.000, TTL 5 phút) trong bộ nhớ. `event_id` đã thấy → trả về trong `duplicate[]`, **không** fan-out lần hai. Đây là chống duplicate do retry, không phải chống replay attack. |
 | Ack | `200` với `accepted[]`/`duplicate[]`/`rejected[]` theo từng `event_id`. Ack **từng phần**: một event xấu trong batch không làm cả batch fail. |
-| Ordering | `seq` tăng đơn điệu theo `subscription_key`, do Python cấp. Go **không** sắp xếp lại; client so `frame.seq` với `snapshot.seq` để phát hiện gap và refetch REST (xem `specs/chart-overlay.md`). Đây là lý do mất một frame không làm chart sai. |
+| Ordering | `seq` tăng đơn điệu theo `subscription_key`, do Go Hub cấp. Hub **không** sắp xếp lại; client so `frame.seq` với `snapshot.seq` để phát hiện gap và refetch REST (xem `specs/chart-overlay.md`). Đây là lý do mất một frame không làm chart sai. |
 
 #### 5.8.2 Retry, backoff và khi Go WS Hub down
 
-```python
-# app/infrastructure/notify/internal_events.py  (rút gọn)
-RETRY_DELAYS = [0.2, 1.0, 3.0]        # 3 lần thử, tổng ≤ ~4.2 s + 3×timeout
+```go
+var internalEventRetry = []time.Duration{0, 200 * time.Millisecond,
+	 time.Second, 3 * time.Second}
 
-async def push(batch: list[DomainEvent]) -> PushResult:
-    for i, delay in enumerate([0.0, *RETRY_DELAYS]):
-        if delay:
-            await asyncio.sleep(delay)
-        try:
-            r = await client.post("/internal/events", json=encode(batch), timeout=2.0)
-            if r.status_code == 200:
-                return PushResult.ok(r.json())
-            if 400 <= r.status_code < 500:
-                # Contract sai — retry không giúp gì. Log ERROR + drop.
-                metrics.internal_push_rejected.inc(len(batch))
-                return PushResult.rejected(r)
-        except (httpx.TimeoutException, httpx.ConnectError):
-            metrics.internal_push_retry.inc()
-    metrics.internal_push_dropped.inc(len(batch))
-    return PushResult.dropped()          # KHÔNG raise — không được làm chết vòng market
+func (c *InternalEventClient) Push(ctx context.Context, batch []DomainEvent) PushResult {
+	for attempt, delay := range internalEventRetry {
+		if delay > 0 {
+			if err := waitContext(ctx, delay); err != nil { return PushDropped{} }
+		}
+		result, err := c.post(ctx, batch, 2*time.Second)
+		if err == nil { return result }
+		if isClientContractError(err) {
+			c.metrics.Rejected.Add(float64(len(batch)))
+			return PushRejected{Err: err}
+		}
+		c.metrics.Retry.Inc()
+		_ = attempt
+	}
+	c.metrics.Dropped.Add(float64(len(batch)))
+	return PushDropped{}
+}
 ```
 
-Hành vi khi Go WS Hub down, theo từng loại event:
+Hành vi khi Go WS Hub down:
 
-| Event | Khi push thất bại sau 3 lần retry | Vì sao chấp nhận được |
-| ----- | --------------------------------- | --------------------- |
-| `MarketPriceUpdated`, `ChartOverlayUpdated`, `StreamStale` | **Drop**, tăng `internal_push_dropped_total` | Nến đã đóng vẫn được ghi PostgreSQL trước khi push (§6.1). Khi Go lên, client reconnect → fetch REST → thấy đủ nến. Không mất dữ liệu, chỉ mất tính realtime tạm thời. |
-| `SearchProgressUpdated` | **Drop** | Là snapshot tiến trình, không phải delta. Frame sau ghi đè frame trước; mất một cái không tích luỹ sai. |
-| `LeaderboardUpdated`, `SearchRunFinished` | **Drop khỏi đường push**, nhưng state đã ở `leaderboard_entries` / `search_runs` | UI refetch `GET /leaderboard` khi WS reconnect. Bảng là nguồn chân lý, event chỉ là tín hiệu "có cái mới". |
+| Event | Khi push thất bại sau retry | Vì sao chấp nhận được |
+| ----- | --------------------------- | --------------------- |
+| `KlineUpdated`, `ChartOverlayUpdated`, `StreamStale` | **Drop**, tăng `internal_push_dropped_total` | Candle đóng đã được ghi PostgreSQL; client reconnect và refetch REST. |
+| `SearchProgressUpdated` | **Drop** | Đây là snapshot tiến trình; frame sau không phụ thuộc frame trước. |
+| `LeaderboardUpdated`, `SearchRunFinished` | **Drop khỏi đường push** | State đã commit trong PostgreSQL; UI refetch khi WS reconnect. |
 
-Nguyên tắc: **`/internal/events` không bao giờ là nơi duy nhất một thông tin tồn tại.** Mọi event đi qua nó đều đã hoặc sẽ được persist. Đó là điều làm "best-effort + drop" là lựa chọn đúng thay vì phải xây outbox thứ hai cho đường realtime.
-
-Ba chi tiết còn lại:
-
-- **Circuit breaker.** Sau 20 lần push fail liên tiếp, client mở circuit 10 s: bỏ push, chỉ tăng counter, không tốn 3 retry × 2 s timeout cho mỗi batch. Nửa mở sau 10 s: thử 1 batch. Điều này ngăn Go down làm chậm vòng lặp market của Python.
-- **Không chặn vòng market.** `push()` được gọi qua một `asyncio.Queue` có `maxsize=1000`; queue đầy → drop event **cũ nhất** (không phải mới nhất) và tăng counter. Vòng đọc Binance không bao giờ `await` trên HTTP tới Go.
-- **`readyz` của Go không phụ thuộc `/internal/events`.** Ngược lại cũng vậy: Python `readyz` không fail vì Go down. Hai service không được ràng buộc readiness lẫn nhau, nếu không một cái restart sẽ kéo cái kia xuống theo.
-
----
+`/internal/events` không bao giờ là nơi duy nhất một thông tin tồn tại. Event
+nào cần durable delivery đi qua transactional outbox; event realtime chỉ là
+best-effort notification. Go API/Hub giữ retry queue bounded, circuit breaker
+và không để market ingestion chờ HTTP. Readiness của Go core không phụ thuộc
+Python AI và ngược lại.
 
 ## 6. Mô tả các luồng nghiệp vụ quan trọng
 
@@ -2571,10 +2479,10 @@ sequenceDiagram
 
     Note over AD,RE: BACKFILL — bù khoảng đã mất
     AD->>CK: đọc last_closed_at = T1
-    AD->>RE: GET /api/v3/klines?symbol&interval&startTime=T1&limit=1000
+    AD->>RE: GET /fapi/v1/klines?symbol&interval&startTime=T1&limit=1500
     RE-->>AD: [nến T2, T3, ..., Tn]
     AD->>MS: CandleClosed × n (theo đúng thứ tự thời gian)
-    MS->>DB: UPSERT — PK (provider,symbol,timeframe,close_time) tự de-dup
+    MS->>DB: UPSERT — PK (provider,symbol,timeframe,open_time) tự de-dup
     Note over DB: Chồng lấp với nến đã có → DO UPDATE, KHÔNG tạo nến trùng.<br/>Vì vậy backfill an toàn để retry bao nhiêu lần cũng được.
     MS->>CK: last_closed_at = Tn, is_stale = false
     MS->>HUB: StreamRecovered(provider, symbol, timeframe)
@@ -2586,7 +2494,7 @@ sequenceDiagram
 | Bảo đảm                        | Cơ chế                                                                                                     |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | **0 nến đã đóng bị mất**       | `stream_checkpoints.last_closed_at` là điểm neo; backfill luôn bắt đầu từ đó, không từ "bây giờ"            |
-| **0 nến trùng**                | `PRIMARY KEY (provider, symbol, timeframe, close_time)` + `ON CONFLICT DO UPDATE` — de-dup ở tầng DB, không ở tầng code |
+| **0 nến trùng**                | `PRIMARY KEY (provider, symbol, timeframe, open_time)` + `ON CONFLICT DO UPDATE` — de-dup ở tầng DB, không ở tầng code |
 | **Không reconnect storm**      | Capped exponential backoff + jitter. Không retry ngay lập tức (làm Binance ban IP nhanh hơn)                |
 | **UI biết mình đang xem dữ liệu cũ** | `is_stale` + `last_closed_at` đẩy ra client. Im lặng hiển thị nến cũ như thể là mới là cách tệ nhất |
 
@@ -2930,10 +2838,10 @@ flowchart TB
 
     L3 --> L4
 
-    subgraph L4["Lớp 4 — Validation & Domain guard (Go + Python)"]
+    subgraph L4["Lớp 4 — Validation & Domain guard (Go)"]
         D1["Go: schema, range, enum, symbol, timeframe"]
-        D2["Python: validate LẠI (không tin caller nội bộ)"]
-        D3["Python: parameters_schema per strategy version"]
+        D2["Go: validate domain input"]
+        D3["Go: parameters_schema per strategy version"]
         D4["DB: CHECK constraint + FK + UNIQUE"]
         D1 --> D2 --> D3 --> D4
     end
@@ -2988,64 +2896,60 @@ Chi tiết đầy đủ về middleware chain, refresh rotation với reuse dete
 
 **Vấn đề**: kiến trúc coupling cao khiến thêm 1 strategy phải sửa Controller, Backtester, UI, Database, Combination Engine, Evaluator (đề bài §41). Giảng viên sẽ kiểm tra điều này **tại chỗ**.
 
-**Giải pháp**: Registry tự đăng ký bằng decorator + metadata khai báo.
+**Giải pháp**: Registry Go tự đăng ký bằng package `init()` + metadata khai báo.
 
-```python
-# app/domain/strategy/registry.py
-_REGISTRY: dict[tuple[str, str], type[Strategy]] = {}
+```go
+// server/internal/domain/strategy/registry.go
+type Registry struct {
+	strategies map[Key]StrategyFactory
+}
 
-def register_strategy(cls: type[Strategy]) -> type[Strategy]:
-    d = cls().definition()
-    key = (d.strategy_id, d.version)
-    if key in _REGISTRY:
-        raise DuplicateStrategyError(f"{key} đã được đăng ký")
-    _REGISTRY[key] = cls
-    return cls
+func (r *Registry) Register(def Definition, factory StrategyFactory) error {
+	key := Key{ID: def.StrategyID, Version: def.Version}
+	if _, exists := r.strategies[key]; exists {
+		return fmt.Errorf("duplicate strategy %s@%s", key.ID, key.Version)
+	}
+	r.strategies[key] = factory
+	return nil
+}
 
-def resolve(strategy_id: str, version: str) -> type[Strategy]:
-    try:
-        return _REGISTRY[(strategy_id, version)]
-    except KeyError:
-        # Lỗi tường minh ở tầng validate — KHÔNG có nhánh else âm thầm
-        raise UnknownStrategyError(strategy_id, version)
-
-def all_definitions() -> list[StrategyDefinition]:
-    return [cls().definition() for cls in _REGISTRY.values()]
+func (r *Registry) Resolve(id, version string) (Strategy, error) {
+	factory, ok := r.strategies[Key{ID: id, Version: version}]
+	if !ok {
+		return nil, UnknownStrategyError{ID: id, Version: version}
+	}
+	return factory(), nil
+}
 ```
 
 Thêm MACD — **toàn bộ diff**:
 
-```python
-# app/domain/strategy/plugins/macd.py   ← FILE MỚI DUY NHẤT
-@register_strategy
-class MACDStrategy:
-    def definition(self) -> StrategyDefinition:
-        return StrategyDefinition(
-            strategy_id="macd",
-            version="1.0.0",
-            family="trend",
-            parameters_schema={
-                "fast_period":   {"type": "integer", "minimum": 2, "default": 12},
-                "slow_period":   {"type": "integer", "minimum": 3, "default": 26},
-                "signal_period": {"type": "integer", "minimum": 2, "default": 9},
-            },
-            input_requirements=["candles.close", "indicator.ema"],
-            overlay_types=["macd_line", "macd_signal", "buy_signal", "sell_signal"],
-            warm_up_candles=lambda p: p["slow_period"] + p["signal_period"],
-        )
+```go
+// server/internal/domain/strategy/plugins/macd.go — FILE MỚI DUY NHẤT
+func RegisterMACD(r *strategy.Registry) error {
+	return r.Register(strategy.Definition{
+		StrategyID: "macd", Version: "1.0.0", Family: "trend",
+		ParametersSchema: json.RawMessage(`{
+			"fast_period":{"type":"integer","minimum":2,"default":12},
+			"slow_period":{"type":"integer","minimum":3,"default":26},
+			"signal_period":{"type":"integer","minimum":2,"default":9}
+		}`),
+		InputRequirements: []string{"candles.close", "indicator.ema"},
+		OverlayTypes: []string{"macd_line", "macd_signal", "buy_signal", "sell_signal"},
+		WarmUpCandles: func(p Params) int { return p.Int("slow_period") + p.Int("signal_period") },
+	}, func() strategy.Strategy { return MACD{} })
+}
 
-    def analyze(self, ctx: AnalysisContext) -> Signal:
-        macd = ctx.indicators["macd_line"][ctx.index]
-        sig  = ctx.indicators["macd_signal"][ctx.index]
-        prev_macd = ctx.indicators["macd_line"][ctx.index - 1]
-        prev_sig  = ctx.indicators["macd_signal"][ctx.index - 1]
-        if None in (macd, sig, prev_macd, prev_sig):
-            return Signal("HOLD")
-        if prev_macd <= prev_sig and macd > sig:
-            return Signal("BUY", evidence={"macd": macd, "signal": sig})
-        if prev_macd >= prev_sig and macd < sig:
-            return Signal("SELL", evidence={"macd": macd, "signal": sig})
-        return Signal("HOLD")
+func (MACD) Analyze(ctx strategy.AnalysisContext) (strategy.Signal, error) {
+	macd, ok1 := ctx.Indicators.At("macd_line", ctx.Index)
+	sig, ok2 := ctx.Indicators.At("macd_signal", ctx.Index)
+	prevMACD, ok3 := ctx.Indicators.At("macd_line", ctx.Index-1)
+	prevSig, ok4 := ctx.Indicators.At("macd_signal", ctx.Index-1)
+	if !(ok1 && ok2 && ok3 && ok4) { return strategy.Hold(), nil }
+	if prevMACD.LessThanOrEqual(prevSig) && macd.GreaterThan(sig) { return strategy.Buy(), nil }
+	if prevMACD.GreaterThanOrEqual(prevSig) && macd.LessThan(sig) { return strategy.Sell(), nil }
+	return strategy.Hold(), nil
+}
 ```
 
 **Không phải sửa gì** — và đây là danh sách cụ thể để kiểm chứng bằng `git diff --stat`:
@@ -3064,9 +2968,9 @@ class MACDStrategy:
 
 **Năm ràng buộc để plugin không phá hệ thống** (R7):
 
-1. **Sandbox 3 tầng, có mô hình tin cậy rõ.** Plugin là **trusted code** (thêm bằng commit + deploy, không upload qua UI), nên mục tiêu là *bug không giết được search run*, không phải chống code thù địch. Ba tầng: (a) `SIGALRM` soft deadline 1 s/call — cắt được vòng lặp Python thuần; (b) worker là **supervisor**, backtest chạy trong child process `spawn`, `SIGKILL` sau 90 s — cắt được cả C extension giữ GIL mà tầng (a) bó tay; (c) `lease_expires_at` 120 s — cứu khi cả worker biến mất. Thứ tự `1 s < 90 s < 120 s` là **bắt buộc**: đảo lại sẽ có hai worker chạy cùng một experiment. Chi tiết ở `specs/strategy-registry.md` §C.
-2. **Exception isolation.** `ZeroDivisionError`, `IndexError` trong plugin bị catch ở biên gọi, log kèm `strategy_id@version`, candidate đánh fail. Không propagate lên làm crash worker.
-3. **`LookAheadError` là lỗi riêng, log ở mức ERROR.** Plugin đọc `indicators[...][index+1]` không chỉ làm fail một candidate — nó chứng tỏ plugin đó đã sinh ra kết quả sai ở mọi lần chạy trước khi `IndicatorView` được thêm. `strategy_lookahead_total` phải luôn bằng 0 (§5.2.1).
+1. **Trusted compiled plugin boundary.** Strategy thêm bằng commit + deploy, không upload qua UI. Go worker gọi strategy qua context deadline/cooperative cancellation; worker lease là lớp phục hồi process. Không mô tả Python signal/sandbox trong Go runtime.
+2. **Exception isolation.** Error từ plugin bị catch ở biên gọi, log kèm `strategy_id@version`, candidate đánh fail. Không propagate lên làm crash worker.
+3. **Causal context là lỗi riêng.** Plugin đọc indicator/candle ngoài index bị reject, log mức ERROR, candidate fail. `strategy_lookahead_total` phải luôn bằng 0 (§5.2.1).
 4. **`warm_up_candles` bắt buộc khai báo.** Engine dùng nó để biết bắt đầu vòng lặp từ đâu. Không khai báo → registry reject lúc startup.
 5. **`code_fingerprint` check.** Sửa code mà quên bump version → **fail fast lúc startup**, không chạy với provenance sai (§4.2).
 
@@ -3108,7 +3012,14 @@ Rate limit chặn 5 `POST /search-runs`/phút. Nhưng **một** search run hợp
 
 **Outbound rate limit — cái dễ bị quên**
 
-Binance dùng hệ thống **weight**: `/api/v3/klines` với `limit=1000` tốn weight 2. Ngưỡng là cấu hình `provider_weight_limit_per_minute` (MVP mặc định **6000 weight/phút/IP**, phải đổi được khi provider đổi tài liệu), không hard-code trong adapter. Vượt → `429`, tiếp tục vượt → **`418` và ban IP tạm thời**. Nghĩa là một backfill loop không kiểm soát có thể làm hệ thống mất market data hoàn toàn trong nhiều phút. Vì vậy `BinanceAdapter` có token bucket **outbound** theo weight, mọi call đi qua nó, và đọc `X-MBX-USED-WEIGHT-1M` để hiệu chỉnh bucket theo thực tế. Khi chạy nhiều worker, bucket này phải shared (Redis) — nếu không, giới hạn tổng phải được tính theo `provider_weight_limit_per_minute`, không nhân bản độc lập theo worker. Đây là điều kiện (b) ở §12.0 khiến Redis trở thành bắt buộc khi scale vượt một process.
+Binance dùng hệ thống **weight**: USDⓈ-M `/fapi/v1/klines` có weight theo
+`limit` (1 cho `<100`, 2 cho `100–499`, 5 cho `500–1000`, 10 cho
+`>1000–1500`). Ngưỡng là cấu hình `provider_weight_limit_per_minute`, không
+hard-code trong adapter. Vượt → `429`, tiếp tục vượt → **`418` và ban IP tạm
+thời**. `BinanceAdapter` có token bucket **outbound** theo weight, mọi call đi
+qua nó, và đọc `X-MBX-USED-WEIGHT-1M` để hiệu chỉnh bucket theo thực tế. Khi
+chạy nhiều worker, bucket này phải shared (Redis) — nếu không, giới hạn tổng
+phải được tính theo provider, không nhân bản độc lập theo worker.
 
 ### 8.3 Bảo vệ khả năng scale — Job Queue với contract cố định (§32.5 Performance, §43)
 
@@ -3328,7 +3239,7 @@ Structured JSON, không phải string nội suy. Lý do thực dụng: `error_co
 ```text
 ┌─ Search Run #a3f8 ────────────────── ● RUNNING ─┐
 │ Generator   random_search@1.0.0                 │
-│ Dataset     binance-btcusdt-5m-20260101-0301    │
+│ Dataset     binance-ethusdt-5m-20260101-0301    │
 │ Stop        max_candidates=200 · max_dur=1800s  │
 │                                                 │
 │ Tested      127 / 200      ████████░░░░  63%    │
@@ -3354,92 +3265,78 @@ Bốn con số ở đây không có trong metric Prometheus nhưng quan trọng 
 
 ### 9.1 God Service
 
-**Sai**: một `TradingService` vừa lấy Binance data, tính RSI, crawl news, chạy ML, backtest, rank, save DB, gửi WebSocket.
+**Sai**: một `TradingService` vừa lấy Binance data, tính indicator, crawl news,
+chạy sentiment, backtest, rank, ghi DB và gửi WebSocket.
 
-**Chặn bằng**: 6 module có ranh giới rõ (§2.3), mỗi module có một trách nhiệm và một cách vào duy nhất qua application service. Không có class nào chạm cả market data lẫn ranking.
+**Chặn bằng**: Go application modules có boundary rõ; domain package thuần, port
+do consumer định nghĩa, adapter chỉ dịch payload. Không có class nào chạm cả
+market data lẫn ranking.
 
 **Kiểm chứng**:
-```python
-# tests/architecture/test_module_boundaries.py
-FORBIDDEN = {
-    "domain.strategy":  ["infrastructure", "sqlalchemy", "httpx", "fastapi"],
-    "news.adapters":    ["sentiment", "predictor", "domain.strategy"],
-    "domain.backtest":  ["fastapi", "httpx", "sqlalchemy"],
+
+```go
+// server/tests/architecture/module_boundaries_test.go
+func TestDomainDoesNotImportInfrastructure(t *testing.T) {
+	assertNoImports(t, "server/internal/domain/strategy",
+		"repository", "transport", "infrastructure", "http")
+	assertNoImports(t, "server/internal/domain/backtest",
+		"transport", "repository", "http")
 }
-def test_no_forbidden_imports():
-    for module, forbidden in FORBIDDEN.items():
-        for imported in imports_of(module):
-            assert not any(f in imported for f in forbidden), \
-                f"{module} không được import {imported}"
 ```
 
-Test này chạy trong CI. Vi phạm ranh giới **fail build**, không chờ ai để ý trong review.
+Vi phạm ranh giới fail CI, không chờ code review.
 
 ### 9.2 Hard-coded Strategy
 
-**Sai**: `if MA && RSI ... else if MA && Bollinger ... else if RSI && Bollinger ...`
+**Sai**: `if MA && RSI ... else if ...`.
 
-**Chặn bằng**: Registry lookup (§8.1) + composite là **dữ liệu JSON**, không phải nhánh code. Số tổ hợp có thể biểu diễn là vô hạn với 0 nhánh `if`.
+**Chặn bằng**: Registry lookup và composite là JSON snapshot, không phải nhánh
+code. Số tổ hợp không bị giới hạn bởi số branch.
 
-**Kiểm chứng**:
-```python
-def test_no_strategy_name_branching():
-    """Không có file nào so sánh strategy_id với literal string."""
-    pattern = re.compile(r'(strategy_id|strategy)\s*==\s*["\']')
-    for path in glob("app/**/*.py"):
-        if "/tests/" in path or "/plugins/" in path:
-            continue   # plugin được phép biết tên chính nó
-        assert not pattern.search(read(path)), f"{path} branch theo tên strategy"
+```go
+func TestNoStrategyNameBranching(t *testing.T) {
+	assertNoLiteralStrategySwitch(t, "server/internal",
+		[]string{"strategy_id ==", "switch strategyID"})
+}
 ```
+
+Plugin được phép khai báo metadata của chính nó; application, engine,
+evaluator và API không được branch theo literal strategy ID.
 
 ### 9.3 Frontend chứa business logic
 
-**Sai**: React tính trading strategy, backtest, profit, ranking.
+**Sai**: React tự tính strategy, backtest, profit hoặc ranking.
 
-**Chặn bằng**: `GET /markets/chart-overlays` trả series đã tính (§3.2). Frontend chỉ có code vẽ.
+**Chặn bằng**: Go trả overlay, trade facts và metrics; frontend chỉ render.
 
-**Kiểm chứng**:
-```javascript
+```typescript
 // web/__tests__/no-domain-logic.test.ts
-const FORBIDDEN_IDENTIFIERS = [
-  'calculateRSI', 'computeSMA', 'bollingerBands',
-  'backtest', 'winRate', 'maxDrawdown', 'sharpeRatio', 'profitFactor',
-];
-test('web không chứa domain calculation', () => {
-  for (const file of glob('{app,components,lib}/**/*.{ts,tsx}')) {
-    for (const id of FORBIDDEN_IDENTIFIERS) {
-      expect(read(file)).not.toContain(id);
-    }
-  }
-});
+test("web không chứa domain calculation", () => {
+	for (const file of glob("{app,components,lib}/**/*.{ts,tsx}")) {
+		for (const id of ["calculateRSI", "computeSMA", "backtest",
+			"winRate", "maxDrawdown", "sharpeRatio"]) {
+			expect(read(file)).not.toContain(id)
+		}
+	}
+})
 ```
-
-Lưu ý điều này **không** cấm frontend format số (`18.2%`) hay vẽ đường. Nó cấm frontend *tính ra* con số đó.
 
 ### 9.4 Strategy truy cập trực tiếp Database
 
-**Sai**: `RSIStrategy → MySQL`.
+**Sai**: `RSIStrategy → PostgreSQL`.
 
-**Chặn bằng**: `AnalysisContext` là frozen dataclass **không chứa session, không chứa repository, không chứa HTTP client** (§5.2). Strategy vật lý không có đường ra ngoài.
+**Chặn bằng**: `AnalysisContext` không chứa repository, SQL connection,
+HTTP client, credential hoặc system time. Strategy compiled code chạy offline.
 
-**Kiểm chứng** — cách mạnh nhất là test chạy strategy trong môi trường không có DB:
-```python
-def test_strategy_runs_without_infrastructure(monkeypatch):
-    """Strategy phải chạy được khi DB và network đều không tồn tại."""
-    monkeypatch.setattr("socket.socket", _raise_on_use)   # mọi network call → lỗi
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-
-    ctx = AnalysisContext(
-        symbol="BTCUSDT", timeframe="5m",
-        candles=FIXTURE_CANDLES, index=100,
-        indicators={"rsi": FIXTURE_RSI},
-        news_sentiment=None,
-        params={"period": 14, "buy_threshold": 30, "sell_threshold": 70},
-    )
-    assert RSIStrategy().analyze(ctx).action in ("BUY", "SELL", "HOLD")
+```go
+func TestStrategyPurity(t *testing.T) {
+	assertNoImports(t, "server/internal/domain/strategy/plugins",
+		"database/sql", "repository", "net/http", "binance")
+	ctx := strategy.AnalysisContext{Symbol: "ETHUSDT", Index: 100}
+	_, err := strategy.NewRSI().Analyze(ctx)
+	if err != nil { t.Fatal(err) }
+}
 ```
-
-Nếu ai đó thêm một query SQL vào strategy, test này fail ngay.
 
 ### 9.5 Crawler phụ thuộc chặt vào ML
 
@@ -3447,7 +3344,7 @@ Nếu ai đó thêm một query SQL vào strategy, test này fail ngay.
 
 **Chặn bằng**: `NewsCollector` publish `NewsCollected` và kết thúc. `SentimentAnalyzer` là consumer riêng, chạy sau, có thể chết mà không ảnh hưởng crawler (§6.4).
 
-**Kiểm chứng**: đã có trong `test_no_forbidden_imports` (§9.1) — `news.adapters` không được import `sentiment` hay `predictor`. Cộng thêm một integration test: stop sentiment service, chạy news collection, assert `news_items` có row mới và `sentiment_results` không có row nào (chứ không phải có row `NEUTRAL`).
+**Kiểm chứng**: đã có trong Go module-boundary test (§9.1) — `server/internal/infrastructure/news` không được import strategy hoặc Python model internals. Cộng thêm một integration test: stop sentiment service, chạy news collection, assert `news_items` có row mới và `sentiment_results` không có row nào (chứ không phải có row `NEUTRAL`).
 
 ### 9.6 Ba anti-pattern bổ sung mà đề bài không nêu nhưng dự án này dễ mắc
 
@@ -3470,7 +3367,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 ### ADR-001: WebSocket (không SSE, không polling) cho realtime market data
 
 - **Bối cảnh**: 4 chart panel, mỗi panel có `(provider, symbol, timeframe)` riêng, đổi timeframe độc lập. Đề bài §4 nói rõ frontend không được polling `GET /price` liên tục.
-- **Quyết định**: WebSocket tại `GET /api/v1/markets/stream`. Client gửi `{"action":"subscribe","key":"binance|BTCUSDT|5m|rsi@1.0.0|sha256:4d1..."}`. Go API giữ registry `subscription_key → set[conn]` và chỉ đẩy frame tới connection khớp.
+- **Quyết định**: WebSocket tại `GET /api/v1/markets/stream`. Client gửi `{"action":"subscribe","key":"binance_usdm|ETHUSDT|5m|rsi@1.0.0|sha256:4d1..."}`. Go API giữ registry `subscription_key → set[conn]` và chỉ đẩy frame tới connection khớp.
 - **Vì sao không SSE**: SSE là một chiều server→client. Với SSE, việc subscribe/unsubscribe từng panel phải làm qua REST call riêng, tạo ra vấn đề đồng bộ giữa "REST đã đổi subscription" và "stream nào đang chạy". Với 4 panel đổi timeframe độc lập, đó là nguồn bug thật. WebSocket cho subscribe trên cùng kênh, atomic.
 - **Vì sao không polling**: 4 panel × 1 request/giây × N user = tải vô nghĩa, và độ trễ tệ hơn.
 - **Vì sao Binance không nối trực tiếp vào browser**: (a) frontend sẽ phụ thuộc payload Binance → thêm OKX phải sửa frontend; (b) không kiểm soát được rate limit; (c) mỗi browser một connection tới Binance thay vì một connection dùng chung.
@@ -3479,9 +3376,9 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 ### ADR-002: Plugin Registry cho Strategy (Strategy Pattern + Registry + auto-discovery)
 
 - **Bối cảnh**: Scenario đánh giá §41 — giảng viên yêu cầu thêm MACD tại chỗ.
-- **Quyết định**: `Strategy` Protocol + `@register_strategy` decorator + auto-import package `plugins/` + metadata khai báo trong `definition()`.
+- **Quyết định**: Go `Strategy` interface + `StrategyRegistry.Register(Definition, Factory)` + plugin package self-registration + metadata khai báo trong `Definition()`.
 - **Vì sao không Factory với switch**: switch là chính xác cái mà §41 kiểm tra. Mỗi strategy mới thêm một nhánh, và nhánh đó phải thêm ở mọi nơi có switch.
-- **Vì sao không plugin động (upload file .py qua UI)**: `exec()` trên code do user upload là RCE. Strategy được thêm bằng code + deploy. Đây là lý do `Strategy Developer` ở C4 Level 1 nối bằng nét đứt và không đi qua UI.
+- **Vì sao không plugin động (upload source qua UI)**: compile/execute code do user upload là RCE. Strategy được thêm bằng Go code + deploy. Đây là lý do `Strategy Developer` ở C4 Level 1 nối bằng nét đứt và không đi qua UI.
 - **Vì sao metadata khai báo (không introspection)**: UI cần `parameters_schema` để sinh form, engine cần `input_requirements` để precompute indicator, generator cần `family` để phân nhóm domain-guided. Suy ra những thứ này từ signature hàm là mong manh; khai báo tường minh là hợp đồng.
 - **Đánh đổi**: mỗi plugin phải viết metadata (khoảng 10 dòng boilerplate). Bù lại được: form UI tự sinh, indicator tự precompute, tự vào search space, tự xuất hiện ở `GET /strategies`.
 
@@ -3507,8 +3404,8 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 ### ADR-004: Tách CandidateGenerator khỏi execution pipeline
 
-- **Quyết định**: `CandidateGenerator.generate() → Iterator[CandidateStrategy]`. Pipeline phía sau chỉ nhận `CandidateStrategy`, không biết nó sinh ra bằng cách nào.
-- **Vì sao trả `Iterator` (không `list`)**: Genetic Search cần biết kết quả của thế hệ trước để sinh thế hệ sau. `Iterator` + `SearchHistory` cho phép generator có state qua các batch mà không đổi interface. Nếu trả `list` thì `GeneticGenerator` sẽ không cắm vào được và ADR này sẽ vô nghĩa đúng lúc cần nhất.
+- **Quyết định**: `CandidateGenerator.Generate(..., limit, history) → []CandidateStrategy`. Pipeline phía sau chỉ nhận `CandidateStrategy`, không biết nó sinh ra bằng cách nào; batch luôn bounded.
+- **Vì sao trả batch bounded**: Genetic Search cần biết kết quả của thế hệ trước để sinh thế hệ sau. `SearchHistory` truyền state qua các batch mà không đổi interface, còn `limit × attempt_bound` chặn vòng lặp vô hạn.
 - **Vì sao có `seed`**: Random Search với cùng seed sinh cùng chuỗi candidate → search run tái lập được, không chỉ backtest tái lập được.
 - **Vì sao có `generation_meta`**: đề bài §17 hỏi *"domain knowledge được đưa vào search như thế nào?"*. Meta ghi rule đã áp dụng. Không có nó thì "domain-guided" không kiểm chứng được.
 - **Đánh đổi**: một lớp indirection cho MVP chỉ có Random Search. Chấp nhận vì đây là seam mà scenario đánh giá §42 nhắm vào.
@@ -3528,19 +3425,30 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Hệ quả tích cực**: chuyển sang multi-worker không cần đổi gì ở API, vì API đã async từ đầu. Nếu MVP làm inline rồi sau mới đổi sang async, thì đó là một breaking change ở public contract.
 - **Đánh đổi**: UI phải xử lý trạng thái pending (polling hoặc WebSocket) ngay từ MVP, không được hiển thị kết quả ngay. Chấp nhận — vì đó là hành vi đúng của hệ thống khi có dữ liệu thật.
 
-### ADR-007: `next_candle_open` là fill policy mặc định
+### ADR-007: `bbo_limit` là fill policy chuẩn
 
-- **Quyết định**: tín hiệu tính trên nến `t` được fill ở **giá open của nến `t+1`**. `fill_policy` là field trong snapshot, có thể đổi, nhưng mặc định là `next_candle_open`.
-- **Vì sao không fill ở close của nến `t`**: giá close của nến `t` chỉ biết được **sau khi** nến `t` đóng. Nếu strategy quyết định dựa trên close của `t` rồi giao dịch ở chính close đó, ta đang giả định thực hiện được lệnh tại một giá đã biết trong quá khứ — đó là look-ahead bias. Kết quả sẽ đẹp một cách hệ thống và toàn bộ Leaderboard trở nên vô nghĩa.
-- **Tác động số học**: sai lệch này không nhỏ. Với strategy giao dịch thường xuyên trên khung 5m, chênh lệch giữa hai fill policy có thể lật dấu Total Return.
-- **Vì sao vẫn để `same_candle_close` là option**: để so sánh và để chứng minh nhóm hiểu tác động, không phải để dùng làm mặc định.
-- **Kèm theo**: fee và slippage áp trên **mỗi** fill, và `open_position_at_end` ghi rõ vị thế còn mở lúc hết dataset xử lý thế nào (mặc định `close_at_last_candle`). Bỏ qua chi tiết cuối này làm Return sai với strategy ít trade.
-- **Ngoại lệ duy nhất: SL/TP** (ADR-017). Chúng đóng vị thế **ngay trong nến**, không chờ `t+1`, vì là lệnh chờ đã đặt sẵn từ lúc vào vị thế — không phải một quyết định mới.
+- **Quyết định**: strategy tạo LIMIT intent tại `CandleClosed`; intent chỉ fill
+  khi BBO executable side crossing. BUY dùng `ask <= limit_price`, SELL dùng
+  `bid >= limit_price`, fill tại executable side.
+- **Event ordering**: replay merge theo `(eventTime, priority, sourceSequence)`;
+  BBO priority 0, CandleClosed priority 1. BBO cùng timestamp được apply trước
+  candle decision.
+- **Vì sao**: candle close không chứng minh được execution. BBO replay cho giá
+  executable và giữ causal boundary; không dùng giá tương lai hoặc candle close
+  làm execution fallback.
+- **Kèm theo**: fee/slippage áp mỗi fill; snapshot ghi `initial_equity`,
+  `fixed_notional`, `leverage`, `fill_policy`, `position_policy` và
+  `open_position_at_end`. Baseline là `100 USDT`, `10 USDT`, `1x`,
+  `one_net_position`, `last_executable_bbo`.
+- **End-of-sample**: open LONG settle final bid; open SHORT settle final ask.
+  Thiếu quote cuối là input error, không tự dùng candle close.
+- **Risk seam**: SL/TP nếu bật vẫn là order đã tồn tại, được xử lý theo risk
+  policy explicit; fixture MA20/50 đặt risk policy `NULL`.
 
 ### ADR-008: Overlay tính ở backend, frontend chỉ render
 
 - **Quyết định**: `GET /api/v1/markets/chart-overlays?symbol&timeframe&strategy=rsi@1.0.0&config_hash=...` trả series đã tính. Realtime delta qua `ChartOverlayUpdated` với cùng `config_hash`.
-- **Vì sao**: ba lý do ở §3.2 — tránh hai nguồn chân lý cho cùng một indicator, overlay của backtest result *bắt buộc* từ backend (cần fill policy + position state), và tránh phải implement mỗi strategy 2 lần (Python + TypeScript).
+- **Vì sao**: ba lý do ở §3.2 — tránh hai nguồn chân lý cho cùng một indicator, overlay của backtest result *bắt buộc* từ backend (cần fill policy + position state), và tránh phải implement mỗi strategy 2 lần (Go + TypeScript).
 - **Vì sao có `provider` và `config_hash` trong khoá subscription**: RSI(14,30,70) và RSI(21,30,70) là hai series khác nhau trên cùng `(provider, symbol, timeframe)`, và Binance/OKX có thể cùng cung cấp một symbol. Thiếu một trong hai field thì Panel có thể nhận delta của series hoặc provider khác và vẽ sai.
 - **Đánh đổi**: mỗi lần user đổi param là một round-trip. Bù lại: `config_hash` là khoá cache tự nhiên (nếu thêm Redis), và tính đúng quan trọng hơn tiết kiệm một round-trip.
 
@@ -3557,12 +3465,12 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Vì sao Redis không bao giờ là nguồn sự thật**: khác với hệ thống đăng ký chỗ ngồi (nơi Redis `DECR` là cơ chế chống race), ở đây không có counter nào cần atomic cross-process. Mọi thứ cần tính đúng đều là dữ liệu bất biến trong PostgreSQL. Redis chỉ cache thứ tính lại được.
 - **Đánh đổi**: khi scale ngang API, rate limit per-instance sẽ cho phép tổng thông lượng cao hơn ngưỡng cấu hình (N instance × ngưỡng). Chấp nhận khi chạy 1 instance API; nếu scale ngang thì chuyển sang Redis + Lua (điều kiện ở §12.0).
 
-### ADR-011: Go làm public boundary, Python làm domain
+### ADR-011: Go sở hữu Strategy/Backtest; Python chỉ làm AI inference
 
-- **Quyết định**: giữ topology hiện có — **3 code artifact, 4 loại runtime workload** (§1.3.1). Go: HTTP/WebSocket edge, auth, RBAC, rate limit, validation, fan-out. Python: toàn bộ domain (API server + worker, cùng codebase). Ranh giới và ownership chi tiết ở §1.2.
-- **Vì sao không gộp hết vào Python (FastAPI)**: fan-out WebSocket cho nhiều panel × nhiều client là I/O-bound concurrency — chỗ Go mạnh nhất (goroutine, không GIL). Python asyncio làm được nhưng khi Python cũng chạy backtest CPU-bound thì GIL và CPU contention sẽ làm WebSocket loop bị đói. Tách ra nghĩa là backtest nặng không ảnh hưởng độ trễ realtime.
-- **Vì sao không gộp hết vào Go**: mất numpy/pandas cho indicator và mất hệ sinh thái ML cho sentiment. Viết lại indicator library trong Go là công việc lớn không mang lại giá trị kiến trúc nào — và tệ hơn, nó tạo **hai** implementation của cùng một indicator (§1.2.2 lý do 2).
-- **Đánh đổi**: một network hop nội bộ (~1–3 ms trên cùng host) và contract phải giữ đồng bộ giữa hai ngôn ngữ. Giảm nhẹ bằng contract test ở boundary Go↔Python chạy trong CI.
+- **Quyết định**: giữ topology **3 code artifact, 4 loại runtime workload** (§1.3.1). Go sở hữu HTTP/WebSocket edge, auth, RBAC, rate limit, domain, strategy và backtest worker. Python chỉ phục vụ versioned sentiment inference. Ranh giới và ownership chi tiết ở §1.2.
+- **Vì sao Go cho strategy/backtest**: indicator, overlay và backtest dùng cùng implementation Go, loại hai nguồn chân lý. Worker Go tách process với API nên CPU-bound backtest không làm đói WebSocket.
+- **Vì sao vẫn giữ Python**: ecosystem ML cho sentiment. Nó là adapter hẹp, không sở hữu domain state hay DB.
+- **Đánh đổi**: một network hop Go→Python chỉ khi inference sentiment. Giảm nhẹ bằng contract test ở boundary này chạy trong CI.
 - **Xem thêm**: ADR-015 giải thích vì sao topology này **không** phải microservice-per-module và cách gọi tên đúng từng lớp.
 
 ### ADR-012: Leaderboard append-only tham chiếu evaluation
@@ -3582,17 +3490,17 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 ### ADR-014: Bounded input là control kiến trúc, không phải validation UI
 
 - **Quyết định**: giới hạn cứng ở boundary — 1000 nến/response, 20.000 nến/experiment, 500 candidate/run, 2 concurrent run/user, 8–16 subscription/connection, 1 MiB body.
-- **Vì sao**: mỗi giới hạn tương ứng một cách hệ thống có thể bị hạ. `from=2017&timeframe=1m` là 4.7M nến — đủ để OOM Python process. `max_candidates=100000` là 5,5 giờ worker. Không giới hạn nghĩa là một request hợp lệ về mặt cú pháp có thể làm sập hệ thống.
+- **Vì sao**: mỗi giới hạn tương ứng một cách hệ thống có thể bị hạ. `from=2017&timeframe=1m` là 4.7M nến — đủ để OOM Go API/worker process. `max_candidates=100000` là 5,5 giờ worker. Không giới hạn nghĩa là một request hợp lệ về mặt cú pháp có thể làm sập hệ thống.
 - **Đánh đổi**: user muốn backtest 5 năm dữ liệu 1m phải chia nhiều experiment. Ngưỡng nằm trong `user_quotas` nên nâng được cho từng user khi có nhu cầu thật.
 
 ### ADR-015: Polyglot multi-process topology, không phải một monolith duy nhất và cũng không microservice-per-module
 
 - **Bối cảnh**: hệ thống có 3 code artifact và 4 loại runtime workload (§1.3.1). Cách gọi "Layered Modular Monolith" cho *toàn hệ thống* là sai vì có nhiều deployable; nhưng gọi nó là "microservices" cũng sai vì 6 module domain nằm cùng một process.
-- **Quyết định**: gọi đúng từng lớp — **Next.js là presentation layer**, **Go là edge service / BFF**, **Python Strategy Lab là Modular Monolith + Hexagonal domain core**, **Worker là workload thứ hai của cùng domain core**. Không có nhãn duy nhất cho toàn hệ thống, và cố gán một nhãn duy nhất là nguồn của chính sự nhầm lẫn này.
-- **Vì sao ranh giới process không trùng ranh giới module domain**: Go/Python là ranh giới **kỹ thuật** — I/O-bound fan-out tách khỏi CPU-bound computation (§1.2.2 lý do 3). Nếu ranh giới process trùng ranh giới domain thì Market Data, Strategy, Experiment, Search, Ranking, News phải là 6 service — và §32 không có driver nào đòi hỏi điều đó.
+- **Quyết định**: gọi đúng từng lớp — **Next.js là presentation layer**, **Go Strategy Service là Modular Monolith / Hexagonal domain core và public boundary**, **Worker là workload thứ hai của cùng Go codebase**, **Python AI là inference adapter**.
+- **Vì sao ranh giới process không trùng ranh giới module domain**: Go/Python là ranh giới **kỹ thuật** — domain execution tách khỏi ML inference. Nếu ranh giới process trùng ranh giới domain thì Market Data, Strategy, Experiment, Search, Ranking, News phải là 6 service — và §32 không có driver nào đòi hỏi điều đó.
 - **Vì sao không microservice-per-module**: xem §1.1. Ngắn gọn: thêm service discovery + distributed tracing + eventual consistency giữa 6 module mà không giải quyết driver nào; đề bài §38 nói rõ không cộng điểm cho việc đó.
-- **Vì sao không gộp tất cả thành 1 process**: mất tách CPU/IO (backtest 40 s làm đói WebSocket loop), và một public surface phải kiêm cả edge concerns lẫn domain — chính là God Service (§9.1).
-- **Đánh đổi**: một network hop nội bộ Go↔Python (1–3 ms trên cùng host), contract phải giữ đồng bộ giữa hai ngôn ngữ, và người đọc tài liệu phải nắm bốn nhãn thay vì một. Giảm nhẹ: contract test ở boundary Go↔Python chạy trong CI, và §1.2 là section chuẩn để mọi tài liệu khác tham chiếu về.
+- **Vì sao không gộp tất cả thành 1 process**: worker là process riêng để backtest 40 s không làm đói WebSocket; AI inference cũng giữ internal-only surface.
+- **Đánh đổi**: một network hop nội bộ Go→Python chỉ cho sentiment. Giảm nhẹ: contract test ở boundary này chạy trong CI.
 
 ### ADR-016: `POST /internal/events` là protocol duy nhất cho Python → Go, không WebSocket nội bộ
 
@@ -3606,7 +3514,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 ### ADR-017: Stop Loss / Take Profit là MVP; intrabar ambiguity giải bằng conservative bias
 
 - **Bối cảnh**: đề bài yêu cầu chart visualize được *"điểm Entry, Stop Loss, Take Profit"* (mục Multi-Timeframe Chart), nhưng lại xếp *"Trading: Long/Short, Stop Loss, Take Profit, Trailing Stop, Position Sizing"* vào phần tuỳ chọn. Hai chỗ này nói về hai thứ khác nhau và cần tách ra tường minh, không để mỗi người đọc tự suy.
-- **Quyết định**: `risk_policy` gồm `stop_loss_pct`, `take_profit_pct` (cố định theo % của `entry_price`) và `intrabar_priority` **là MVP**, nằm trong `ExperimentSnapshot` và trong DDL `experiments` (§4.2). Trailing Stop, Position Sizing, Long/Short **không** làm — chúng là seam đã có chỗ trong snapshot. `risk_policy` mặc định `NULL`, nghĩa là một strategy technical thuần vẫn chạy như cũ.
+- **Quyết định**: `risk_policy` gồm `stop_loss_pct`, `take_profit_pct` (cố định theo % của `entry_price`) và `intrabar_priority` là execution seam, nằm trong `ExperimentSnapshot` và DDL `experiments` (§4.2). Baseline position policy là one-net LONG/SHORT và sizing policy là fixed notional `10 USDT`; trailing stop là extension. `risk_policy` mặc định `NULL`, nghĩa là fixture không tạo SL/TP.
 - **Vì sao SL/TP không thể là extension**: `specs/visualization.md` có contract cho `overlay_type: "stop_loss"` và `"take_profit"`, và bước 9 của demo là *"chart hiện Buy/Sell/Entry/Exit/SL/TP"*. Coi cả SL/TP là extension nghĩa là để hai `overlay_type` vĩnh viễn rỗng và một bước demo không diễn ra được.
 - **Vì sao mức chốt tại entry, không tính lại mỗi nến**: tính lại theo giá hiện tại **là** trailing stop — hành vi khác, thuộc extension. Mức cố định vẽ được thành một **đường ngang** từ `entry_time` đến `exit_time` và giải thích được. Nó cũng là lý do `trades` có `sl_price`/`tp_price` chứ không suy ra từ `%` khi render.
 - **Vấn đề intrabar**: một nến có `low < sl_price` **và** `high > tp_price` thì cả hai đều chạm, nhưng OHLCV **không chứa thứ tự**. Giả định TP trước tạo optimistic bias — mọi nến biến động lớn thành trade thắng, tức là look-ahead bias ở dạng khác. Nội suy từ timeframe nhỏ hơn là đúng nhất nhưng cần nạp thêm dữ liệu 1m cho mọi backtest, phá giới hạn 20.000 nến và làm dataset không còn một `content_hash` duy nhất.
@@ -3622,58 +3530,61 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 ### 11.1 Strategy mới được thêm vào hệ thống như thế nào? Sửa những component nào?
 
-**Thêm 1 file. Sửa 0 component.**
+**Thêm 1 file Go plugin. Sửa 0 component core.**
 
 ```text
-app/domain/strategy/plugins/macd.py        ← MỚI (≈40 dòng, xem §8.1)
-tests/strategy/test_macd.py                ← MỚI (test đơn vị)
+server/internal/domain/strategy/plugins/macd.go        ← MỚI
+server/internal/domain/strategy/plugins/macd_test.go   ← MỚI (test đơn vị)
 ```
 
-Không sửa: Registry, Combiner, BacktestEngine, Evaluator, RankingService, Go API, DB schema, UI, CandidateGenerator.
+Không sửa: Registry, Combiner, BacktestEngine, Evaluator, RankingService, Go API,
+DB schema, UI hoặc CandidateGenerator. Plugin gọi
+`StrategyRegistry.Register(Definition, Factory)`; startup kiểm tra metadata,
+fingerprint và upsert version vào DB. `GET /strategies`, form UI và generator
+đọc registry nên MACD tự xuất hiện sau deploy.
 
-Cơ chế: `@register_strategy` + package auto-import + metadata khai báo. Startup upsert `strategy_definitions`/`strategy_versions` từ `all_definitions()`; `GET /strategies` trả từ registry; UI sinh form từ `parameters_schema`; `RandomSearchGenerator` đọc registry nên MACD tự vào search space.
-
-→ Kiểm chứng: `git diff --stat` trong demo S3. Chi tiết: §8.1, ADR-002, `specs/strategy-registry.md`.
+→ Kiểm chứng: `git diff --stat` trong demo S3. Chi tiết: §8.1, ADR-002 và
+`specs/strategy-registry.md`.
 
 ### 11.2 Search algorithm mới được thêm như thế nào? Có ảnh hưởng Backtesting Engine không?
 
-**Không ảnh hưởng.** Thêm 1 file generator + 1 dòng config.
+**Không ảnh hưởng.** Thêm một Go implementation của `CandidateGenerator` và
+một dòng cấu hình. `BacktestEngine.Run(ctx, snapshot, candles, bbo)` chỉ nhận
+snapshot bất biến; nó không biết candidate được Random, Domain-guided hay
+Genetic sinh ra.
 
-```python
-# app/infrastructure/search/genetic.py     ← MỚI
-class GeneticGenerator:
-    def generator_id(self) -> str: return "genetic"
-    def generate(self, space, limit, seed, history) -> Iterator[CandidateStrategy]:
-        # đọc history.top_k để lai ghép thế hệ trước
-        ...
+```go
+type GeneticGenerator struct{}
+
+func (GeneticGenerator) Generate(ctx context.Context, space search.Space,
+	limit int, seed *int64, history search.History) ([]search.Candidate, error) {
+	// đọc history.TopK, tạo candidate bounded và deterministic theo seed
+	return nil, nil
+}
 ```
 
-`BacktestEngine.run(snapshot, candles)` không có tham số nào liên quan tới nguồn gốc candidate. Nó nhận `ExperimentSnapshot`; snapshot chứa `candidate_definition`. Generator nào sinh ra định nghĩa đó là thông tin engine không cần và không có.
-
-Chỗ tinh tế: `SearchHistory` được truyền **vào** generator, cho Genetic đọc kết quả thế hệ trước. Nghĩa là generator có thể adaptive mà pipeline vẫn một chiều — điều này đã tính từ ADR-004, không phải patch thêm sau.
-
-→ Kiểm chứng: demo S4. Chi tiết: §5.1, ADR-004, `specs/search-loop.md`.
+→ Kiểm chứng: demo S4. Backtest/Evaluator/Leaderboard không đổi dòng nào.
 
 ### 11.3 Market Data Provider mới được thêm như thế nào? Có phải sửa frontend không?
 
 **Không phải sửa frontend. 0 dòng.**
 
-```python
-# app/infrastructure/market/okx.py         ← MỚI
-class OKXAdapter:
-    def provider_id(self) -> str: return "okx"
-    def list_candles(self, symbol, timeframe, from_, to) -> list[Candle]:
-        raw = self._http.get("/api/v5/market/candles", params=...)
-        return [self._to_candle(r) for r in raw["data"]]   # dịch sang Candle nội bộ
-    def stream_candles(self, subscriptions, publish) -> Subscription: ...
+```go
+type OKXAdapter struct { /* transport/private payload stays here */ }
+
+func (OKXAdapter) ProviderID() string { return "okx" }
+func (OKXAdapter) ListClosedCandles(ctx context.Context,
+	q market.CandleQuery) ([]market.Candle, error) { /* normalize */ }
+func (OKXAdapter) Stream(ctx context.Context,
+	keys []market.StreamKey) (<-chan market.Event, error) { /* normalize */ }
 ```
 
-Lý do frontend không đổi: nó nhận `Candle` chuẩn hoá qua `GET /markets/candles` và WebSocket. Field name của OKX (`ts`, `o`, `h`, `l`, `c`, `vol`) chỉ tồn tại **bên trong** `_to_candle()`. Frontend chưa bao giờ thấy chúng.
+Frontend chỉ nhận Candle/WS DTO chuẩn hoá từ Go. Field `ts/o/h/l/c/vol` của OKX
+không vượt qua adapter. Thêm một row `market_pairs(provider='okx')`; primary
+key và dataset identity đã chứa provider nên không trộn với
+`binance_usdm/ETHUSDT`.
 
-Thêm vào: 1 row `market_pairs` với `provider='okx'` (ràng buộc là `UNIQUE(provider, symbol)`). `candles.provider` đã là phần của primary key và index range nên hai provider cùng symbol không xung đột — điều này đã có trong schema từ MVP, không phải migration sau.
-
-→ Chi tiết: §3.1 điểm ①, `specs/market-data.md`.
-
+→ Chi tiết: §3.1 điểm ① và `specs/market-data.md`.
 ### 11.4 Nếu số backtest tăng từ 100 lên 100.000 thì kiến trúc thay đổi thế nào?
 
 **Ba bước, mỗi bước là deployment change:**
@@ -3721,7 +3632,7 @@ Nếu shape *phải* đổi (ví dụ thêm nhãn `MIXED`): đó là breaking ch
 1. **Detect**: ping/pong timeout hoặc connection close event → `StreamDisconnected`.
 2. **Degrade tường minh**: `stream_checkpoints.is_stale=true`, `reconnect_count += 1`, đẩy `StreamStale` ra UI. Chart hiện badge `STALE` + thời điểm cập nhật cuối. Nến lịch sử vẫn render; backtest vẫn chạy.
 3. **Reconnect**: capped exponential backoff 1s → 2s → 4s → ... → 30s, có jitter (chống thundering herd nếu nhiều stream cùng rớt).
-4. **Backfill**: đọc `last_closed_at = T1`, gọi `GET /api/v3/klines?startTime=T1`, UPSERT. `PRIMARY KEY (provider, symbol, timeframe, close_time)` + `ON CONFLICT DO UPDATE` khiến việc này idempotent — chồng lấp bao nhiêu cũng không tạo nến trùng.
+4. **Backfill**: đọc `last_closed_at = T1`, gọi `GET /fapi/v1/klines?startTime=T1`, UPSERT. `PRIMARY KEY (provider, symbol, timeframe, open_time)` + `ON CONFLICT DO UPDATE` khiến việc này idempotent — chồng lấp bao nhiêu cũng không tạo nến trùng.
 
 **0 nến đã đóng bị mất**, vì điểm neo là `last_closed_at` trong DB, không phải trạng thái trong RAM (mất khi process restart).
 
@@ -3743,13 +3654,13 @@ Nếu shape *phải* đổi (ví dụ thêm nhãn `MIXED`): đó là breaking ch
   "experiment": {
     "id": "…",
     "fee_bps": 10, "slippage_bps": 5,
-    "fill_policy": "next_candle_open", "position_policy": "long_only",
-    "open_position_at_end": "close_at_last_candle",
+    "fill_policy": "bbo_limit", "position_policy": "one_net_position",
+    "open_position_at_end": "last_executable_bbo",
     "risk_policy": {
       "stop_loss_pct": 2.0, "take_profit_pct": 5.0,
       "intrabar_priority": "stop_loss_first"
     },
-    "initial_capital": "10000.00"
+    "initial_equity": "100.00", "fixed_notional": "10.00", "leverage": "1"
   },
   "strategy": {
     "strategy_id": "composite", "version": "1.0.0",
@@ -3767,8 +3678,8 @@ Nếu shape *phải* đổi (ví dụ thêm nhãn `MIXED`): đó là breaking ch
     ]
   },
   "dataset": {
-    "dataset_version": "binance-btcusdt-5m-20260101-20260301",
-    "provider": "binance", "symbol": "BTCUSDT", "timeframe": "5m",
+    "dataset_version": "binance-ethusdt-5m-20260101-20260301",
+    "provider": "binance_usdm", "symbol": "ETHUSDT", "timeframe": "5m",
     "range_from": "2026-01-01T00:00:00Z", "range_to": "2026-03-01T00:00:00Z",
     "revision_no": 1,
     "candle_count": 17280, "content_hash": "7a1e…"
@@ -3816,11 +3727,11 @@ Nói cách khác: **Worker không phải "tính năng Phase 6", và Redis không
 
 ### 12.1 Bảy phase
 
-Điểm khởi đầu thực tế: repo hiện có `web (Next.js) → api (Go) → ai (FastAPI)` với một endpoint `POST /api/v1/ai/predict` proxy tới một stub trả `{label:"neutral", score:0.5, model:"stub-v0"}`. **Chưa có** database, chưa có WebSocket, chưa có bất kỳ code domain nào (candle, indicator, strategy, backtest, news). Roadmap bắt đầu từ đúng chỗ đó.
+Điểm khởi đầu thực tế: repo hiện có `web (Next.js) → api (Go) → ai (FastAPI)` với một endpoint `POST /api/v1/ai/predict` proxy tới một stub trả `{label:"neutral", score:0.5, model:"stub-v0"}`. **Chưa có** database, chưa có WebSocket, chưa có bất kỳ code domain nào (candle, indicator, strategy, backtest, news). FastAPI chỉ là implementation hiện tại của AI sentiment adapter; mọi domain contract và migration mới thuộc Go. Roadmap bắt đầu từ đúng chỗ đó.
 
 | Phase | Kết quả                                                                                            | Bằng chứng hoàn thành                                                            |
 | ----- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **0. Nền** | Thêm PostgreSQL + Alembic vào compose. Chuẩn hoá error envelope, request ID, structured log, `/healthz` vs `/readyz`. Siết CORS về allowlist. Bỏ publish port `ai` ra host trong profile production. | `docker compose up` → migration chạy, readiness đúng; contract test error envelope |
+| **0. Nền** | Thêm PostgreSQL + Go migration runner vào compose. Chuẩn hoá error envelope, request ID, structured log, `/healthz` vs `/readyz`. Siết CORS về allowlist. Bỏ publish port `ai` ra host trong profile production. | `docker compose up` → migration chạy, readiness đúng; contract test error envelope |
 | **1. Market vertical slice** | `BinanceAdapter` (REST + WSS), `candles`, `stream_checkpoints`, `market_datasets`. WebSocket hub trong Go + `POST /internal/events`. **1 chart panel** realtime. | Test reconnect + backfill: ngắt 60 s → 0 nến thiếu. UI hiện badge STALE.          |
 | **2. Multi-chart + Strategy plugin** | 4 panel độc lập. Registry + 4 strategy (MA, RSI, BB, SR). `IndicatorLibrary`. `GET /chart-overlays`. | Demo S1 (đổi Chart 1 không re-render Chart 2–4) + demo S3 (thêm MACD, 0 dòng sửa core) |
 | **3. Experiment + Backtest + Worker** | `experiments`, `backtest_jobs` (có `lease_token`), `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`. `domain_events` + `event_consumptions` + `OutboxDispatcher`. **Worker workload với 1 replica** (bắt buộc, không tuỳ chọn — §12.0). `202 + run_id`. | Demo S5: fixture 200 nến có kết quả tính tay → khớp chính xác, chạy 2 lần giống nhau. AC-05b/c/d (lease take-over) và AC-14b (outbox không mất event) pass. |
@@ -3836,7 +3747,7 @@ Thứ tự này có một nguyên tắc: **mỗi phase kết thúc bằng một 
 | Bước | Hành động                                              | Điểm kiến trúc chứng minh                                       |
 | ---- | ------------------------------------------------------ | --------------------------------------------------------------- |
 | 1    | `docker compose up`, show `/readyz` tất cả service healthy | Migration chạy trước readiness; startup < 120 s              |
-| 2    | Mở BTCUSDT `5m \| 15m \| 1h \| 4h` — 4 chart realtime  | Multi-timeframe; frontend không biết Binance                    |
+| 2    | Mở ETHUSDT `5m \| 15m \| 1h \| 4h` — 4 chart realtime  | Multi-timeframe; frontend không biết Binance                    |
 | 3    | Đổi Chart 1 `5m → 1h`; mở DevTools Network + React Profiler | **S1**: 1 request mới, Chart 2–4 render count = 0           |
 | 4    | Ngắt network container Python 60 s rồi nối lại          | **S9**: badge STALE → reconnect → backfill, 0 nến mất           |
 | 5    | Bật MA, RSI, Bollinger, S/R trên Chart 1                | Overlay do backend tính (mở Network xem `chart-overlays`)       |
@@ -3899,7 +3810,7 @@ Bước 16–18 là phần quan trọng nhất của demo. Bước 1–15 chứn
 
 ## 13. Phụ lục — Cấu trúc thư mục source code đề xuất
 
-Cấu trúc dưới đây **giữ nguyên** 3 code artifact đã có trong repo (`web/`, `server/`, `ai/`) và mở rộng vào bên trong, không phải viết lại từ đầu. Workload `worker` dùng lại artifact `ai/` với entrypoint khác (§1.3.1).
+Cấu trúc dưới đây **giữ nguyên** 3 code artifact đã có trong repo (`web/`, `server/`, `ai/`) và mở rộng vào bên trong, không phải viết lại từ đầu. Workload `worker` dùng lại artifact Go `server/` với entrypoint khác (§1.3.1). `ai/` chỉ giữ inference sentiment.
 
 ```text
 CryptoBot/
@@ -3941,108 +3852,155 @@ CryptoBot/
 │   └── __tests__/
 │       └── no-domain-logic.test.ts      # §9.3 — chặn business logic ở FE
 │
-├── server/                       # Go 1.23 — PUBLIC BOUNDARY
-│   ├── cmd/api/main.go
+├── server/                       # Go 1.23 — Strategy Service, public API, worker
+│   ├── cmd/
+│   │   ├── api/main.go            # HTTP + WebSocket public entrypoint
+│   │   └── worker/main.go         # poll job + BacktestEngine.Run entrypoint
 │   ├── internal/
-│   │   ├── config/config.go
-│   │   ├── httpapi/
-│   │   │   ├── router.go
-│   │   │   ├── middleware/              # requestID · cors · securityHeaders
-│   │   │   │                            # bodyLimit · ratelimit · auth · rbac · recover
-│   │   │   ├── handler_market.go
-│   │   │   ├── handler_strategy.go
-│   │   │   ├── handler_experiment.go
-│   │   │   ├── handler_search.go
-│   │   │   ├── handler_leaderboard.go
-│   │   │   ├── handler_news.go
-│   │   │   ├── handler_ai.go            # (đã có) endpoint tương thích
-│   │   │   └── errors.go                # error envelope thống nhất
-│   │   ├── ws/
-│   │   │   ├── hub.go                   # subscription_key → set[conn]
-│   │   │   ├── client.go                # ping/pong, backpressure, sub limit
-│   │   │   └── subscription.go          # parse & validate key
-│   │   ├── auth/                        # jwt (RS256) · principal · csrf
-│   │   ├── labclient/                   # HTTP client → Python; propagate ctx/deadline
-│   │   └── observability/               # slog setup · prometheus
-│   └── internal/httpapi/*_test.go
-│
-├── ai/                           # Python 3.12 — STRATEGY LAB (domain)
-│   ├── app/
-│   │   ├── main.py                      # FastAPI: /internal/* + /healthz /readyz /metrics
-│   │   ├── worker.py                    # entrypoint worker — CÙNG image
-│   │   ├── scheduler.py                 # cron: news collect, job sweeper, dataset build
+│   │   ├── platform/              # cross-cutting; no domain decision
+│   │   │   ├── config/config.go
+│   │   │   ├── database/
+│   │   │   │   ├── pool.go
+│   │   │   │   ├── tx.go
+│   │   │   │   └── migrate.go
+│   │   │   └── observability/
+│   │   │       ├── logger.go      # slog JSON + correlation ID
+│   │   │       └── metrics.go     # Prometheus registry
 │   │   │
-│   │   ├── domain/                      # ⚠️ KHÔNG import infrastructure
-│   │   │   ├── market/{candle,timeframe,dataset}.py
-│   │   │   ├── indicator/{sma,ema,rsi,bollinger,support_resistance,macd}.py
-│   │   │   ├── strategy/
-│   │   │   │   ├── contract.py          # Strategy · AnalysisContext · Signal · Definition
-│   │   │   │   ├── registry.py          # @register_strategy · resolve · all_definitions
-│   │   │   │   ├── plugins/
-│   │   │   │   │   ├── __init__.py      # auto-import mọi module trong package
-│   │   │   │   │   ├── ma_cross.py
-│   │   │   │   │   ├── rsi.py
-│   │   │   │   │   ├── bollinger.py
-│   │   │   │   │   ├── support_resistance.py
-│   │   │   │   │   ├── news_sentiment.py
-│   │   │   │   │   └── macd.py          # ← DEMO S3 thêm đúng 1 file này
-│   │   │   │   └── combiner/{majority_vote,weighted_vote}.py
-│   │   │   ├── backtest/{engine,position,fill_policy,result}.py
-│   │   │   ├── evaluation/{evaluator,metrics}.py
-│   │   │   ├── search/{space,candidate,stop_condition}.py
-│   │   │   └── ranking/{score_policy,leaderboard}.py
-│   │   │
-│   │   ├── ports/                       # interface do DOMAIN định nghĩa
-│   │   │   ├── market_data.py           # MarketDataProvider
-│   │   │   ├── candidate_generator.py   # CandidateGenerator
-│   │   │   ├── news_provider.py         # NewsProvider
-│   │   │   ├── sentiment.py             # SentimentAnalyzer
-│   │   │   ├── job_dispatcher.py        # JobDispatcher
-│   │   │   └── repositories.py
-│   │   │
-│   │   ├── application/                 # điều phối — KHÔNG tính toán domain
-│   │   │   ├── market_service.py        # reconnect · backfill · de-dup · overlay
-│   │   │   ├── experiment_service.py    # snapshot + enqueue trong 1 transaction
-│   │   │   ├── search_run_service.py    # loop · stop condition · pause/resume
-│   │   │   ├── ranking_service.py       # consume StrategyEvaluated
-│   │   │   ├── news_service.py
-│   │   │   └── events/{dispatcher,vocabulary}.py
-│   │   │
-│   │   ├── infrastructure/              # adapter — chỉ DỊCH, không quyết định
+│   │   ├── domain/                # ⚠️ no infrastructure import, no I/O
 │   │   │   ├── market/
-│   │   │   │   ├── binance_rest.py
-│   │   │   │   ├── binance_ws.py
-│   │   │   │   ├── weight_limiter.py    # outbound token bucket theo weight
-│   │   │   │   └── okx.py               # (ví dụ mở rộng §11.3)
-│   │   │   ├── search/{random_search,domain_guided}.py
-│   │   │   ├── news/{rss_adapter,newsapi_adapter,ssrf_guard.py}
-│   │   │   ├── sentiment/model_adapter.py   # thay thế stub predictor.py
-│   │   │   ├── jobs/postgres_dispatcher.py  # FOR UPDATE SKIP LOCKED
-│   │   │   └── db/{session,models,repositories}/
+│   │   │   │   ├── candle.go       # normalized OHLCV
+│   │   │   │   ├── timeframe.go
+│   │   │   │   ├── dataset.go      # immutable dataset snapshot
+│   │   │   │   └── causal_candles.go # block future candle access
+│   │   │   ├── indicator/
+│   │   │   │   ├── library.go
+│   │   │   │   ├── causal_view.go  # block indicator index > current
+│   │   │   │   ├── sma.go
+│   │   │   │   ├── ema.go
+│   │   │   │   ├── rsi.go
+│   │   │   │   ├── bollinger.go
+│   │   │   │   ├── support_resistance.go
+│   │   │   │   └── macd.go
+│   │   │   ├── strategy/
+│   │   │   │   ├── contract.go     # Strategy · AnalysisContext · Signal
+│   │   │   │   ├── definition.go
+│   │   │   │   ├── registry.go     # RegisterStrategy · Resolve · AllDefinitions
+│   │   │   │   ├── plugins/        # same Go package; init() self-registers
+│   │   │   │   │   ├── ma_cross.go
+│   │   │   │   │   ├── rsi.go
+│   │   │   │   │   ├── bollinger.go
+│   │   │   │   │   ├── support_resistance.go
+│   │   │   │   │   ├── news_sentiment.go
+│   │   │   │   │   └── macd.go     # ← DEMO S3: only new file
+│   │   │   │   └── composite/
+│   │   │   │       ├── contract.go
+│   │   │   │       ├── majority_vote.go
+│   │   │   │       └── weighted_vote.go
+│   │   │   ├── backtest/
+│   │   │   │   ├── engine.go       # chronological loop, Strategy.Analyze
+│   │   │   │   ├── position.go
+│   │   │   │   ├── fill_policy.go  # bbo_limit
+│   │   │   │   └── result.go       # TradeFact · SignalRecord · EquityPoint
+│   │   │   ├── evaluation/
+│   │   │   │   ├── evaluator.go
+│   │   │   │   ├── metrics.go
+│   │   │   │   └── policy.go
+│   │   │   ├── search/
+│   │   │   │   ├── space.go
+│   │   │   │   ├── candidate.go
+│   │   │   │   ├── generator.go
+│   │   │   │   └── stop_condition.go
+│   │   │   └── ranking/
+│   │   │       ├── score_policy.go
+│   │   │       └── leaderboard.go
 │   │   │
-│   │   └── api/                         # FastAPI router nội bộ (thin)
-│   │       └── internal/{market,strategy,experiment,search,leaderboard,news}.py
+│   │   ├── ports/                 # interface defined by domain/application
+│   │   │   ├── market_data.go      # MarketDataProvider
+│   │   │   ├── candidate_generator.go
+│   │   │   ├── news_provider.go
+│   │   │   ├── sentiment_analyzer.go
+│   │   │   ├── job_dispatcher.go
+│   │   │   └── repositories.go
+│   │   │
+│   │   ├── application/           # orchestrate; no domain calculations
+│   │   │   ├── kline_update.go    # transient normalized live Kline; chart-only
+│   │   │   ├── market_service.go  # reconnect · backfill · de-dup · overlay
+│   │   │   ├── experiment_service.go # snapshot + enqueue in one transaction
+│   │   │   ├── search_run_service.go # loop · stop condition · pause/resume
+│   │   │   ├── backtest_worker.go # claim · heartbeat · persist result
+│   │   │   ├── ranking_service.go # consume StrategyEvaluated
+│   │   │   ├── news_service.go
+│   │   │   └── events/
+│   │   │       ├── dispatcher.go
+│   │   │       └── vocabulary.go
+│   │   │
+│   │   ├── infrastructure/        # adapters: translate, never decide domain
+│   │   │   ├── market/
+│   │   │   │   ├── binance_rest.go
+│   │   │   │   ├── binance_ws.go
+│   │   │   │   ├── binance_kline_event.go # private raw JSON: e/E/s/k.*
+│   │   │   │   ├── weight_limiter.go # outbound token bucket by weight
+│   │   │   │   └── okx.go          # extension example §11.3
+│   │   │   ├── search/
+│   │   │   │   ├── random_search.go
+│   │   │   │   └── domain_guided.go
+│   │   │   ├── news/
+│   │   │   │   ├── rss.go
+│   │   │   │   ├── newsapi.go
+│   │   │   │   └── ssrf_guard.go
+│   │   │   ├── ai/
+│   │   │   │   └── client.go        # Python `/predict`, deadline + model version
+│   │   │   └── postgres/
+│   │   │       ├── repositories.go
+│   │   │       ├── job_dispatcher.go # FOR UPDATE SKIP LOCKED
+│   │   │       └── outbox.go
+│   │   │
+│   │   ├── transport/             # public protocol boundary, thin
+│   │   │   ├── httpapi/
+│   │   │   │   ├── router.go
+│   │   │   │   ├── middleware/     # request ID · CORS · auth · RBAC · rate limit
+│   │   │   │   ├── handler_market.go
+│   │   │   │   ├── handler_strategy.go
+│   │   │   │   ├── handler_experiment.go
+│   │   │   │   ├── handler_search.go
+│   │   │   │   ├── handler_leaderboard.go
+│   │   │   │   ├── handler_news.go
+│   │   │   │   ├── handler_ai.go
+│   │   │   │   └── errors.go
+│   │   │   └── ws/
+│   │   │       ├── hub.go
+│   │   │       ├── client.go
+│   │   │       ├── subscription.go
+│   │   │       └── chart_kline.go  # presentation DTO; never market.Candle
+│   │   │
+│   │   └── auth/                  # JWT RS256 · principal · session · CSRF
 │   │
-│   ├── migrations/                      # Alembic
-│   ├── seeds/                           # strategy metadata · score policy v1 · news sources
-│   ├── tests/
-│   │   ├── architecture/
-│   │   │   ├── test_module_boundaries.py    # §9.1 — chặn God Service
-│   │   │   ├── test_no_strategy_branching.py# §9.2 — chặn hard-coded strategy
-│   │   │   └── test_strategy_purity.py      # §9.4 — strategy chạy không cần DB/network
-│   │   ├── domain/
-│   │   │   ├── test_indicators.py
-│   │   │   ├── test_strategies.py
-│   │   │   ├── test_combiners.py
-│   │   │   ├── test_backtest_fixture.py     # S5 — kết quả tính tay
-│   │   │   └── test_no_lookahead.py         # R3 — assert không đọc nến tương lai
-│   │   ├── application/
-│   │   │   ├── test_search_stop_conditions.py
-│   │   │   ├── test_job_lease_recovery.py   # worker chết → job về queued
-│   │   │   └── test_idempotent_consumers.py # R12 — duplicate event
-│   │   └── integration/
-│   │       ├── test_reconnect_backfill.py   # S9
-│   │       └── test_sentiment_unavailable.py# S8
+│   ├── migrations/                # SQL migrations; Go owns schema
+│   ├── seeds/                     # strategy metadata · score policy v1 · news sources
+│   └── tests/
+│       ├── architecture/
+│       │   ├── module_boundaries_test.go # §9.1 — no God Service
+│       │   ├── no_strategy_branching_test.go # §9.2
+│       │   └── strategy_purity_test.go # §9.4 — no DB/network needed
+│       ├── domain/
+│       │   ├── indicators_test.go
+│       │   ├── strategies_test.go
+│       │   ├── combiners_test.go
+│       │   ├── backtest_fixture_test.go # S5 — hand-calculated result
+│       │   ├── no_lookahead_test.go    # R3 — no future candle read
+│       │   └── kline_boundary_test.go  # provisional Kline never reaches strategy
+│       ├── application/
+│       │   ├── search_stop_conditions_test.go
+│       │   ├── job_lease_recovery_test.go # worker dies → queued
+│       │   └── idempotent_consumers_test.go # R12 duplicate event
+│       └── integration/
+│           ├── reconnect_backfill_test.go # S9
+│           └── sentiment_unavailable_test.go # S8
+│
+├── ai/                           # Python 3.12 — AI INFERENCE ONLY
+│   ├── app/{main,predictor,schemas}.py   # `/predict`, model version, health
+│   ├── tests/test_api.py
 │   ├── requirements.txt
 │   └── requirements-dev.txt
 │
@@ -4054,11 +4012,11 @@ CryptoBot/
 
 ### 13.1 Ba quy tắc về cấu trúc này
 
-**1. `domain/` không import `infrastructure/`.** Đây là quy tắc quan trọng nhất và là quy tắc duy nhất được kiểm tra bằng test tự động (`tests/architecture/test_module_boundaries.py`). Mọi ranh giới khác có thể tranh luận; ranh giới này thì không.
+**1. `domain/` không import `infrastructure/`.** Đây là quy tắc quan trọng nhất và là quy tắc duy nhất được kiểm tra bằng test tự động (`server/tests/architecture/module_boundaries_test.go`). Mọi ranh giới khác có thể tranh luận; ranh giới này thì không.
 
-**2. `plugins/__init__.py` auto-import.** Nó dùng `pkgutil.iter_modules` để import mọi module trong package. Đó là cách MACD "tự xuất hiện" sau khi thêm file — không có danh sách nào phải cập nhật, và vì thế không có chỗ nào để quên.
+**2. `strategy/plugins` tự đăng ký.** Mỗi file trong cùng package `plugins` gọi `RegisterStrategy` từ `init()`. Go tự compile file mới trong package, nên `MACDStrategy` là một file mới, không sửa registry hay danh sách trung tâm.
 
-**3. `worker.py` nằm cùng `main.py`.** Không phải một service riêng, không phải một repo riêng. Cùng image, cùng dependency, cùng `BacktestEngine`. Đây là điều làm §11.4 (scale 100 → 100.000) thành một thay đổi deployment thay vì một dự án.
+**3. Worker nằm cùng codebase Go với API.** Không phải một service hay repo riêng. Cùng image, cùng dependency, cùng `BacktestEngine`. Đây là điều làm §11.4 (scale 100 → 100.000) thành một thay đổi deployment thay vì một dự án.
 
 ### 13.2 Hai thay đổi cần làm ngay trên scaffold hiện tại
 
@@ -4070,15 +4028,3 @@ Hai điểm dưới đây là vấn đề trong code đang có, cần xử lý �
 | `docker-compose.yml` publish `${AI_PORT:-8000}:8000` ra host                     | Python service (không có auth) truy cập được từ ngoài            | Giữ cho dev; `docker-compose.prod.yml` bỏ mapping này              |
 
 Ngoài ra `NEXT_PUBLIC_API_URL` hiện được truyền như build ARG nên bị bake vào client bundle — đổi giá trị lúc runtime không có tác dụng lên browser. Nếu cần cấu hình theo môi trường mà không rebuild, phải chuyển sang runtime config (ví dụ một endpoint `/config` hoặc inject qua `window.__ENV__`). Không phải blocker cho MVP, nhưng cần biết trước khi ai đó mất một buổi debug vì nó.
-
-
-
-
-
-
-
-
-
-
-
-

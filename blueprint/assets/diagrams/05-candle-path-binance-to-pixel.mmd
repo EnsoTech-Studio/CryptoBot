@@ -10,19 +10,19 @@ sequenceDiagram
     participant P1 as Panel 1 (5m)
     participant P2 as Panel 2 (15m)
 
-    BN->>AD: {"e":"kline","k":{"t":...,"c":"118150","x":false}}
-    AD->>AD: validate schema + normalize → Candle(provisional)
-    AD->>MS: MarketPriceUpdated(binance, BTCUSDT, 5m, provisional)
-    MS->>HUB: candle delta qua POST /internal/events
-    HUB->>P1: frame khớp subscription (binance,BTCUSDT,5m)
-    Note over P2: KHÔNG nhận — subscription là (binance,BTCUSDT,15m)
+    BN->>AD: raw Kline event: {"e":"kline","k":{"t":...,"c":"118150","x":false}}
+    AD->>AD: validate + normalize → KlineUpdate(Final=false)
+    AD->>MS: KlineUpdated(binance, ETHUSDT, 5m, update)
+    MS->>HUB: ChartKline delta (presentation DTO)
+    HUB->>P1: frame khớp subscription (binance,ETHUSDT,5m)
+    Note over P2: KHÔNG nhận — subscription là (binance,ETHUSDT,15m)
 
-    BN->>AD: {"k":{...,"x":true}} — nến đóng
-    AD->>MS: CandleClosed(binance, BTCUSDT, 5m, close_time=T)
-    MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,close_time) DO UPDATE
+    BN->>AD: {"k":{...,"x":true}} — Kline final
+    AD->>MS: KlineUpdated(Final=true) → market.Candle
+MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,open_time) DO UPDATE
     Note over DB: candles là operational cache<br/>backtest đọc immutable dataset snapshot
     MS->>MS: cập nhật last_closed_at (dùng cho backfill)
-    MS->>EV: publish CandleClosed (in-process, cùng process lab)
+    MS->>EV: publish CandleClosed (in-process, Go service)
     EV->>OC: CandleClosed
     OC->>OC: tính overlay cho các config_hash đang được subscribe
     OC->>HUB: ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events

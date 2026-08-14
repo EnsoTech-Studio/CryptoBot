@@ -31,10 +31,10 @@ flowchart TB
 
     L3 --> L4
 
-    subgraph L4["Lớp 4 — Validation & Domain guard (Go + Python)"]
+    subgraph L4["Lớp 4 — Validation & Domain guard (Go)"]
         D1["Go: schema, range, enum, symbol, timeframe"]
-        D2["Python: validate LẠI (không tin caller nội bộ)"]
-        D3["Python: parameters_schema per strategy version"]
+        D2["Go: validate domain input"]
+        D3["Go: parameters_schema per strategy version"]
         D4["DB: CHECK constraint + FK + UNIQUE"]
         D1 --> D2 --> D3 --> D4
     end

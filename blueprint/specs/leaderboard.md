@@ -69,7 +69,7 @@ CREATE INDEX idx_leaderboard_topk
 
 > **`UNIQUE (evaluation_id, score_policy_version)`** làm hai việc cùng lúc: nó là lớp phòng thủ thứ hai chống duplicate event (lớp thứ nhất là `event_consumptions`), và nó phát biểu chính xác ngữ nghĩa của bảng — một evaluation có **một** điểm cho **mỗi** policy version, không nhiều hơn, không ít hơn.
 
-Nội dung `score_policies.weights` — mọi hằng số của việc chấm điểm nằm ở đây, **không** hard-code trong Python:
+Nội dung `score_policies.weights` — mọi hằng số của việc chấm điểm nằm ở đây, **không** hard-code trong Go:
 
 ```json
 {
@@ -191,19 +191,16 @@ sequenceDiagram
     autonumber
     actor A as ADMIN
     participant GO as Go API
-    participant PY as Python Lab
-    participant RNK as RankingService
+    participant RNK as Go RankingService
     participant DB as PostgreSQL
 
     A->>GO: POST /api/v1/admin/score-policies formula v2, weights v2
     GO->>GO: RBAC chỉ ADMIN, validate weights tổng 1.0 và anchor hợp lệ
-    GO->>PY: POST /internal/score-policies version v2, sau khi Go RBAC ADMIN
-    PY->>DB: INSERT score_policies version v2, is_active false
+    GO->>DB: INSERT score_policies version v2, is_active false
     A->>GO: POST /api/v1/admin/score-policies/v2/activate
-    GO->>PY: POST /internal/score-policies/v2/activate
-    PY->>DB: activate_score_policy(v2): advisory lock + switch + assert exactly one
-    Note over PY,DB: Go không ghi domain table; function là command duy nhất đổi active policy
-    PY->>RNK: recompute dataset_id, policy v2
+    GO->>DB: activate_score_policy(v2): advisory lock + switch + assert exactly one
+    Note over GO,DB: Go là domain writer duy nhất; function là command duy nhất đổi active policy
+    GO->>RNK: enqueue recompute dataset_id, policy v2
     RNK->>DB: SELECT metrics từ evaluations, KHÔNG chạy lại backtest
     RNK->>DB: INSERT leaderboard_entries policy v2 cho từng evaluation đủ điều kiện
     Note over RNK,DB: Entry policy v1 giữ NGUYÊN.<br/>So sánh được: v1 Top-1 là X, v2 Top-1 là Y.
@@ -263,7 +260,7 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 
 **Tính đúng đắn**
 
-- `leaderboard_entries` append-only ở **hai lớp**: test static `grep -rn "UPDATE leaderboard_entries\|DELETE FROM leaderboard_entries" ai/app/` → **0** khớp, và DB trigger `leaderboard_entries_immutable` chặn UPDATE/DELETE ngay cả khi code application bị gọi sai.
+- `leaderboard_entries` append-only ở **hai lớp**: static scan `server/` → **0** câu `UPDATE/DELETE leaderboard_entries`, và DB trigger `leaderboard_entries_immutable` chặn UPDATE/DELETE ngay cả khi code application bị gọi sai.
 - FK `evaluation_id ... ON DELETE RESTRICT` chặn xoá cascade làm mất entry; muốn retention phải archive toàn bộ provenance artifact, không hard-delete upstream.
 - `score` là **hàm thuần** của `(evaluations metrics, score_policies row)`. Không phụ thuộc thời điểm tính, không phụ thuộc population hiện tại — điều kiện cần để entry bất biến có nghĩa.
 - `INSERT event_consumptions` và `INSERT leaderboard_entries` nằm trong **cùng** transaction. Tách ra thì crash ở giữa cho một trong hai lỗi: event bị đánh dấu đã xử lý mà không có entry, hoặc entry trùng khi xử lý lại.
@@ -271,7 +268,7 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 - Đúng một policy `is_active` ở mọi commit — partial unique index chặn hai active, còn `activate_score_policy()` + readiness invariant chặn zero active.
 - `score_policies` immutable: sửa formula/weights/version hoặc DELETE đều bị trigger từ chối; thay đổi nghĩa phải INSERT version mới.
 - Tổng trọng số trong `weights` phải bằng `1.0` (kiểm tra khi tạo policy), nếu không `score` không còn nằm trong `[0, scale]` và không so sánh được giữa các policy.
-- `min_trades` và mọi anchor chuẩn hoá nằm trong `score_policies`, **không** trong code Python.
+- `min_trades` và mọi anchor chuẩn hoá nằm trong `score_policies`, **không** trong code Go.
 
 **Hiệu năng**
 
@@ -287,7 +284,7 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 - `GET /leaderboard` và `/provenance` là **public** nhưng rate-limited 120 req/phút/IP: đây là kết quả mô phỏng công khai, không có gì bí mật (`design.md` §7.3).
 - Provenance **không** trả `owner_id`, email, hay bất kỳ PII nào của người tạo experiment — nó trả tính chất kỹ thuật của kết quả, không trả danh tính.
 - `POST /api/v1/admin/score-policies` và `/activate` chỉ **ADMIN**: đổi công thức chấm điểm là đổi nghĩa của toàn bộ leaderboard, ngang với một thay đổi schema về mức tác động.
-- `formula` là **tài liệu người đọc**, không phải biểu thức được `eval()`. Tính toán thật nằm trong code Python đọc `weights`; nếu `formula` được thực thi động thì `POST /admin/score-policies` trở thành RCE cho tài khoản ADMIN bị chiếm.
+- `formula` là **tài liệu người đọc**, không phải biểu thức được evaluate động. Tính toán thật nằm trong pure Go evaluator đọc `weights`; nếu `formula` được thực thi động thì `POST /admin/score-policies` trở thành RCE cho tài khoản ADMIN bị chiếm.
 - `sort_by`, `dataset_version`, `score_policy_version` validate theo allowlist/tồn tại trong DB trước khi vào truy vấn; mọi tham số đi qua prepared statement.
 
 **Khả năng mở rộng**
@@ -307,7 +304,7 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 
 ## Tiêu chí chấp nhận
 
-- [ ] AC-01: Test static `grep -rn "UPDATE leaderboard_entries\|DELETE FROM leaderboard_entries" ai/app/` → **0** khớp.
+- [ ] AC-01: Static scan `server/` tìm `UPDATE/DELETE leaderboard_entries` → **0** khớp.
 - [ ] AC-02: Chạy search run 50 candidate → mọi row trong `leaderboard_entries` có `observed_at` tăng dần và **không** row nào có `score` bị sửa (so sánh snapshot DB trước/sau bằng checksum trên `(id, score)`).
 - [ ] AC-03: Publish cùng `StrategyEvaluated` **10 lần** → `count(*) FROM leaderboard_entries WHERE evaluation_id=$1` bằng **1**; `ranking_skipped_total{reason="duplicate_event"}` tăng 9.
 - [ ] AC-04: `UPDATE score_policies SET is_active=true WHERE version='v2'` trực tiếp trong khi `v1` đang active → lỗi `score policy activation must use activate_score_policy()`, transaction rollback, count active vẫn bằng **1**.
@@ -327,4 +324,4 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 - [ ] AC-15: Đo p95 của `GET /leaderboard?limit=10` sau khi seed **100.000** entry → **< 200 ms**; `EXPLAIN ANALYZE` cho thấy dùng `idx_leaderboard_topk`, không có `Seq Scan`.
 - [ ] AC-16: Một entry mới vào Top-1 → UI đổi trong **< 1 s** qua `LeaderboardUpdated`, **không** có request HTTP nào từ browser trong khoảng đó (kiểm tra bằng DevTools Network).
 - [ ] AC-17: `RESEARCHER` gọi `POST /api/v1/admin/score-policies` → `403 forbidden`; `OPERATOR` → `403`; `ADMIN` → `201`.
-- [ ] AC-18: Test static `grep -rn "eval(\|exec(" ai/app/domain/ranking/` → **0** khớp (`formula` không bao giờ được thực thi động).
+- [ ] AC-18: Test static `grep -rn "eval(\|exec(" server/internal/domain/ranking/` → **0** khớp (`formula` không bao giờ được thực thi động).

@@ -27,7 +27,7 @@ Sources: [PDF pp. 40--41, 49--52].
 
 ## Success criteria
 
-- A user can open `BTCUSDT` in four timeframes, each independently changeable.
+- A user can open `ETHUSDT` in four timeframes, each independently changeable.
 - A user can choose or register MA, RSI, Bollinger, and Support/Resistance strategies.
 - The system can generate at least one composite candidate, backtest it, calculate the four required metrics, and rank it in Top-K.
 - Strategy selection, search progress, leaderboard updates, and chart overlays are visible without a full-page reload.

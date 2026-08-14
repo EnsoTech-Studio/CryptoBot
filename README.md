@@ -5,9 +5,10 @@ Monorepo cho đồ án **Crypto Strategy Lab**. `requirements.html` là nguồn 
 Luồng tổng quát:
 
 ```text
-Browser (Next.js) -> Go API (public boundary) -> Python Strategy Lab (domain)
-                                               -> PostgreSQL / Binance / News
-                                               -> Backtest Worker qua job queue
+Browser (Next.js) -> Go Strategy Service (public boundary + domain)
+                                                   -> PostgreSQL / Binance / News
+                                                   -> Go Backtest Worker qua job queue
+                                                   -> Python AI inference (sentiment only)
 ```
 
 ## Install
@@ -113,12 +114,10 @@ npm run dev
 Các ranh giới chính:
 
 - Web chỉ render; không parse payload Binance và không tính indicator/PnL/ranking.
-- Go là public boundary: auth, RBAC, ownership, rate limit, REST/WebSocket và fan-out;
-  quota admission được khởi tạo ở Go nhưng chốt atomically bởi Python `SearchAdmission`.
-- Python Strategy Lab sở hữu domain: normalization, indicators, strategy/plugin, composite, experiment, backtest, evaluation, ranking, news/sentiment.
-- Worker chạy backtest bất đồng bộ qua `backtest_jobs`; không giữ HTTP request mở.
-- Python sở hữu write path và migration. Go chỉ đọc các view version hoá trong schema `read` qua role `api_reader`.
-- Binance và News Providers là network dependencies ở MVP; Sentiment Model là integration seam, hiện chạy in-process và có thể đổi sang adapter remote/GPU.
+- Go sở hữu public boundary và domain: auth, RBAC, ownership, rate limit, market normalization, indicators, strategy/plugin, composite, experiment, backtest, evaluation, ranking, news orchestration và migrations.
+- Go worker chạy backtest bất đồng bộ qua `backtest_jobs`; không giữ HTTP request mở.
+- Go sở hữu domain write path và versioned read views; API dùng cùng domain codebase.
+- Binance và News Providers là network dependencies ở MVP; Python AI service chỉ là sentiment inference integration seam, có thể đổi sang adapter remote/GPU.
 
 Giới hạn kiến trúc quan trọng:
 

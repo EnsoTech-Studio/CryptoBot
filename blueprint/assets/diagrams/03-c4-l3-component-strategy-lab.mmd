@@ -1,5 +1,5 @@
 flowchart TB
-    subgraph Lab["<b>Strategy Lab</b> [Python]"]
+    subgraph Lab["<b>Strategy Service</b> [Go]"]
         direction TB
 
         subgraph AppLayer["Application Layer — điều phối, không tính toán domain"]
@@ -11,10 +11,10 @@ flowchart TB
         end
 
         subgraph DomainLayer["Domain Layer — thuần, không I/O"]
-            Registry["<b>StrategyRegistry</b><br/><i>@register_strategy</i>"]
+            Registry["<b>StrategyRegistry</b><br/><i>Register(factory, Definition)</i>"]
             Strategies["MAStrategy · RSIStrategy<br/>BollingerStrategy · SupportResistanceStrategy<br/>NewsSentimentStrategy<br/><i>(MACDStrategy chỉ cần thêm file)</i>"]
             Combiner["SignalCombiner<br/><i>MajorityVote · WeightedVote</i>"]
-            Engine["<b>BacktestEngine</b><br/><i>chronological, next_candle_open</i>"]
+            Engine["<b>BacktestEngine</b><br/><i>BBO LIMIT replay, one-net position</i>"]
             Evaluator["<b>Evaluator</b><br/><i>Return · WinRate · MDD · Trades<br/>ProfitFactor · Sharpe</i>"]
             Indicators["IndicatorLibrary<br/><i>SMA/EMA · RSI · BB · S/R zone</i>"]
         end
@@ -35,7 +35,7 @@ flowchart TB
             ARss["RssNewsAdapter · NewsApiAdapter"]
             AModel["SentimentModelAdapter"]
             APg["PostgresJobDispatcher<br/><i>(BrokerJobDispatcher nếu đo được cần)</i>"]
-            ASql["SQLAlchemy Repositories"]
+            ASql["PostgreSQL Repositories"]
         end
     end
 

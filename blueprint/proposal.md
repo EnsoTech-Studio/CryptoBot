@@ -83,7 +83,7 @@ Ba nhãn này quan trọng vì trộn chúng lại sẽ làm sai ý nghĩa của
 | Yếu tố | Giá trị |
 | ------ | ------- |
 | Môi trường | `docker compose up` trên **một** máy, không container nào bị giới hạn CPU/memory tường minh; máy tham chiếu ≥ 4 core / 8 GiB RAM |
-| Dataset | `BTCUSDT`, timeframe `5m`, 10.000 nến đã cache trong PostgreSQL (không gọi Binance trong lúc đo) |
+| Dataset | `ETHUSDT`, timeframe `5m`, 10.000 nến đã cache trong PostgreSQL (không gọi Binance trong lúc đo) |
 | Replicas | `web=1, api=1, lab=1, worker=1` — trừ dòng scale ghi rõ `worker=4` |
 | Client | 1 browser tab, 4 panel; cho load test: `k6`/`hey` 10 virtual user, 60 s, không ramp |
 | Cách đo latency | p95 trên **≥ 20 mẫu**, đo từ Go API (không tính RTT internet); loại 5 request đầu (warm-up JIT/pool) |
@@ -91,7 +91,7 @@ Ba nhãn này quan trọng vì trộn chúng lại sẽ làm sai ý nghĩa của
 
 | Chỉ tiêu | Nguồn | Mục tiêu | Điều kiện đo riêng |
 | --- | --- | --- | --- |
-| Số file phải sửa khi thêm `MACDStrategy` | **[SRC]** §41 | **≤ 2 file mới + 0 file core** | `git diff --stat` giữa hai commit; "core" = `registry.py`, backtester, evaluator, ranking, Go API, schema, UI |
+| Số file phải sửa khi thêm `MACDStrategy` | **[SRC]** §41 | **≤ 2 file mới + 0 file core** | `git diff --stat` giữa hai commit; "core" = Go `StrategyRegistry`, backtest/evaluator/ranking, Go API, schema, UI |
 | Số file phải sửa khi đổi Random → Domain-Guided Search | **[SRC]** §42 | **1 file mới implement `CandidateGenerator`**, 0 file Backtester | `git diff --stat`; config đổi 1 dòng không tính là file core |
 | Số file frontend phải sửa khi thêm `OKXAdapter` | **[SRC]** §40.3 | **0** | `git diff --stat -- web/` rỗng |
 | Độ trễ Binance candle → UI (p95) | **[NFR]** cho §32.3 | **< 1.5 s** | Đo từ `kline.T` (close time trong payload Binance) tới timestamp client nhận frame WS; đồng hồ client và server sync qua NTP, sai số ghi nhận < 50 ms; 20 nến `1m` liên tiếp |
@@ -100,7 +100,7 @@ Ba nhãn này quan trọng vì trộn chúng lại sẽ làm sai ý nghĩa của
 | Throughput backtest 1 worker | **[NFR]** | **≥ 0.5 candidate/giây** | 10.000 nến `5m`, composite 3 strategy (MA+RSI+SR), `worker=1`, không có search run khác chạy; đo trên 40 candidate liên tiếp, lấy trung bình |
 | Tăng tốc khi scale 1 → 4 worker | **[SRC]** §43 (yêu cầu scale) + **[NFR]** (con số 3×) | **≥ 3×** | Cùng một `search_run` 40 candidate, cùng dataset, cùng seed; chạy `worker=1` rồi `worker=4`; so wall-clock từ `started_at` tới `finished_at` của run |
 | Đổi timeframe Chart 1 làm Chart 2/3/4 re-render | **[SRC]** §5 | **0 lần** | React Profiler hoặc render counter trong `useEffect`; 4 panel đang subscribe, đổi Chart 1 từ `5m` → `1h` |
-| Mất nến khi Binance WebSocket disconnect 60 s | **[SRC]** §32.4 | **0 nến đã đóng** | `docker network disconnect` container `lab` 60 s rồi nối lại; sau đó query `candles` và kiểm tra không có gap trong `close_time` theo bước timeframe |
+| Mất nến khi Binance WebSocket disconnect 60 s | **[SRC]** §32.4 | **0 nến đã đóng** | `docker network disconnect` container `lab` 60 s rồi nối lại; sau đó query `candles` và kiểm tra không có gap theo `open_time` và timeframe |
 | Search loop chạy vô hạn | **[SRC]** §23 | **Không xảy ra** | Mọi `search_runs` row có `stop_conditions` khác NULL (DB `CHECK`); test cố INSERT run thiếu stop condition → bị từ chối |
 | Kết quả Leaderboard không truy được nguồn gốc | **[SRC]** §36, §40.8 | **0 entry** | `SELECT count(*) FROM leaderboard_entries le LEFT JOIN evaluations e ... WHERE e.id IS NULL` = 0; và mỗi entry resolve đủ 6 bảng provenance (§4.3) |
 | News/Sentiment down → chart và backtest technical | **[SRC]** §40.5, §40.6 | **Vẫn chạy 100%** | `docker stop` sentiment; sau đó chart nhận nến mới và một backtest technical chạy `completed`; news trả `sentiment: null` |
@@ -152,7 +152,7 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 **Experiment & Search**
 
 - `ExperimentSnapshot` bất biến: candidate definition + dataset version + execution assumptions (fee, slippage, fill policy, **risk policy**) + evaluator version.
-- Backtest engine chronological, fill ở `next_candle_open`, không look-ahead (3 tầng phòng thủ: nến, indicator view, fill policy).
+- Backtest engine deterministic, merge BBO + CandleClosed, fill LIMIT theo executable quote, không look-ahead (causal candle/indicator view + event ordering).
 - **Stop Loss / Take Profit** cố định theo % của `entry_price`, kèm `intrabar_priority` để giả định "SL hay TP chạm trước" là tường minh chứ không ẩn trong code. Đây là **MVP** vì chart phải vẽ được SL/TP theo yêu cầu đề bài — xem `design.md` ADR-017.
 - Evaluator tách khỏi backtester: Total Return, Win Rate, Max Drawdown, Number of Trades, Profit Factor, Sharpe Ratio.
 - `RandomSearchGenerator` (bắt buộc) + `DomainGuidedGenerator` (chứng minh replaceability, dùng phân nhóm Trend/Momentum/Volatility/Structure/Information).
@@ -166,7 +166,7 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 
 **Nền tảng & Vận hành**
 
-- **Code artifacts — 3 image**: Next.js web, Go API, Python Lab. **Runtime workloads — 4 loại**: `web`, `api`, `lab`, và `worker` (dùng lại image Python, khác entrypoint). Thêm PostgreSQL. Phân biệt artifact/workload ở `design.md` §1.3.1.
+- **Code artifacts — 3 image**: Next.js web, Go Strategy Service, Python AI inference. **Runtime workloads — 4 loại**: `web`, `api`, `worker` (dùng lại image Go, khác entrypoint), và `ai`. Thêm PostgreSQL. Phân biệt artifact/workload ở `design.md` §1.3.1.
 - **Backtest Worker là kiến trúc bắt buộc**, không phải tính năng tuỳ chọn: `POST /experiments` **luôn** async (ADR-006) nên phải có worker consume job. Có từ **Phase 3** với 1 replica; scale lên N replica ở Phase 6 chỉ là lúc **đo để chứng minh** (demo S10), không phải lúc mới được phép scale.
 - **Redis là tuỳ chọn có điều kiện**: chỉ thêm ở Phase 6 nếu benchmark thoả điều kiện ở `design.md` §12.0. Không thêm cũng là một kết quả hợp lệ.
 - Job queue cho backtest: bảng `backtest_jobs` trong PostgreSQL + `SELECT ... FOR UPDATE SKIP LOCKED` + `lease_token`, không cần broker.
@@ -184,8 +184,8 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 | SMC, Wyckoff đầy đủ                                   | Đề bài không bắt buộc. Chỉ cần chứng minh kiến trúc admit được — có `strategy family: structure` sẵn. |
 | Kafka, RabbitMQ, CQRS, Event Sourcing, microservice per module | Đề bài nói rõ: **không cộng điểm vì dùng công nghệ phức tạp**. Chỉ thêm khi có vấn đề kiến trúc cụ thể. |
 | Multi-exchange (OKX/Bybit) thật                       | Chỉ chứng minh bằng port `MarketDataProvider` + 1 adapter fixture trong test.                     |
-| Multi-coin, multi-asset ở MVP                         | Schema đã có `market_pairs`; MVP demo BTCUSDT.                                                    |
-| Long/Short, Trailing Stop, Position Sizing nâng cao   | MVP `long_only` + SL/TP cố định theo % (`design.md` ADR-017). Trailing stop cần lịch sử mức SL trong `trades`; sizing cần `sizing_policy` — cả hai là seam đã có chỗ trong snapshot, không implement. |
+| Multi-coin, multi-asset ở MVP                         | Schema đã có `market_pairs`; MVP demo ETHUSDT.                                                    |
+| Long/Short, Trailing Stop, Position Sizing nâng cao   | MVP one-net LONG/SHORT + fixed notional `10 USDT`; trailing stop và sizing khác là extension. |
 | Mobile app                                            | Dashboard là desktop-first (4 chart cùng lúc).                                                     |
 | Hạ tầng production (auto-scaling, multi-region, CDN)  | Chạy Docker Compose 1 node.                                                                       |
 
@@ -243,13 +243,13 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 
 | #   | Rủi ro / Ràng buộc                                                                | Tác động                                                        | Hướng giảm thiểu                                                                                            | Tài liệu                        |
 | --- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| R1  | **Binance WebSocket disconnect** (mạng, rate limit, maintenance)                  | Mất nến → chart sai, backtest sai                               | Reconnect exponential backoff (capped) + ghi `last_closed_at` + **backfill REST** khoảng thiếu + de-dup theo `(provider, symbol, timeframe, close_time)` | `specs/market-data.md`          |
+| R1  | **Binance WebSocket disconnect** (mạng, rate limit, maintenance)                  | Mất nến → chart sai, backtest sai                               | Reconnect exponential backoff (capped) + ghi `last_closed_at` + **backfill REST** khoảng thiếu + de-dup theo `(provider, symbol, timeframe, open_time)` | `specs/market-data.md`          |
 | R2  | **Binance REST rate limit** (weight-based, provider-configured; MVP 6000/phút)      | 429/418 → ban IP tạm thời                                       | Token bucket **outbound** theo weight + đọc `X-MBX-USED-WEIGHT-1M` + cache nến đã đóng vào PostgreSQL + không refetch dữ liệu đã có | `specs/market-data.md`          |
-| R3  | **Look-ahead bias** trong backtest                                                | Kết quả đẹp giả tạo → toàn bộ Leaderboard vô nghĩa               | **3 tầng**: (a) `candles[:t+1]` → `IndexError`; (b) `IndicatorView` causal → `LookAheadError` khi đọc indicator tại index `> t`, còn `[-1]`, `len()` và slice được diễn giải trong phạm vi `[0,t]`; (c) fill ở `next_candle_open`. Kèm fixture test có kết quả kỳ vọng tính bằng tay | `design.md` §5.2.1 · `specs/backtest.md` |
+| R3  | **Look-ahead bias** trong backtest                                                | Kết quả đẹp giả tạo → toàn bộ Leaderboard vô nghĩa               | **3 tầng**: (a) causal candles; (b) causal `IndicatorView` → `LookAheadError`; (c) event ordering + BBO LIMIT chỉ dùng quote đã đến. Kèm fixture structural test | `design.md` §5.2.1 · `specs/backtest.md` |
 | R4  | **Search space nổ tổ hợp** (4 strategy × nhiều param → hàng vạn candidate)        | Chạy vô hạn, đốt CPU, treo hệ thống                             | Stop condition bắt buộc (candidate/duration/no-improvement) + dedup theo `candidate_hash` + quota per-principal | `specs/search-loop.md`          |
 | R5  | **Backtest chiếm HTTP request** (10.000 nến × 3 strategy có thể mất > 30 s)        | Timeout, connection pool cạn, UI treo                           | `POST /experiments` trả `202 + run_id` ngay; thực thi qua job record; UI polling/stream tiến trình           | `specs/experiment.md`           |
 | R6  | **Kết quả Leaderboard không tái lập được**                                        | Không bảo vệ được đồ án: "+18.2% từ đâu ra?"                    | Snapshot bất biến append-only: strategy version + params + dataset version + fee/slippage + evaluator version | `specs/leaderboard.md`          |
-| R7  | **Strategy plugin lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết                                        | Sandbox **3 tầng**: `SIGALRM` 1 s/call → supervisor `SIGKILL` child process 90 s → job lease 120 s. Exception → `candidate.status = failed` + `failure_reason`, run tiếp | `specs/strategy-registry.md`    |
+| R7  | **Strategy plugin lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết                                        | Trusted Go plugin boundary + context cancellation + worker lease 120 s. Exception/look-ahead → `candidate.status = failed` + `failure_reason`, run tiếp | `specs/strategy-registry.md`    |
 | R8  | **News provider chết hoặc trả HTML rác**                                          | Pipeline news dừng                                              | Job news độc lập; failure chỉ ảnh hưởng job đó; chart/backtest technical không phụ thuộc                     | `specs/news.md`                 |
 | R9  | **SSRF qua news source** (nếu cho phép nhập URL)                                  | Đọc được metadata service nội bộ / port scan                    | `ApprovedNewsSource` là **server config**, không nhận URL từ browser; allowlist HTTPS origin + chặn private/loopback IP sau mỗi redirect/DNS | `specs/news.md` §Bảo mật        |
 | R10 | **Sentiment model đổi version** → kết quả cũ không so được với mới                | Backtest có sentiment mất tính so sánh                          | `model_version` là phần của snapshot; đổi model = dataset mới, không ghi đè kết quả cũ                        | `specs/sentiment.md`            |
@@ -268,9 +268,9 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 
 | #   | Demo                            | Kịch bản                                                                                                         | Bằng chứng đạt                                                                                                        |
 | --- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| S1  | **Multi-timeframe độc lập**     | Mở BTCUSDT với `5m / 15m / 1h / 4h`. Đổi Chart 1 từ `5m → 1h`.                                                   | Chỉ Chart 1 gọi API và re-render. Render counter của Chart 2–4 = 0. Network tab chỉ có 1 request mới.                  |
+| S1  | **Multi-timeframe độc lập**     | Mở ETHUSDT với `5m / 15m / 1h / 4h`. Đổi Chart 1 từ `5m → 1h`.                                                   | Chỉ Chart 1 gọi API và re-render. Render counter của Chart 2–4 = 0. Network tab chỉ có 1 request mới.                  |
 | S2  | **Realtime latency**            | Chờ nến 1m đóng trên Binance.                                                                                    | UI cập nhật trong **< 1.5 s** (p95 trên 20 lần đo). Log có `CandleClosed` với `correlation_id`.                        |
-| S3  | **Thêm strategy (scenario đề bài §41)** | Giảng viên yêu cầu thêm `MACDStrategy` tại chỗ.                                                         | `git diff` cho thấy **1 file mới** + **0 dòng sửa** trong backtester/evaluator/controller/UI/schema. MACD xuất hiện trong `GET /strategies` và trong search space ngay sau restart. |
+| S3  | **Thêm strategy (scenario đề bài §41)** | Giảng viên yêu cầu thêm `MACDStrategy` tại chỗ.                                                         | `git diff` cho thấy **1 file Go plugin mới** + **0 dòng sửa** trong BacktestEngine/Evaluator/Controller/UI/schema. MACD xuất hiện trong `GET /strategies` và trong search space ngay sau restart. |
 | S4  | **Thay search algorithm (§42)** | Đổi `RandomSearchGenerator` → `DomainGuidedGenerator` qua config.                                                | `git diff` = 1 file generator mới + 1 dòng config. Backtester/Evaluator/Leaderboard **không đổi 1 dòng**.              |
 | S5  | **Backtest đúng và tái lập được** | Chạy fixture 200 nến có kết quả tính tay trước.                                                                | Trades, Return, Win Rate, MDD khớp **chính xác** với giá trị kỳ vọng. Chạy lại lần 2 ra **kết quả byte-identical**.    |
 | S6  | **Search loop có kiểm soát**    | Start search với `max_candidates=50`. Bấm Pause ở candidate ~20, chờ 10 s, Resume, rồi Cancel.                    | UI hiển thị `tested/queued/failed/best_score/current_candidate/elapsed`. Loop dừng đúng 50 hoặc đúng lúc cancel. Không có `while(true)`. |

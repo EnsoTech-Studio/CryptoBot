@@ -65,7 +65,7 @@
 ## Demo script
 
 1. Start Docker Compose and show healthy web, API, AI, and database services.
-2. Open `BTCUSDT` with `5m | 15m | 1h | 4h`; demonstrate an update/realtime indicator and independently change one panel.
+2. Open `ETHUSDT` with `5m | 15m | 1h | 4h`; demonstrate an update/realtime indicator and independently change one panel.
 3. Show the strategy catalogue: MA, RSI, Bollinger, Support/Resistance; add/select a composite.
 4. Start a bounded Random Search; show current candidate, tested count, queue/run state, and stop condition.
 5. Open the updated Top-K leaderboard and select its first entry.

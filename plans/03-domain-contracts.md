@@ -93,7 +93,7 @@ The registry exposes metadata to the API/UI. A strategy implementation only rece
 Chart overlays are calculated by the Python domain service; the browser only renders them. The initial, bounded query is:
 
 ```text
-GET /api/v1/markets/chart-overlays?symbol=BTCUSDT&timeframe=5m&strategy=rsi@1.0.0&config_hash=sha256:4d1...
+GET /api/v1/markets/chart-overlays?symbol=ETHUSDT&timeframe=5m&strategy=rsi@1.0.0&config_hash=sha256:4d1...
 ```
 
 It returns a panel-scoped payload with candles, volume, and only the live technical/signal series selected by the user: `moving_average`, `rsi`, `bollinger_bands`, `support_zone`, `resistance_zone`, `buy_signal`, and `sell_signal`. Each item has a timestamp, type, values, and the producing strategy configuration. The result is bounded to the chart's candle window.
@@ -129,7 +129,7 @@ Every submitted run gets a content-addressable or UUID identity and stores the c
   "experiment_id": "exp_01J...",
   "strategy": {"strategy_id": "composite", "version": "1.0.0", "parameters": {}},
   "candidate_definition": "<immutable composite snapshot>",
-  "market": {"provider": "binance", "dataset_version": "binance-btcusdt-5m-2026-08-01", "symbol": "BTCUSDT", "timeframe": "5m", "from": "2026-01-01T00:00:00Z", "to": "2026-03-01T00:00:00Z"},
+  "market": {"provider": "binance", "dataset_version": "binance-ethusdt-5m-2026-08-01", "symbol": "ETHUSDT", "timeframe": "5m", "from": "2026-01-01T00:00:00Z", "to": "2026-03-01T00:00:00Z"},
   "execution": {"initial_capital": "10000.00", "fee_bps": 10, "slippage_bps": 5, "fill_policy": "next_candle_open", "position_policy": "long_only"},
   "evaluator_version": "1.0.0",
   "created_at": "2026-08-09T00:00:00Z"

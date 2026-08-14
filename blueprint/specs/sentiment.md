@@ -26,34 +26,33 @@ Thứ hai: `score` trong `Sentiment` là **confidence của model** trong `[0, 1
 
 ## Contract
 
-```python
-# ports/sentiment.py — do DOMAIN định nghĩa
-class SentimentAnalyzer(Protocol):
-    def model_version(self) -> str: ...
-    def analyze(self, text: str) -> Sentiment: ...
+```go
+type SentimentAnalyzer interface {
+	ModelVersion() string
+	Analyze(context.Context, string) (Sentiment, error)
+}
 ```
 
-```python
-@dataclass(frozen=True)
-class Sentiment:
-    label: Literal["POSITIVE", "NEUTRAL", "NEGATIVE"]
-    score: float             # [0,1] — CONFIDENCE, không phải trading return
-    model: str               # 'sentiment-v1'
-    model_version: str       # '2026-08-01'
-    analyzed_at: datetime    # UTC
+```go
+type Sentiment struct {
+	Label string // POSITIVE | NEUTRAL | NEGATIVE
+	Score decimal.Decimal // [0,1], confidence
+	Model, ModelVersion string
+	AnalyzedAt time.Time
+}
 ```
 
 ```json
 {"label":"POSITIVE","score":0.82,"model":"sentiment-v1","model_version":"2026-08-01","analyzed_at":"2026-08-09T00:00:00Z"}
 ```
 
-```python
-@dataclass(frozen=True)
-class NewsSentimentWindow:
-    window_sec: int          # 3600
-    avg_score: float         # -1..+1 (POSITIVE=+score, NEGATIVE=-score, NEUTRAL=0)
-    item_count: int
-    model_version: str       # phần của provenance
+```go
+type NewsSentimentWindow struct {
+	WindowSec int
+	AvgScore decimal.Decimal // -1..+1
+	ItemCount int
+	ModelVersion string
+}
 ```
 
 > **Ba field cố ý *không* có trong `Sentiment`.** Không có `news_item_id` (value object không biết nó thuộc về ai — quan hệ là việc của repository). Không có `raw_logits` / `probabilities` (model internals không được rời khỏi adapter; nếu chúng có trong VO, chúng sẽ rò ra API). Không có `is_fallback` — vì không có fallback nào tồn tại; có field đó là mở cửa cho chính thứ ADR-013 cấm.
@@ -150,35 +149,27 @@ Bốn quyết định nằm trong query này:
 
 ### D. `NewsSentimentStrategy` — một strategy như mọi strategy
 
-```python
-@register_strategy
-class NewsSentimentStrategy:
-    def definition(self) -> StrategyDefinition:
-        return StrategyDefinition(
-            strategy_id="news_sentiment", version="1.0.0", family="information",
-            parameters_schema={
-                "window_sec":  {"type": "int",   "enum": [1800, 3600, 14400], "default": 3600},
-                "buy_above":   {"type": "float", "min": 0.1, "max": 1.0, "default": 0.7},
-                "sell_below":  {"type": "float", "min": -1.0, "max": -0.1, "default": -0.7},
-                "min_items":   {"type": "int",   "min": 1, "max": 50, "default": 3},
-            },
-            input_requirements=["news_sentiment"], overlay_types=[])
+```go
+func RegisterNewsSentiment(r *strategy.Registry) error {
+	return r.Register(strategy.Definition{
+		StrategyID: "news_sentiment", Version: "1.0.0", Family: "information",
+		InputRequirements: []string{"news_sentiment"},
+	}, func() strategy.Strategy { return NewsSentiment{} })
+}
 
-    def analyze(self, ctx: AnalysisContext) -> Signal:
-        w = ctx.news_sentiment
-        if w is None or w.item_count < ctx.params["min_items"]:
-            return Signal(action="HOLD", evidence={"reason": "insufficient_sentiment_data",
-                                                   "item_count": 0 if w is None else w.item_count})
-        if w.avg_score > ctx.params["buy_above"]:
-            return Signal(action="BUY", confidence=min(1.0, abs(w.avg_score)),
-                          evidence={"avg_score": w.avg_score, "item_count": w.item_count,
-                                    "model_version": w.model_version})
-        if w.avg_score < ctx.params["sell_below"]:
-            return Signal(action="SELL", confidence=min(1.0, abs(w.avg_score)),
-                          evidence={"avg_score": w.avg_score, "item_count": w.item_count,
-                                    "model_version": w.model_version})
-        return Signal(action="HOLD", evidence={"avg_score": w.avg_score,
-                                               "item_count": w.item_count})
+func (NewsSentiment) Analyze(ctx strategy.AnalysisContext) (strategy.Signal, error) {
+	w := ctx.NewsSentiment
+	if w == nil || w.ItemCount < ctx.Params.Int("min_items") {
+		return strategy.HoldWithEvidence("insufficient_sentiment_data"), nil
+	}
+	if w.AvgScore.GreaterThan(ctx.Params.Decimal("buy_above")) {
+		return strategy.BuyWithEvidence(w.AvgScore, w.ModelVersion), nil
+	}
+	if w.AvgScore.LessThan(ctx.Params.Decimal("sell_below")) {
+		return strategy.SellWithEvidence(w.AvgScore, w.ModelVersion), nil
+	}
+	return strategy.Hold(), nil
+}
 ```
 
 Rule khớp đề bài §30: avg sentiment 1 giờ > 0.7 → BUY, < −0.7 → SELL, còn lại HOLD.
@@ -189,7 +180,7 @@ Rule khớp đề bài §30: avg sentiment 1 giờ > 0.7 → BUY, < −0.7 → S
 
 `w.model_version` đi vào `evidence` → được ghi vào `run_signals.child_signals` → trả lời được "tín hiệu BUY này do model nào sinh ra" ba tháng sau, cùng cơ chế provenance với strategy version (`design.md` §11.8).
 
-Bốn thứ strategy này **không** có: DB session, HTTP client, nến sau `index`, và giá trị indicator sau `index` (`ctx.indicators` là `IndicatorView` — `design.md` §5.2.1). Hệ quả kiểm chứng được: `news_sentiment.py` import và test được trong môi trường không có PostgreSQL và không có network — cùng tiêu chuẩn với `rsi.py` (`design.md` §5.2, `tests/architecture/test_strategy_purity.py`).
+Bốn thứ strategy này **không** có: DB session, HTTP client, nến sau `index`, và giá trị indicator sau `index` (`ctx.indicators` là `IndicatorView` — `design.md` §5.2.1). Hệ quả kiểm chứng được: Go plugin `news_sentiment.go` build và test được trong môi trường không có PostgreSQL và không có network — cùng tiêu chuẩn với `rsi.go` (`design.md` §5.2, `server/tests/architecture/strategy_purity_test.go`).
 
 ### E. Đổi model — vì sao kết quả cũ không bị ghi đè
 
@@ -213,7 +204,7 @@ Không có `UPDATE` nào trong module này. Quy trình đổi model:
 
 ### F. `POST /api/v1/ai/predict` — endpoint tương thích scaffold
 
-Hiện tại `ai/app/services/predictor.py` là stub: `Predictor.predict` bỏ argument (`del text`) và trả cứng `Prediction(label="neutral", score=0.5, model="stub-v0")`. Phase 5 thay bằng `SentimentModelAdapter` thật (`design.md` §12.1).
+Hiện tại `ai/app/services/predictor.py` là stub của Python AI adapter: `Predictor.predict` bỏ argument và trả cứng `Prediction(label="neutral", score=0.5, model="stub-v0")`. Phase 5 thay bằng adapter thật; Go domain contract không đổi (`design.md` §12.1).
 
 Contract giữ nguyên để không phá client đang có: `PredictRequest.text` 1–10.000 ký tự, whitespace-only → `422`. Go proxy cap body 1 MiB, timeout 30 s, **auth bắt buộc**, rate limit **20/phút/principal** — vì mỗi call là một model inference, và endpoint inference không auth là DoS vector hiển nhiên (`design.md` §7.3, §8.2).
 
@@ -259,14 +250,14 @@ Dùng index `idx_sentiment_agg (model_version, analyzed_at DESC)`.
 | Backtest trên dataset 2024 nhưng nhãn được backfill năm 2026        | `analysis_lag_sec` dùng `published_at`, không dùng `analyzed_at` → backtest lịch sử vẫn có sentiment và vẫn không look-ahead |
 | `analysis_lag_sec = 0` bị đặt trong snapshot                        | Cho phép nhưng ghi rõ trong provenance; `tests/domain/test_no_lookahead.py` cảnh báo vì tin công bố cùng lúc nến đóng bị coi là biết trước |
 | Ai đó thêm `INSERT ... label='NEUTRAL'` khi model lỗi               | Test tích hợp `test_sentiment_unavailable.py` fail: nó assert `SELECT COUNT(*) FROM sentiment_results = 0` sau khi stop model |
-| Strategy thử `import sqlalchemy` để tự query sentiment              | `tests/architecture/test_module_boundaries.py` fail build (`domain.strategy` cấm `sqlalchemy`, `httpx`)           |
+| Strategy thử import repository/HTTP để tự query sentiment             | `server/tests/architecture/module_boundaries_test.go` fail build (domain strategy cấm repository, HTTP, transport) |
 
 ## Ràng buộc
 
 **Tính đúng đắn**
 
 - Model không khả dụng → **0 row**. Không placeholder, không default, không fallback model.
-- `UNIQUE (news_item_id, model, model_version)`; module này chỉ INSERT, **0 câu `UPDATE`** trên `sentiment_results`.
+- `UNIQUE (news_item_id, model, model_version)`; Go repository chỉ INSERT, **0 câu `UPDATE`** trên `sentiment_results`.
 - `label` ∈ 3 giá trị, cưỡng chế bằng `sentiment_enum`; `score ∈ [0,1]`, cưỡng chế bằng `CHECK`.
 - `score` là confidence. Đổi thang sang `[-1,+1]` xảy ra **đúng một chỗ**: biểu thức `CASE` trong query của `NewsSentimentWindow`.
 - `NewsSentimentWindow` chỉ tổng hợp trên một `(model, model_version)`.
@@ -319,7 +310,7 @@ Dùng index `idx_sentiment_agg (model_version, analyzed_at DESC)`.
 - [ ] AC-09: 1 tin `POSITIVE score=0.95` trong cửa sổ, `min_items=3` → `Signal.action = 'HOLD'`, `evidence.reason='insufficient_sentiment_data'`.
 - [ ] AC-10: `item_count=0` → `ctx.news_sentiment is None` (không phải window `avg_score=0`); strategy trả HOLD.
 - [ ] AC-11: Fixture 6 tin (4 POSITIVE 0.8, 1 NEGATIVE 0.6, 1 NEUTRAL 0.9) → `avg_score = (4×0.8 − 0.6 + 0)/6 = 0.4333`; `buy_above=0.7` → HOLD; `buy_above=0.4` → BUY. Kết quả tính tay khớp chính xác.
-- [ ] AC-12: `import app.domain.strategy.plugins.news_sentiment` và chạy `analyze()` trong container **không có** PostgreSQL và **không có** network → pass (`test_strategy_purity.py`).
+- [ ] AC-12: build/test Go plugin `server/internal/domain/strategy/plugins/news_sentiment.go` trong môi trường **không có** PostgreSQL và **không có** network → pass (`strategy_purity_test.go`).
 - [ ] AC-13: Backtest 20.000 nến với `NewsSentimentStrategy` → đếm số query tới `sentiment_results` **≤ 2** (precompute), không phải 20.000.
 - [ ] AC-14: Anonymous gọi `POST /api/v1/ai/predict` → `401`; RESEARCHER gọi 21 lần/phút → lần 21 trả `429` + `Retry-After`; model down → `502 sentiment_unavailable`, response **không** chứa tên file model hay stack trace.
 - [ ] AC-15: Thay `SentimentModelAdapter` bằng fixture adapter trả nhãn từ file JSON → toàn bộ `NewsSentimentStrategy`, backtest, evaluation, leaderboard chạy với **0 dòng** thay đổi ngoài dòng wiring adapter (`design.md` §11.6).

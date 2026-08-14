@@ -15,13 +15,13 @@ Bốn bề mặt hiển thị, bốn nguồn dữ liệu tách biệt:
 
 Sự tách biệt này phản chiếu đúng ranh giới trong `design.md` §4.2: `BacktestEngine` ghi **fact** (`trades`, `run_signals`, `equity_points`), `Evaluator` ghi **metric dẫn xuất** (`evaluations`). Đổi công thức `sharpe_ratio` không đụng một byte nào trong `trades`, và UI vẫn hiển thị đúng lệnh cũ với metric mới bên cạnh `evaluator_version` đã dùng.
 
-Marker ở đây khác marker của `specs/chart-overlay.md`. Live overlay có `buy_signal`/`sell_signal` — tín hiệu tại nến đóng. Trang này có thêm **execution marker** `entry`, `exit`, `stop_loss`, `take_profit`, và chúng **không suy ra được** từ signal: `entry` nằm ở nến `t+1` do `fill_policy = next_candle_open` (ADR-007), giá đã trừ slippage, và một `BUY` signal khi đã có vị thế mở thì **không** tạo entry nào do `position_policy`. Chỉ backend biết đủ ngữ cảnh đó.
+Marker ở đây khác marker của `specs/chart-overlay.md`. Live overlay có `buy_signal`/`sell_signal` — tín hiệu tại nến đóng. Trang này có thêm **execution marker** `entry`, `exit`, `stop_loss`, `take_profit`; entry chỉ xuất hiện khi BBO crossing thực sự xảy ra, giá là executable quote sau policy, và một signal cùng chiều khi đã có vị thế mở không tạo entry. Chỉ backend biết đủ ngữ cảnh đó.
 
 Đặc biệt phải đảm bảo:
 
 - Mỗi `trades` row hiển thị được truy về nến, tín hiệu và snapshot đã sinh ra nó — **0 con số không truy được nguồn**.
 - Frontend **không tính** win rate, drawdown, profit factor, PnL. Nó nhận số và format (`18.2%`).
-- Marker `signal` và marker `entry` phân biệt được bằng thị giác và lệch nhau đúng 1 nến khi `fill_policy = next_candle_open`.
+- Marker `signal` và marker `entry` phân biệt được bằng thị giác; `entry_time` là timestamp BBO crossing sau hoặc cùng causal boundary với `signal_t`, không ép lệch một candle.
 - Click một trade trong table → chart pan tới và highlight đúng cặp `entry`/`exit` của trade đó, **0 trường hợp lệch trade**.
 - Equity curve decimate xuống ≤ 2000 điểm nhưng **giữ nguyên** điểm max drawdown.
 - Backtest chưa xong → trang hiển thị trạng thái thật (`queued`/`running`/`failed`), không hiện metric rỗng như thể bằng 0.
@@ -68,12 +68,13 @@ thầm cắt dữ liệu.
   "provenance": {
     "strategy": "composite@1.0.0",
     "candidate_hash": "7b41...",
-    "dataset_version": "binance-BTCUSDT-5m-20260601-20260801",
+    "dataset_version": "binance_usdm-ETHUSDT-5m-20260601-20260801",
     "evaluator_version": "1.0.0",
     "execution": {
-      "initial_capital": 10000, "fee_bps": 10, "slippage_bps": 5,
-      "fill_policy": "next_candle_open", "position_policy": "long_only",
-      "open_position_at_end": "close_at_last_candle",
+      "initial_equity": "100.00", "fixed_notional": "10.00", "leverage": "1",
+      "fee_bps": 10, "slippage_bps": 0,
+      "fill_policy": "bbo_limit", "position_policy": "one_net_position",
+      "open_position_at_end": "last_executable_bbo",
       "risk_policy": {
         "stop_loss_pct": 2.0, "take_profit_pct": 5.0,
         "intrabar_priority": "stop_loss_first"
@@ -138,7 +139,7 @@ Phân trang theo **cursor trên `sequence_no`**, không `OFFSET`. `sequence_no` 
 
 ```json
 {
-  "initial_capital": 10000,
+  "initial_equity": 100.00,
   "points": [
     { "t": "2026-06-01T00:00:00Z", "equity": 10000.00, "dd": 0.0 },
     { "t": "2026-06-02T09:15:00Z", "equity": 9769.29,  "dd": -2.31 }
@@ -175,8 +176,8 @@ export interface Trade {
 ```
 ┌─ Experiment a3f1… · composite@1.0.0 · completed ────────────────────┐
 │ Return +12.4%  WinRate 61.7%  MDD -18.62%  Trades 47  PF 1.42       │
-│ evaluator 1.0.0 · dataset binance-BTCUSDT-5m-20260601-20260801       │
-│ fee 10bps · slip 5bps · fill next_candle_open · long_only    [prov ▸]│
+│ evaluator 1.0.0 · dataset binance_usdm-ETHUSDT-5m-20260601-20260801       │
+│ equity 100 · notional 10 · fee 10bps · fill BBO LIMIT             [prov ▸]│
 ├──────────────────────────────────────────────────────────────────────┤
 │ CHART                                                                │
 │  ▲sig                ⬤entry ─ ─ ─TP 123848─ ─ ─                      │
@@ -245,7 +246,8 @@ version nào.
 3. `stop_loss`/`take_profit`: đường ngang nét đứt từ `t` đến `line_until`.
 4. `exit`: `✕` với màu theo `exit_reason` — `signal` (xám), `stop_loss` (đỏ), `take_profit` (xanh), `end_of_sample` (vàng).
 5. Nối `entry`→`exit` của cùng `trade_id` bằng một đoạn mảnh; đó là thứ làm 47 marker rời rạc đọc được thành 47 lệnh.
-6. Signal **không** có execution tương ứng (do đã có vị thế mở, hoặc `position_policy=long_only` chặn `SELL` khi flat) vẽ mờ 40% + tooltip `"không tạo lệnh: đã có vị thế mở"`.
+6. Signal **không** có execution tương ứng (do đã có vị thế mở, pending LIMIT
+   chưa crossing, hoặc policy reject) vẽ mờ 40% + tooltip giải thích nguyên nhân.
 
 > Điểm số 6 là phần trả lời thẳng cho §25. Không có nó, user thấy 318 signal nhưng chỉ 47 trade và kết luận engine bỏ sót tín hiệu. `position_policy` được ghi trong `experiments` snapshot nên UI giải thích được **không cần chạy lại**.
 
@@ -269,7 +271,10 @@ sequenceDiagram
     Note over T,C: Khoá liên kết là trade_id kiểu BIGSERIAL,<br/>KHÔNG phải timestamp — hai trade có thể<br/>trùng entry_time sau khi làm tròn hiển thị.
 ```
 
-Dùng `trade_id` thay vì timestamp không phải chi tiết vụn: khi `open_position_at_end=close_at_last_candle`, trade cuối và một trade khác có thể chia sẻ `exit_time`; khớp theo thời gian sẽ highlight sai lệnh. Điều hướng bằng `◀ ▶` và phím `j/k` chuyển `sequence_no ± 1`, và `selectedTradeId` được đẩy vào URL (`?trade=12`) để link chia sẻ được — URL là state (`rules/web/patterns.md`).
+Dùng `trade_id` thay vì timestamp không phải chi tiết vụn: nhiều trade có thể
+chia sẻ execution boundary hoặc final-BBO timestamp; khớp theo thời gian sẽ
+highlight sai lệnh. Điều hướng bằng `◀ ▶` và phím `j/k` chuyển `sequence_no ± 1`,
+và `selectedTradeId` được đẩy vào URL (`?trade=12`) để link chia sẻ được.
 
 ### D. Equity curve + max drawdown
 
@@ -296,7 +301,7 @@ Phân biệt `trade_count = 0` với `NULL` là điều quan trọng nhất tron
 ### F. Export CSV
 
 1. `GET /experiments/{id}/trades?format=csv` — stream, không load hết vào RAM.
-2. Header CSV gồm **cả** provenance ở dòng comment đầu: `# experiment=a3f1 candidate_hash=7b41 dataset=binance-BTCUSDT-5m-20260601-20260801 fill_policy=next_candle_open position_policy=long_only open_position_at_end=close_at_last_candle fee_bps=10 slippage_bps=5 risk_policy={stop_loss_pct:2,take_profit_pct:5,intrabar_priority:stop_loss_first}`.
+2. Header CSV gồm **cả** provenance ở dòng comment đầu: `# experiment=a3f1 candidate_hash=7b41 dataset=binance_usdm-ETHUSDT-5m-20260601-20260801 initial_equity=100 fixed_notional=10 leverage=1 fill_policy=bbo_limit position_policy=one_net_position open_position_at_end=last_executable_bbo fee_bps=10 slippage_bps=0 risk_policy=null`.
 3. Số dùng dấu `.` thập phân, timestamp ISO-8601 UTC, không định dạng theo locale.
 
 > CSV không có provenance là một file vô danh sau hai tuần. Dòng comment đó tốn 1 dòng và giữ cho con số còn nghĩa.
@@ -310,7 +315,7 @@ Phân biệt `trade_count = 0` với `NULL` là điều quan trọng nhất tron
 | Backtest đang `running` mà user mở trang | `200` với `status=running` + progress; **không** trả metric rỗng, **không** `404` |
 | `run_signals` có, `trades` rỗng | Hợp lệ: chart vẽ signal marker, table hiện empty state kèm số signal. Không coi là lỗi |
 | Trade cuối còn mở (`exit_time IS NULL`) | Marker `entry` không có `exit`; table hiện `—` ở cột exit + badge `OPEN`; tooltip ghi `open_position_at_end` đã cấu hình là gì |
-| `open_position_at_end=close_at_last_candle` | Trade cuối có `exit_reason='end_of_sample'`, màu vàng, tooltip "đóng cưỡng chế tại nến cuối dataset" — để không ai đọc nó như một quyết định của strategy |
+| `open_position_at_end=last_executable_bbo` | Trade cuối có `exit_reason='end_of_sample'`, màu vàng, tooltip "settle tại final executable BBO" — để không ai đọc nó như signal strategy |
 | Số signal > 5000 | `truncated: true` + decimate marker theo mật độ pixel (giữ mọi signal **có** execution, thưa hoá signal không có). Không render 5000 DOM node |
 | Số trade > 200 | Cursor pagination; chart chỉ vẽ marker của các trade đã tải + hint "còn N trade ở trang sau" |
 | Range dataset > 1000 nến | Chart tải theo cửa sổ (`from`/`to` theo viewport), lazy-load khi pan. `422 range_too_large` nếu client bỏ qua giới hạn |
@@ -318,7 +323,7 @@ Phân biệt `trade_count = 0` với `NULL` là điều quan trọng nhất tron
 | Chạy lại Evaluator với `evaluator_version` mới | Hai row `evaluations` cho cùng run; `read.experiment_summary_v1` giữ cả hai row. UI có dropdown chọn version, mặc định version mới nhất, và hiện tường minh version đang xem |
 | Click trade khi chart đang lazy-load nến của cửa sổ khác | Đợi fetch xong mới pan; nút hiện trạng thái loading. Không pan tới vùng chưa có nến rồi nhảy lại |
 | Hai trade cùng `entry_time` sau khi làm tròn hiển thị | Highlight theo `trade_id` → đúng lệnh. Marker vẽ lệch nhẹ theo trục y để không đè nhau |
-| `equity_points` chỉ có 1 điểm (không trade) | Vẽ đường phẳng tại `initial_capital`, `max_drawdown = {dd: 0}`; không chia cho 0 |
+| `equity_points` chỉ có 1 điểm (không trade) | Vẽ đường phẳng tại `initial_equity`, `max_drawdown = {dd: 0}`; không chia cho 0 |
 | Decimate bỏ mất điểm MDD (bug) | AC-09 chặn: assert `max_drawdown.t ∈ points[].t`. Đây là lỗi im lặng cần test tự động vì mắt không phát hiện |
 | Backtest `failed` với `error_detail` chứa chuỗi từ DB | Go sanitize: chỉ trả `error_code` + message đã map. Không tên bảng, không SQL, không stack trace |
 | Xoá `backtest_runs` row (dev ops) | Các fact con có thể cascade theo lifecycle run, nhưng nếu đã có evaluation được Leaderboard tham chiếu thì chuỗi cascade bị `ON DELETE RESTRICT` chặn. Không hard-delete provenance đã public (ADR-012) |
@@ -330,7 +335,8 @@ Phân biệt `trade_count = 0` với `NULL` là điều quan trọng nhất tron
 - `trades` là **immutable fact**. UI chỉ đọc. Không có endpoint nào sửa một trade.
 - Mọi metric hiển thị đến từ `evaluations`, kèm `evaluator_version` hiện trên màn hình. Không có metric nào tính ở client.
 - Marker `entry` dùng `trades.entry_price` (đã gồm slippage), **không** dùng `candles.open` — hai giá này khác nhau đúng bằng `slippage_bps` và hiển thị giá lý tưởng sẽ che mất chi phí thực thi.
-- `entry_time` phải là nến **sau** `signal_t` khi `fill_policy=next_candle_open`. Vi phạm = look-ahead bias, và `tests/domain/test_no_lookahead.py` là lớp chặn ở backend.
+- `entry_time` phải là BBO crossing event sau hoặc causal cùng boundary với
+  `signal_t`; không được lấy quote tương lai để ghi execution fact.
 - `child_signals` render nguyên văn theo thứ tự khai báo trong snapshot, kèm `score` và `threshold` → user tự cộng lại được `1×0.2 + (−1)×0.3 + 1×0.5 = 0.4 > 0.3 → BUY`.
 
 **Hiệu năng**
@@ -361,13 +367,14 @@ Phân biệt `trade_count = 0` với `NULL` là điều quan trọng nhất tron
 - Bốn `exit_reason` có bốn màu + bốn nhãn chữ. Chỉ dùng màu là không đủ (accessibility: không dựa vào màu làm kênh thông tin duy nhất).
 - Provenance luôn thấy được, không nằm sau accordion đóng: `candidate_hash` (8 ký tự đầu), `dataset_version`, `evaluator_version`, và toàn bộ `execution` assumptions.
 - Số âm hiển thị dấu tường minh (`-2.05%`), không chỉ dựa vào màu đỏ.
-- Timestamp hiển thị UTC kèm nhãn `UTC`, để so được với `candles.close_time`. Đổi sang local time là tuỳ chọn, không phải mặc định.
+- Timestamp hiển thị UTC kèm nhãn `UTC`, để so được với `candles.open_time`/
+  `close_time`. Đổi sang local time là tuỳ chọn, không phải mặc định.
 - Bàn phím: `j/k` chuyển trade, `Enter` focus chart, `Esc` bỏ chọn. Table là `<table>` thật với `<th scope="col">`.
 
 ## Tiêu chí chấp nhận
 
-- [ ] AC-01: Backtest có 47 trade → table hiện đúng 47 dòng, `sequence_no` liên tục 1..47, tổng `pnl_absolute` khớp `equity[last] − initial_capital` sai số < `1e-6`.
-- [ ] AC-02: Với mọi trade có `signal_t`, `entry_time − signal_t` = đúng 1 interval của timeframe (`fill_policy=next_candle_open`) → assert trên toàn bộ 47 trade, **0 vi phạm**.
+- [ ] AC-01: Backtest có 47 trade → table hiện đúng 47 dòng, `sequence_no` liên tục 1..47, tổng PnL đối chiếu đúng `equity[last] − initial_equity` theo Decimal.
+- [ ] AC-02: Với mọi trade có `signal_t`, entry chỉ hiện khi có BBO crossing event causal sau signal; không có execution marker không có fill fact.
 - [ ] AC-03: Click trade `sequence_no=12` → chart pan tới `entry_time` của trade 12, marker cặp `entry`/`exit` của **đúng** `trade_id=152` được highlight, các marker khác dim. Lặp cho 10 trade ngẫu nhiên → 10/10 đúng.
 - [ ] AC-04: `grep -rE "winRate|maxDrawdown|sharpeRatio|profitFactor|backtest" web/app/experiments` → **0 match**; `no-domain-logic.test.ts` pass.
 - [ ] AC-05: Dataset 17.280 nến → `/equity` trả ≤ 2000 điểm, `decimation.original_count=17280`, và `max_drawdown.t` **có mặt** trong `points[].t`.

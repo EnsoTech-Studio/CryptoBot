@@ -4,6 +4,12 @@ Tài liệu thiết kế kiến trúc cho đồ án cuối kỳ môn Thiết k�
 
 **Chủ đề**: Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch Crypto.
 
+**Cập nhật kiến trúc 2026-08-14**: Marketdata, Strategy, Backtest, Evaluation và
+DB contract đã được reconciled với [`architecture/`](../architecture/). Đọc
+[`architecture/blueprint-verification.md`](../architecture/blueprint-verification.md)
+trước khi implement; các quyết định BBO LIMIT, one-net LONG/SHORT, Go ownership
+và fixture policy trong đó là phần chuẩn đã được hấp thụ vào Blueprint này.
+
 **Ranh giới của nhóm** *(product safety / scope decision — không phải câu trích từ đề bài)*: hệ thống là **simulation-only**. Nó không đặt lệnh, không giữ credential sàn giao dịch, không đưa ra khuyến nghị đầu tư. Binance chỉ được truy cập qua adapter read-only trên public market data endpoint. Đề bài nói trọng tâm là kiến trúc và backtest là *giả lập* (§2, §19, §47) nhưng không phát biểu ranh giới này thành yêu cầu — nhóm chọn biến nó thành ranh giới cứng để loại attack surface (không có API key thì không có gì để rò rỉ) và chống scope creep. Lập luận đầy đủ ở `proposal.md` §4.3; phân loại nguồn gốc mọi yêu cầu khác ở `proposal.md` §4.4.
 
 ## Cấu trúc thư mục
@@ -19,6 +25,9 @@ blueprint/
 │   └── diagrams-png/              # PNG 2× cho Word/PowerPoint
 ├── scripts/
 │   └── extract_diagrams.py        # Trích .mmd từ Markdown (Markdown là nguồn sự thật)
+├── verification/
+│   └── sol-2026-03-04-ma20-50.md  # Fixture passport + replay acceptance
+├── go-review-checklist.md         # Checklist handoff cho team Go
 └── specs/
     ├── market-data.md             # Binance adapter, realtime, reconnect + backfill
     ├── chart-overlay.md           # Overlay live, subscription per panel, multi-timeframe
@@ -83,6 +92,13 @@ Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/
    - **Kịch bản lỗi** — bảng tình huống → phản ứng (12–18 dòng, gồm race condition)
    - **Ràng buộc** — tính đúng đắn / hiệu năng / bảo mật / mở rộng / quan sát được, có số cụ thể
    - **Tiêu chí chấp nhận** — checklist AC kiểm chứng được
+
+4. **`architecture/`** — reconciliation và domain backend reference. Nếu một
+   ví dụ cũ trong tài liệu rộng hơn khác contract canonical, dùng
+   `architecture/blueprint-verification.md` và các spec active đã cập nhật.
+5. **`verification/`** — fixture thực tế để team Backtest chạy sau khi engine
+   và evaluator được implement. Hiện chỉ xác nhận shape/hash và structural
+   expectations; không ghi PnL khi chưa có code.
 
 ## Ba câu hỏi kiến trúc quyết định
 
@@ -151,13 +167,13 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 
 | Vấn đề                                             | Giải pháp                                                              | Tài liệu                     |
 | -------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------- |
-| Thêm strategy phải sửa 20 module                   | Registry + `@register_strategy` + auto-discovery                       | `specs/strategy-registry.md` |
+| Thêm strategy phải sửa 20 module                   | Go `StrategyRegistry` + plugin self-registration                       | `specs/strategy-registry.md` |
 | Hard-coded `if MA && RSI ...`                      | Composite là **dữ liệu JSON**, policy lưu trong snapshot               | `specs/composite-strategy.md` |
 | Frontend phụ thuộc payload Binance                 | Adapter chuẩn hoá về `Candle`; frontend không thấy field Binance        | `specs/market-data.md`       |
 | Frontend tính RSI (2 nguồn chân lý)                | Overlay **do backend tính**, frontend chỉ render                       | `specs/chart-overlay.md`     |
 | Mất nến khi WebSocket disconnect                   | `last_closed_at` trong DB + backfill REST + de-dup bằng PK             | `specs/market-data.md`       |
 | Binance ban IP do vượt rate limit                  | Outbound token bucket theo **weight** + hiệu chỉnh từ response header  | `specs/market-data.md`       |
-| Look-ahead bias làm Leaderboard vô nghĩa           | 3 tầng: `candles[:index+1]` · `IndicatorView` causal · `next_candle_open` | `design.md` §5.2.1, ADR-007 · `specs/backtest.md` |
+| Look-ahead bias làm Leaderboard vô nghĩa           | 3 tầng: causal candles · `IndicatorView` · BBO event ordering + LIMIT crossing | `design.md` §5.2.1, ADR-007 · `specs/backtest.md` |
 | SL/TP: MVP hay extension? Nến chạm cả hai thì sao?  | SL/TP cố định theo % **là MVP** (chart phải vẽ được); intrabar giải bằng `intrabar_priority` mặc định `stop_loss_first` (conservative) | `design.md` ADR-017 · `specs/backtest.md` §C1 |
 | Backtest chiếm HTTP request 40 giây                | `POST /experiments` → `202 + run_id`, luôn async (không có fast path)   | `specs/experiment.md`, ADR-006 |
 | Search loop chạy vô hạn                            | Stop condition bắt buộc ở **3 lớp**: schema `CHECK`, API, runtime       | `specs/search-loop.md`       |
@@ -166,10 +182,10 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Worker cũ (lease đã mất) ghi đè kết quả worker mới | Mọi UPDATE guard bằng `AND lease_token = $token` → khớp 0 row → worker cũ tự dừng | `design.md` §8.3.1 |
 | Event từ Worker mất vì in-process dispatcher       | **Transactional outbox**: state + event cùng transaction; dispatcher claim/retry; consumer idempotent | `design.md` §5.7 |
 | Go WS Hub down → mất frame realtime                | `POST /internal/events` best-effort + retry/backoff + circuit breaker; state đã persist nên client refetch theo `seq` | `design.md` §5.8, ADR-016 |
-| Ownership DB chồng chéo giữa Go và Python          | Python sở hữu write + migration bảng domain; Go chỉ `SELECT` trên schema `read` qua role `api_reader` | `design.md` §1.2.4, §1.2.5 |
+| Ownership DB chồng chéo giữa Go và Python          | Go sở hữu domain write + migration; Python AI không có quyền DB | `design.md` §1.2.4, §1.2.5 |
 | Duplicate event tạo entry trùng                    | `event_consumptions` + `UNIQUE (backtest_run_id, evaluator_version)`   | `specs/leaderboard.md`       |
 | Kết quả Leaderboard không truy nguồn được          | Snapshot append-only 6 bảng + `code_fingerprint` + `content_hash`      | `specs/leaderboard.md`, ADR-009, ADR-012 |
-| Strategy plugin lỗi giết cả worker                 | Sandbox 3 tầng: `SIGALRM` 1 s → `SIGKILL` child 90 s → lease 120 s     | `specs/strategy-registry.md` |
+| Strategy plugin lỗi giết cả worker                 | Trusted Go plugin boundary + context cancellation + lease 120 s      | `specs/strategy-registry.md` |
 | Plugin đọc `indicators[t+1]` (look-ahead ẩn)        | `IndicatorView` causal — chặn `[t+1]`, `[-1]`, `len()`, `slice`         | `design.md` §5.2.1           |
 | Đổi công thức score phải chạy lại backtest         | Tách trade facts (thô) khỏi metrics (dẫn xuất)                         | `specs/evaluation.md`        |
 | SSRF qua news source                               | `ApprovedNewsSource` là **server config**; validate sau mỗi redirect/DNS | `specs/news.md`              |

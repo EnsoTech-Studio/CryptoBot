@@ -20,36 +20,31 @@ Vì input đến từ Internet, đây là bề mặt tấn công lớn nhất c�
 - `news_items` không có row trùng dù collect chạy chồng lấp bao nhiêu lần: `url_hash UNIQUE` là cơ chế duy nhất.
 - News provider chết → **chart realtime và backtest technical không bị ảnh hưởng 0%** (`design.md` §1.5, §11.5).
 - Không có HTML thô nào được lưu ở dạng có thể render thành script.
-- `news.adapters` không import `sentiment` / `predictor` / `domain.strategy`.
+- `server/internal/infrastructure/news` không import Python model internals hoặc Go strategy domain.
 
 ## Contract
 
-```python
-# ports/news_provider.py — do DOMAIN định nghĩa
-class NewsProvider(Protocol):
-    def collect(self, source: ApprovedNewsSource, since: datetime) -> list[NewsItem]: ...
+```go
+type NewsProvider interface {
+	Collect(context.Context, ApprovedNewsSource, time.Time) ([]NewsItem, error)
+}
 ```
 
-```python
-@dataclass(frozen=True)
-class ApprovedNewsSource:
-    id: int                  # news_sources.id — khoá duy nhất client được nhắc tới
-    source_key: str          # 'coindesk_rss'
-    display_name: str
-    kind: Literal["rss", "api"]
-    allowed_origin: str      # 'https://www.coindesk.com' — allowlist egress
-    url_template: str        # 'https://www.coindesk.com/arc/outboundfeeds/rss/'
-    is_active: bool
+```go
+type ApprovedNewsSource struct {
+	ID int
+	SourceKey, DisplayName, Kind string
+	AllowedOrigin, URLTemplate string
+	IsActive bool
+}
 
-@dataclass(frozen=True)
-class NewsItem:
-    source_id: int
-    url: str                 # canonical URL, luôn https
-    url_hash: str            # sha256(canonical_url) — 64 hex
-    title: str               # plain text, đã sanitize, 1..512 ký tự
-    content: str | None      # plain text, đã sanitize, ≤ 20.000 ký tự
-    published_at: datetime   # UTC, TIMESTAMPTZ
-    related_coins: tuple[str, ...]   # ('BTC', 'ETH') — rỗng là hợp lệ
+type NewsItem struct {
+	SourceID int
+	URL, URLHash, Title string
+	Content *string
+	PublishedAt time.Time
+	RelatedCoins []string
+}
 ```
 
 > **`ApprovedNewsSource` không có field nào nhận từ HTTP request.** Nó được `NewsService` dựng từ một row `news_sources`. Đây không phải chi tiết implementation — đó là **contract chống SSRF**: nếu dataclass này có thêm field `url: str` do caller truyền vào, toàn bộ phần "Bảo mật" bên dưới trở nên vô nghĩa.
@@ -124,27 +119,14 @@ sequenceDiagram
 
 Nguy cơ cụ thể, không phải lý thuyết: nếu API có `POST /news/collect?url=...` thì attacker gửi `url=http://169.254.169.254/latest/meta-data/` (cloud metadata, đọc được IAM credential trên nhiều môi trường) hoặc `url=http://localhost:5432` (port scan nội bộ) và dùng server làm proxy. Phòng thủ đầu tiên và mạnh nhất là **không có endpoint nào nhận URL**. Các lớp dưới đây là phòng thủ cho trường hợp `news_sources` bị cấu hình sai hoặc nguồn hợp lệ bị chiếm.
 
-```python
-BLOCKED_NETS = [ip_network(n) for n in (
-    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
-    "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16",
-    "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4",
-    "::1/128", "fc00::/7", "fe80::/10", "::ffff:0:0/96",   # IPv6 tương đương
-)]
+```go
+var blockedNets = loadBlockedNetworks()
 
-def assert_public_https(url: str, allowed_origin: str) -> list[str]:
-    u = urlsplit(url)
-    if u.scheme != "https":                       raise SsrfBlocked("scheme_not_https")
-    if u.port not in (None, 443):                 raise SsrfBlocked("port_not_allowed")
-    if f"https://{(u.hostname or '').lower()}" != allowed_origin.lower():
-                                                  raise SsrfBlocked("origin_not_allowlisted")
-    ips = [ai[4][0] for ai in socket.getaddrinfo(u.hostname, 443,
-                                                 proto=socket.IPPROTO_TCP)]
-    if not ips:                                   raise SsrfBlocked("dns_no_answer")
-    for ip in ips:
-        if any(ip_address(ip) in net for net in BLOCKED_NETS):
-            raise SsrfBlocked("private_ip")
-    return ips        # ← pin: chỉ được connect tới đúng các IP này
+func AssertPublicHTTPS(rawURL, allowedOrigin string) ([]net.IP, error) {
+	// Validate scheme/port/origin, resolve DNS, reject private IPs, pin the
+	// approved addresses, and repeat the same check after every redirect.
+	return resolveAndPinPublicHTTPS(rawURL, allowedOrigin, blockedNets)
+}
 ```
 
 Ba điểm gọi:
@@ -167,27 +149,24 @@ Giới hạn transport, tất cả đều là con số cứng ở adapter:
 
 ### C. Parse an toàn và chuẩn hoá
 
-Parse chạy trong **worker** (`python -m app.worker`), không trong process FastAPI phục vụ HTTP. Lý do: parser XML là code phức tạp xử lý input không tin cậy, và nếu nó ăn hết CPU hoặc chết thì không được kéo theo API.
+Parse chạy trong **Go Worker** (worker workload của Go Strategy Service), không trong process Go API phục vụ HTTP. Lý do: parser XML là code phức tạp xử lý input không tin cậy, và nếu nó ăn hết CPU hoặc chết thì không được kéo theo API. Python chỉ giữ vai trò AI sentiment adapter.
 
-```python
-# XML: defusedxml — tắt DTD, tắt entity resolution, tắt external reference
-tree = defusedxml.ElementTree.fromstring(body)   # chặn XXE + billion laughs
+```go
+// encoding/xml is used with a bounded reader; DTD/external entities are not
+// resolved. Oversize or malformed input is rejected before persistence.
+decoder := xml.NewDecoder(io.LimitReader(body, 2<<20))
+items, err := parseFeed(decoder)
 ```
 
 Chuẩn hoá URL trước khi hash — đây là điều kiện để de-dup thật sự hoạt động:
 
-```python
-def canonical_url(raw: str) -> str:
-    u = urlsplit(raw.strip())
-    host = (u.hostname or "").lower().rstrip(".")        # 'CoinDesk.COM.' → 'coindesk.com'
-    path = (u.path or "/").rstrip("/") or "/"            # bỏ trailing slash
-    query = urlencode(sorted(
-        (k, v) for k, v in parse_qsl(u.query, keep_blank_values=True)
-        if not k.lower().startswith(("utm_", "fbclid", "gclid", "ref"))
-    ))
-    return urlunsplit(("https", host, quote(path), query, ""))   # bỏ fragment
-
-url_hash = sha256(canonical_url(raw).encode("utf-8")).hexdigest()
+```go
+func CanonicalURL(raw string) (string, error) {
+	// Normalize host/path/query, remove tracking parameters and fragment,
+	// require https, then hash the canonical string for url_hash.
+	return normalizeNewsURL(raw)
+}
+urlHash := sha256.Sum256([]byte(canonicalURL))
 ```
 
 Không chuẩn hoá thì cùng một bài với `?utm_source=twitter` và `?utm_source=rss` là **hai** row, và trang News hiện bài trùng — lỗi im lặng, không có exception nào.
@@ -203,9 +182,12 @@ Kết quả lưu vào DB là **plain text**. Frontend render bằng text node, k
 
 ### D. Gán `related_coins` — bằng quy tắc, không bằng ML
 
-```python
-COIN_ALIASES = {"BTC": ("bitcoin", "btc", "xbt"), "ETH": ("ethereum", "eth", "ether"), ...}
-# seed từ base asset của market_pairs; là DỮ LIỆU trong seeds/, không phải if-else trong code
+```go
+var coinAliases = map[string][]string{
+	"BTC": {"bitcoin", "btc", "xbt"},
+	"ETH": {"ethereum", "eth", "ether"},
+}
+// Seed aliases from market_pairs; matching is bounded keyword matching only.
 ```
 
 Matching là keyword khớp trên `title + content` đã lowercase, word-boundary. Cố ý **không** dùng NER hay model nào: nếu `NewsCollector` cần một model để gán coin, nó lại phụ thuộc ML và ranh giới ở §9.5 mất. Đánh đổi: keyword matching bỏ sót ("the largest cryptocurrency" không khớp `BTC`) và đôi khi khớp sai ("Bitcoin Cash" khớp cả `BTC`). Chấp nhận, vì `related_coins` chỉ dùng để **lọc hiển thị và tính aggregate**, không dùng để đặt lệnh, và có thể cải thiện bằng cách sửa seed — không cần đổi kiến trúc.
@@ -319,5 +301,5 @@ Validate lúc INSERT: `allowed_origin` phải khớp `^https://[a-z0-9.-]+$` (kh
 - [ ] AC-10: `docker stop` nguồn (hoặc block egress) → `news_collection_jobs.status='failed'` có `failure_reason`; đồng thời `GET /markets/candles` và `POST /experiments` (technical-only) vẫn `200`/`202` — **demo S8**.
 - [ ] AC-11: Hai worker chạy `collect_all()` đồng thời → mỗi source chỉ 1 job `running` (advisory lock), 0 row trùng, mỗi `news_item` mới sinh đúng **1** event `NewsCollected`.
 - [ ] AC-12: Kill worker giữa lúc job `running` → sau ≤ 10 phút sweeper set `failed` với `failure_reason='lease_expired'`; lần collect sau chạy bình thường.
-- [ ] AC-13: `tests/architecture/test_module_boundaries.py` assert `news.adapters` **không** import `sentiment`, `predictor`, `domain.strategy` — fail build nếu vi phạm (`design.md` §9.1, §9.5).
+- [ ] AC-13: `server/tests/architecture/module_boundaries_test.go` assert news infrastructure **không** import Python model internals hoặc Go strategy domain — fail build nếu vi phạm (`design.md` §9.1, §9.5).
 - [ ] AC-14: RESEARCHER gọi `POST /admin/news-sources` → `403`; ADMIN gọi với `allowed_origin='htps://x'` → `422`; ADMIN gọi với origin hợp lệ nhưng resolve ra IP private → `422`, không lưu row.

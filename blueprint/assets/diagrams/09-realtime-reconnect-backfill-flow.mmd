@@ -30,10 +30,10 @@ sequenceDiagram
 
     Note over AD,RE: BACKFILL — bù khoảng đã mất
     AD->>CK: đọc last_closed_at = T1
-    AD->>RE: GET /api/v3/klines?symbol&interval&startTime=T1&limit=1000
+    AD->>RE: GET /fapi/v1/klines?symbol&interval&startTime=T1&limit=1500
     RE-->>AD: [nến T2, T3, ..., Tn]
     AD->>MS: CandleClosed × n (theo đúng thứ tự thời gian)
-    MS->>DB: UPSERT — PK (provider,symbol,timeframe,close_time) tự de-dup
+    MS->>DB: UPSERT — PK (provider,symbol,timeframe,open_time) tự de-dup
     Note over DB: Chồng lấp với nến đã có → DO UPDATE, KHÔNG tạo nến trùng.<br/>Vì vậy backfill an toàn để retry bao nhiêu lần cũng được.
     MS->>CK: last_closed_at = Tn, is_stale = false
     MS->>HUB: StreamRecovered(provider, symbol, timeframe)

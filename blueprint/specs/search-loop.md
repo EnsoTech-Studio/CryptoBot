@@ -37,52 +37,48 @@ thiểu:
   "candidates": { "generated": 40, "tested": 32, "failed": 2 },
   "best_score": 0.8123,
   "stop_reason": null,
-  "dataset": { "dataset_version": "binance-BTCUSDT-5m-20260601-20260801", "content_hash": "7b41..." },
+  "dataset": { "dataset_version": "binance_usdm-ETHUSDT-5m-20260601-20260801", "content_hash": "7b41..." },
   "updated_at": "2026-08-12T09:14:22Z"
 }
 ```
 
-`POST /api/v1/search-runs/{id}/actions` chỉ là command public của Go; sau ownership
-check Go gọi Python internal action handler. Python mới INSERT `search_actions` và
-UPDATE `search_runs` trong một transaction với optimistic `lock_version`.
+`POST /api/v1/search-runs/{id}/actions` là command public của Go. Sau ownership
+check, Go INSERT `search_actions` và UPDATE `search_runs` trong một transaction với
+optimistic `lock_version`.
 
-```python
-class CandidateGenerator(Protocol):
-    def generator_id(self) -> str: ...            # 'random_search' | 'domain_guided'
-    def generator_version(self) -> str: ...       # '1.0.0'
-    def generate(self, space: SearchSpace, limit: int,
-                 seed: int | None,
-                 history: SearchHistory) -> Iterator[CandidateStrategy]: ...
+```go
+type CandidateGenerator interface {
+	GeneratorID() string
+	GeneratorVersion() string
+	Generate(context.Context, SearchSpace, int, *int64, SearchHistory) ([]CandidateStrategy, error)
+}
 ```
 
-```python
-@dataclass(frozen=True)
-class CandidateStrategy:
-    definition: CompositeSpec               # snapshot bất biến (xem specs/composite-strategy.md)
-    candidate_hash: str                     # sha256(canonical_json(definition))
-    generated_by: str                       # 'random_search@1.0.0'
-    generation_meta: Mapping[str, Any]      # rule nào đã áp dụng
+```go
+type CandidateStrategy struct {
+	Definition strategy.CompositeSpec
+	CandidateHash string
+	GeneratedBy string
+	GenerationMeta json.RawMessage
+}
 
+type SearchSpace struct {
+	StrategyIDs []string
+	ParameterGrid map[string]map[string][]any
+	Cardinality [2]int
+	Policies []string
+	WeightOptions []decimal.Decimal
+}
 
-@dataclass(frozen=True)
-class SearchSpace:
-    strategy_ids: Sequence[str]             # ['ma_cross','rsi','bollinger','support_resistance']
-    parameter_grid: Mapping[str, Mapping[str, Sequence[Any]]]
-    cardinality: tuple[int, int]            # (2, 4) — số child min..max
-    policies: Sequence[str]                 # ['majority_vote','weighted_vote']
-    weight_options: Sequence[float] | None  # [0.2, 0.3, 0.5] cho weighted_vote
-
-
-@dataclass(frozen=True)
-class SearchHistory:
-    """Read-only view cho generator adaptive (Genetic, Bayesian)."""
-    tested_hashes: frozenset[str]
-    top_k: Sequence[tuple[CompositeSpec, float]]   # (definition, score)
-    best_score: float | None
-    non_improving_count: int       # số candidate liên tiếp không cải thiện; persisted trên search_runs
+type SearchHistory struct {
+	TestedHashes HashSet
+	TopK []ScoredCandidate
+	BestScore *decimal.Decimal
+	NonImprovingCount int
+}
 ```
 
-> **Vì sao `generate()` trả `Iterator` chứ không `list`.** Genetic Search cần biết kết quả thế hệ trước để sinh thế hệ sau. `Iterator` + `SearchHistory` cho phép generator giữ state qua các batch mà interface không đổi. Nếu trả `list[CandidateStrategy]` thì `GeneticGenerator` **không cắm vào được** và ADR-004 sẽ vô nghĩa đúng lúc cần nhất — khi ai đó thực sự muốn thay thuật toán. Đây là ví dụ của việc thiết kế seam phải tính tới use case tương lai cụ thể, không chỉ "thêm một interface cho có".
+> **Vì sao generator trả một batch bounded.** Genetic Search cần biết kết quả thế hệ trước để sinh thế hệ sau. `SearchHistory` truyền state qua các batch mà interface không đổi; mỗi batch có `limit` và số attempt tối đa nên không thể treo. Đây là ví dụ của việc thiết kế seam phải tính tới use case tương lai cụ thể, không chỉ "thêm một interface cho có".
 
 `generation_meta` trả lời câu hỏi §17 của đề bài (*"Domain knowledge được đưa vào quá trình search như thế nào?"*):
 
@@ -114,20 +110,20 @@ Không có field này thì "domain-guided" chỉ là một cái tên — không 
                        "policies": ["weighted_vote"],
                        "parameter_grid": { "rsi": { "period": [14, 21], "buy_threshold": [25, 30] } } },
      "stop_conditions": { "max_candidates": 200, "max_duration_sec": 1800, "max_non_improving": 50 },
-     "market": { "provider": "binance", "symbol": "BTCUSDT", "timeframe": "5m",
+     "market": { "provider": "binance_usdm", "symbol": "ETHUSDT", "timeframe": "5m",
                  "range_from": "2026-01-01T00:00:00Z", "range_to": "2026-03-01T00:00:00Z" },
-     "execution": { "fee_bps": 10, "slippage_bps": 5, "fill_policy": "next_candle_open",
-                     "position_policy": "long_only", "open_position_at_end": "close_at_last_candle",
-                     "risk_policy": { "stop_loss_pct": 2.0, "take_profit_pct": 5.0,
-                                       "intrabar_priority": "stop_loss_first" } },
+     "execution": { "initial_equity": "100.00", "fixed_notional": "10.00", "leverage": "1",
+                     "fee_bps": 10, "slippage_bps": 0, "fill_policy": "bbo_limit",
+                     "position_policy": "one_net_position", "open_position_at_end": "last_executable_bbo",
+                     "risk_policy": null },
      "seed": 42,
      "idempotency_key": "run-2026-08-11-a3f8"
    }
    ```
 2. Validate cấu trúc ở Go: `generator_id` tồn tại; `stop_conditions` **có ít nhất 1 điều kiện hợp lệ**; mỗi `max_candidates`, `max_duration_sec`, `max_non_improving` phải là số nguyên dương; `max_failure_rate` nằm trong `(0,1]`; `cardinality` trong [2,5]; `strategy_ids` đều có trong registry. Go không tự đọc quota để accept request.
-3. Gọi Python `POST /internal/search-runs/admit`. Python validate lại, gọi `MarketService` để tạo/dùng lại `market_datasets` (`specs/market-data.md` §E), rồi chạy `SearchAdmission` transaction. Nếu số nến > `max_candles_per_experiment` → `422 dataset_too_large` trước khi admission.
+3. Go `SearchRunService` validate lại, gọi Go `MarketService` để tạo/dùng lại `market_datasets` (`specs/market-data.md` §E), rồi chạy `SearchAdmission` transaction. Nếu số nến > `max_candles_per_experiment` → `422 dataset_too_large` trước khi admission.
 4. `SearchAdmission` khóa `user_quotas` bằng `FOR UPDATE`, kiểm tra `max_concurrent_runs` và `max_candidates_per_run`, rồi INSERT `search_runs (status='queued', stop_conditions, seed, market_dataset_id, execution_config, idempotency_key)` trong **cùng transaction**. Job của từng candidate được tạo sau, cùng transaction với `search_candidates` và `experiments`. Nếu vượt → rollback và trả `409 concurrent_run_limit` hoặc `422 candidate_limit_exceeded`; nếu retry cùng key → trả run cũ.
-5. `execution_config` bao gồm nguyên vẹn `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end` và `risk_policy`; mọi `ExperimentSnapshot` sinh ra từ run phải copy đúng các field này. Các state/counter sau đó luôn cập nhật `updated_at` trong cùng transaction.
+5. `execution_config` bao gồm nguyên vẹn `initial_equity`, `fixed_notional`, `leverage`, `fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end` và `risk_policy`; mọi `ExperimentSnapshot` sinh ra từ run phải copy đúng các field này. Các state/counter sau đó luôn cập nhật `updated_at` trong cùng transaction.
 6. Trả `202 { "search_run_id": "…" }`.
 7. `UNIQUE (owner_id, idempotency_key)` → retry cùng key trả về run cũ, không tạo run mới.
 
@@ -158,8 +154,9 @@ sequenceDiagram
             Note over SRS: Thoát vòng lặp. KHÔNG busy-wait.<br/>Resume sẽ đưa run về 'queued' và scheduler nhặt lại.
         end
 
-        SRS->>GEN: next(iterator)
-        GEN-->>SRS: CandidateStrategy(hash=H, generated_by, generation_meta)
+        SRS->>GEN: Generate(ctx, batch_limit, seed, history)
+        GEN-->>SRS: []CandidateStrategy(hash, generated_by, generation_meta)
+        SRS->>SRS: xử lý tuần tự từng candidate trong batch
 
         SRS->>DB: BEGIN · INSERT search_candidates ... ON CONFLICT (search_run_id, candidate_hash) DO NOTHING
         alt 0 row (hash đã tồn tại)
@@ -196,23 +193,31 @@ Nhưng có một giới hạn cần thiết: `SearchRunService` giới hạn s�
 | **API**    | `422 missing_stop_condition` nếu thiếu; `422` nếu `max_candidates > max_candidates_per_run`                     |
 | **Runtime**| `check_stop_conditions()` gọi ở **đầu** mỗi vòng, trước `generate()`. Không nhánh nào bỏ qua                     |
 
-```python
-def check_stop_conditions(run: SearchRun, now: datetime) -> str | None:
-    sc = run.stop_conditions
-    if run.status in ("paused", "cancelled"):
-        return run.status
-    if "max_candidates" in sc and run.candidates_generated >= sc["max_candidates"]:
-        return "max_candidates"
-    if "max_duration_sec" in sc and (now - run.started_at).total_seconds() >= sc["max_duration_sec"]:
-        return "timeout"
-    if "max_non_improving" in sc and run.non_improving_count >= sc["max_non_improving"]:
-        return "no_improvement"
-    if "max_failure_rate" in sc and run.candidates_tested >= 20:
-        if run.candidates_failed / run.candidates_tested >= sc["max_failure_rate"]:
-            return "failure_rate"
-    if run.generator_exhausted:                # search space đã cạn; field persisted
-        return "space_exhausted"
-    return None
+```go
+func CheckStopConditions(run SearchRun, now time.Time) (string, bool) {
+	sc := run.StopConditions
+	if run.Status == StatusPaused || run.Status == StatusCancelled {
+		return string(run.Status), true
+	}
+	if sc.MaxCandidates != nil && run.CandidatesGenerated >= *sc.MaxCandidates {
+		return "max_candidates", true
+	}
+	if sc.MaxDurationSec != nil &&
+		now.Sub(run.StartedAt) >= time.Duration(*sc.MaxDurationSec)*time.Second {
+		return "timeout", true
+	}
+	if sc.MaxNonImproving != nil && run.NonImprovingCount >= *sc.MaxNonImproving {
+		return "no_improvement", true
+	}
+	if sc.MaxFailureRate != nil && run.CandidatesTested >= 20 &&
+		float64(run.CandidatesFailed)/float64(run.CandidatesTested) >= *sc.MaxFailureRate {
+		return "failure_rate", true
+	}
+	if run.GeneratorExhausted {
+		return "space_exhausted", true
+	}
+	return "", false
+}
 ```
 
 Bốn loại stop condition và ý nghĩa từng loại:
@@ -256,7 +261,8 @@ Luồng xử lý command:
 
 1. `POST /api/v1/search-runs/{id}/actions` với `{"action":"pause","command_id":"cmd-a3f8-01"}`.
 2. Ownership check: `run.owner_id == principal.id` **hoặc** role ∈ (`OPERATOR`, `ADMIN`).
-3. Go gửi command tới Python `POST /internal/search-runs/{id}/actions`; Python thực hiện transaction domain. Trong transaction, `INSERT search_actions (command_id, ...)`:
+3. Go thực hiện command trong transaction domain. Trong transaction,
+   `INSERT search_actions (command_id, ...)`:
    - Conflict trên `UNIQUE (command_id)` → command đã xử lý → trả về kết quả lần đầu (`200`, không phải lỗi). **Đây là idempotency**.
 4. Kiểm tra transition hợp lệ theo state machine; không hợp lệ → `409 invalid_transition` kèm `current_status`.
 5. `UPDATE search_runs SET status=?, lock_version = lock_version + 1 WHERE id=? AND lock_version=?`:
@@ -269,168 +275,51 @@ Luồng xử lý command:
 
 ### E. Hai generator
 
-**`RandomSearchGenerator`** (đề bài §16):
+Cả hai generator đều là Go implementations của cùng một port. Output bị giới hạn
+bởi `limit`, seed nằm trong input, và duplicate bị kiểm tra bằng
+`history.TestedHashes`; không có `while true` không có bound.
 
-```python
-@register_generator
-class RandomSearchGenerator:
-    def generate(self, space, limit, seed, history):
-        rng = random.Random(seed)              # seed → tái lập được
-        consecutive_dupes = 0
-        produced = 0
-        while produced < limit:
-            k = rng.randint(*space.cardinality)
-            ids = rng.sample(space.strategy_ids, k)
-            children = [self._sample_child(rng, sid, space) for sid in ids]
-            policy = rng.choice(space.policies)
-            spec = CompositeSpec(children=children, policy=policy,
-                                 threshold=rng.choice([0.2, 0.3, 0.4]))
-            h = canonical_hash(spec)
-            if h in history.tested_hashes:
-                consecutive_dupes += 1
-                if consecutive_dupes >= 200:
-                    return                     # space cạn → StopIteration
-                continue
-            consecutive_dupes = 0
-            produced += 1
-            yield CandidateStrategy(spec, h, "random_search@1.0.0",
-                                    {"seed": seed, "attempt": produced})
+```go
+type CandidateGenerator interface {
+	GeneratorID() string
+	Generate(context.Context, SearchSpace, int, *int64, SearchHistory) ([]CandidateStrategy, error)
+}
+
+type RandomSearchGenerator struct{}
+
+func (RandomSearchGenerator) Generate(ctx context.Context, space SearchSpace,
+	limit int, seed *int64, history SearchHistory) ([]CandidateStrategy, error) {
+	rng := rand.New(rand.NewSource(*seed))
+	out := make([]CandidateStrategy, 0, limit)
+	for attempt := 0; len(out) < limit && attempt < limit*200; attempt++ {
+		spec := sampleComposite(rng, space)
+		hash := CanonicalHash(spec)
+		if history.TestedHashes.Contains(hash) { continue }
+		out = append(out, CandidateStrategy{Definition: spec,
+			CandidateHash: hash, GeneratedBy: "random_search@1.0.0"})
+	}
+	return out, nil
+}
 ```
 
-**`DomainGuidedGenerator`** (đề bài §17) — cùng interface, khác rule:
+`DomainGuidedGenerator` dùng cùng contract nhưng nhóm child theo family:
+mỗi candidate cố gắng chọn một strategy từ `trend`, `momentum`,
+`structure`, rồi thêm tối đa một family tuỳ chọn từ `volatility` hoặc
+`information`. Nếu registry thiếu family bắt buộc, generator trả lỗi
+cấu hình rõ ràng; nếu space cạn, trả ít candidate và đánh dấu
+`GeneratorExhausted`.
 
-```python
-REQUIRED_FAMILIES = ["trend", "momentum", "structure"]   # mỗi composite lấy 1 từ mỗi nhóm
-OPTIONAL_FAMILIES = ["volatility", "information"]        # thêm 0..1 nhóm, nếu space có
+```go
+type DomainGuidedGenerator struct{}
 
-@register_generator
-class DomainGuidedGenerator:
-    def generate(self, space, limit, seed, history):
-        rng = random.Random(seed)
-        by_family = group_registry_by_family(space.strategy_ids)
-        rejected = Counter()
-        for _ in range(limit * 10):            # bounded, không while True
-            chosen = {}
-            for fam in REQUIRED_FAMILIES:
-                pool = by_family.get(fam, [])
-                if not pool:
-                    rejected["family_unavailable"] += 1
-                    break
-                chosen[fam] = rng.choice(pool)
-            if len(chosen) < len(REQUIRED_FAMILIES):
-                continue
-            # Nhóm tuỳ chọn: chỉ thêm nếu space có và cardinality còn chỗ
-            extras = [f for f in OPTIONAL_FAMILIES if by_family.get(f)]
-            if extras and len(chosen) < space.cardinality[1] and rng.random() < 0.5:
-                fam = rng.choice(extras)
-                chosen[fam] = rng.choice(by_family[fam])
-            spec = self._build(chosen, space, rng)
-            h = canonical_hash(spec)
-            if h in history.tested_hashes:
-                rejected["already_tested"] += 1
-                continue
-            yield CandidateStrategy(spec, h, "domain_guided@1.0.0",
-                                    {"rule": "required_families_plus_optional",
-                                     "families_required": REQUIRED_FAMILIES,
-                                     "families_optional": OPTIONAL_FAMILIES,
-                                     "chosen": chosen,
-                                     "rejected_reason_counts": dict(rejected)})
+func (DomainGuidedGenerator) Generate(ctx context.Context, space SearchSpace,
+	limit int, seed *int64, history SearchHistory) ([]CandidateStrategy, error) {
+	// bounded attempts; metadata ghi required/optional families và seed
+	return generateByFamilies(ctx, space, limit, seed, history,
+		[]string{"trend", "momentum", "structure"},
+		[]string{"volatility", "information"})
+}
 ```
 
-Đổi generator = 1 dòng config `SEARCH_GENERATOR=domain_guided`. `BacktestEngine`, `Evaluator`, `RankingService`, UI: **0 dòng** (demo S4).
-
-Điểm khác biệt về chất lượng: `DomainGuidedGenerator` tránh sinh `MA10 + MA20 + MA50` (3 strategy cùng nhóm trend, tương quan cao, không thêm thông tin) — đúng ví dụ đề bài §17 nêu.
-
-> **Vì sao `information` nằm ở nhóm tuỳ chọn, không phải bắt buộc.** Nếu `REQUIRED_FAMILIES` chứa `information` thì mọi candidate đều phải có `news_sentiment` — và search sẽ **dừng hoàn toàn** khi news pipeline chết hoặc khi user chỉ muốn tìm tổ hợp technical. Nhưng nếu `information` không xuất hiện ở đâu cả thì bước 15 của demo (*"thêm SentimentStrategy vào search space"*) không làm được với generator này, và `family="information"` trở thành một giá trị enum không ai dùng. Nhóm tuỳ chọn giải quyết cả hai: sentiment vào được search space khi có, và vắng nó không chặn gì. Cùng lý do áp cho `volatility` (Bollinger) — nó là nhóm thứ 4 của đề bài §17 nhưng rule "1 trend + 1 momentum + 1 structure" không có chỗ cho nó.
-
-## Kịch bản lỗi
-
-| Tình huống                                                        | Phản ứng                                                                                                       |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `stop_conditions` rỗng, key không hợp lệ, hoặc value không dương     | `422 missing_stop_condition`. DB `CHECK` là lớp thứ hai — không INSERT được                                     |
-| `max_candidates = 100000` vượt quota 500                          | `422` kèm `max_allowed: 500`. Đây là control về worker-second, không phải về request                             |
-| User đã có 2 run đang chạy, tạo run thứ 3                         | `409 concurrent_run_limit` kèm danh sách `run_id` đang chạy                                                      |
-| Search space quá nhỏ, generator sinh trùng liên tục                | Sau 200 lần trùng liên tiếp → `StopIteration` → `stop_reason='space_exhausted'`. **Không** treo vòng lặp          |
-| Generator raise exception                                          | `search_runs.status='failed'` + `stop_reason='generator_error'`. Candidate đã tạo **vẫn** được backtest xong      |
-| Một candidate backtest fail (strategy exception/timeout)           | `search_candidates.status='failed'` + `failure_reason`; `candidates_failed += 1`; run **tiếp tục**                |
-| 30% candidate fail                                                 | `max_failure_rate` chạm ngưỡng → `stop_reason='failure_rate'`. Không đốt tiếp CPU khi có gì sai hệ thống          |
-| `pause` gửi 2 lần cùng `command_id`                                | Lần 2: conflict `UNIQUE (command_id)` → trả `200` với kết quả lần đầu. State **không** đổi lần hai                |
-| `pause` gửi 2 lần với `command_id` **khác nhau**                    | Lần 2: state đã `paused` → `409 invalid_transition` kèm `current_status='paused'`                                 |
-| `pause` từ 2 tab đồng thời (2 command_id khác)                      | Optimistic lock `lock_version` → 1 thắng, 1 nhận `409 concurrent_modification`                                    |
-| `resume` một run đã `completed`                                    | `409 invalid_transition` — state terminal không nhận command                                                      |
-| `cancel` khi có 12 job đang `queued`/`leased`                       | `search_runs.status='cancelled'`; job `queued` đánh `cancelled`; job đang `leased` **chạy xong** rồi mới dừng (không kill giữa transaction) |
-| Process `SearchRunService` chết giữa run                            | Run ở `running` mà không có vòng lặp. Sweeper dùng `updated_at` cũ hơn 5 phút và `candidates_generated` không tăng → đưa về `queued`; state stop/progress vẫn còn nguyên |
-| Worker pool trống hoàn toàn                                        | Job giữ `queued`, **không mất**. UI hiện `queued: N, running: 0` + cảnh báo "no worker available"                 |
-| `max_duration_sec` đạt nhưng còn 8 job đang chạy                   | Không tạo candidate mới; **chờ** job đang chạy xong để `best_score` đúng; rồi mới `completed`                     |
-| Dataset bị revise giữa lúc run đang chạy (`content_hash` đổi)       | Run đã ghim `market_dataset_id` → tiếp tục dùng dataset cũ. Candidate mới **vẫn** so sánh được với candidate cũ    |
-| Hai run của cùng user chạy trên cùng dataset                        | Hợp lệ. `candidate_hash` dedup theo **từng run** (`UNIQUE (search_run_id, candidate_hash)`), nên có thể trùng giữa 2 run — chấp nhận, vì mỗi run là một thí nghiệm độc lập |
-| `seed` không truyền                                                | Sinh seed random và **lưu vào `search_runs.seed`** — vẫn tái lập được sau này                                     |
-| Duplicate event `StrategyEvaluated`                                | `event_consumptions(event_id, consumer)` → bỏ qua lần hai. `non_improving_count` không bị tính sai                |
-
-## Ràng buộc
-
-**Tính đúng đắn**
-
-- `stop_conditions` NOT NULL với `CHECK` bắt buộc ≥ 1 điều kiện có giá trị số dương; API kiểm tra thêm type/range và `SearchAdmission` kiểm tra quota atomically.
-- Không có code path nào dùng `read.search_run_quota_v1` để accept request. `SearchAdmission` là transaction boundary duy nhất cho quota check + `search_runs` INSERT; candidate/job transaction có boundary riêng.
-- `non_improving_count`, `generator_exhausted`, `updated_at` nằm trong `search_runs`; Ranking/SRS cập nhật chúng atomically.
-- `seed` là `NOT NULL`; nếu client bỏ qua, API sinh seed trước `INSERT` và lưu lại. Trigger `search_run_touch_updated_at` cập nhật `updated_at` cho mọi state/progress mutation, nên sweeper không dựa vào trí nhớ của process.
-- `check_stop_conditions()` gọi ở đầu **mọi** vòng lặp; không có `continue` nào bỏ qua nó.
-- `UNIQUE (search_run_id, candidate_hash)` — dedup ở tầng DB, không tầng application (tránh race giữa 2 vòng lặp).
-- `UNIQUE (command_id)` trên `search_actions` — idempotency ở tầng DB.
-- `lock_version` optimistic lock cho mọi chuyển state.
-- `seed` luôn được lưu, kể cả khi client không truyền.
-- Generator là **pure** với `(space, limit, seed, history)` — cùng input cho cùng chuỗi candidate.
-
-**Hiệu năng**
-
-- `generate()` một candidate: **< 5 ms** (không I/O; `history.tested_hashes` là in-memory frozenset).
-- `INSERT search_candidates` + `INSERT experiments` + `INSERT backtest_jobs`: **< 20 ms** (1 transaction).
-- `max_inflight = 4 × worker_count` — giới hạn job `queued` chưa xử lý để `pause` có hiệu lực nhanh.
-- `SearchProgressUpdated` throttle **1 lần/giây** tối đa (không phải mỗi candidate) — với 500 candidate trong 30 giây thì mỗi candidate một frame sẽ làm nghẽn WebSocket.
-- Sweeper phát hiện run treo: chu kỳ **60 s**, index theo `updated_at`, ngưỡng cũ hơn **5 phút**.
-
-**Khả năng mở rộng**
-
-- Thêm generator = **1 file** implement `CandidateGenerator` + `@register_generator`. `BacktestEngine`/`Evaluator`/`RankingService`/UI: 0 dòng (demo S4).
-- `SearchHistory` đã có `top_k` và `best_score` → Genetic/Bayesian cắm được ngay không cần đổi interface.
-- Thêm stop condition mới = thêm nhánh trong `check_stop_conditions` + key trong JSONB. Không migration.
-- Search chạy song song N worker: đã đúng từ 1 worker (`FOR UPDATE SKIP LOCKED`, `specs/experiment.md`).
-
-**Bảo mật**
-
-- Ownership: `RESEARCHER` chỉ đọc/điều khiển run của mình; `OPERATOR`/`ADMIN` mọi run. Mọi action ghi `actor_id`.
-- Quota `max_concurrent_runs` và `max_candidates_per_run` là control chống DoS — đơn vị tài nguyên là **worker-second**, không phải request (`design.md` §8.2).
-- `search_space.strategy_ids` phải là strategy đã đăng ký; không nhận tên tuỳ ý từ client.
-
-**Quan sát được**
-
-- `search_runs_active` gauge
-- `search_run_status{run_id}` gauge (0=queued, 1=running, 2=paused, 3=terminal)
-- `search_candidates_total{run_id,outcome}` counter (`outcome` ∈ generated/tested/failed/dedup)
-- `search_best_score{run_id}` gauge
-- `search_dedup_hits_total{run_id}` counter
-- Progress panel UI (`design.md` §8.4) hiển thị: tested/total, queued/running/failed, dedup hits, elapsed + ETA, current candidate, best (score + return + winrate + mdd).
-
-## Tiêu chí chấp nhận
-
-- [ ] AC-01: `POST /search-runs` không có `stop_conditions` → `422 missing_stop_condition`. Thử `INSERT` trực tiếp vào DB không có stop condition → **DB reject** bằng `CHECK`.
-- [ ] AC-02: Run với `max_candidates=50` → dừng đúng ở **50** candidate, `stop_reason='max_candidates'`.
-- [ ] AC-03: Run với `max_duration_sec=60` trên space lớn → dừng trong 60–75 s (chờ job đang chạy), `stop_reason='timeout'`.
-- [ ] AC-04: Run với `max_non_improving=10` trên space mà Top-1 tìm được sớm → dừng với `stop_reason='no_improvement'`.
-- [ ] AC-05: Space chỉ có 3 tổ hợp hợp lệ, `max_candidates=100` → dừng với `stop_reason='space_exhausted'` trong < 10 s, **không treo**.
-- [ ] AC-06: Inject 40% candidate fail, `max_failure_rate=0.3` → dừng với `stop_reason='failure_rate'`.
-- [ ] AC-07: `grep -rn "while True" app/application/search_run_service.py` → 0 kết quả, hoặc mọi `while True` có `break` nằm ngay sau `check_stop_conditions()`.
-- [ ] AC-08: `pause` → `resume` → `cancel`: mỗi lệnh có row trong `search_actions` với `requested_from`/`resulted_in` đúng.
-- [ ] AC-09: Gửi `pause` 3 lần với **cùng** `command_id` → chỉ 1 row `search_actions`, cả 3 response `200` giống nhau, state đổi đúng 1 lần.
-- [ ] AC-10: Gửi `pause` 2 lần với `command_id` khác nhau → lần 2 `409 invalid_transition`.
-- [ ] AC-11: `cancel` một run `completed` → `409`, `search_runs.status` không đổi.
-- [ ] AC-12: `RESEARCHER` A gọi `pause` trên run của B → `403`. `OPERATOR` gọi → `200`, `search_actions.actor_id` = operator.
-- [ ] AC-13: Chạy 2 run với cùng `seed=42` và cùng space → **cùng chuỗi `candidate_hash` theo đúng thứ tự**.
-- [ ] AC-14: Chạy run không truyền `seed` → `search_runs.seed` có giá trị; chạy lại với seed đó ra cùng chuỗi.
-- [ ] AC-15: Đổi `SEARCH_GENERATOR=domain_guided`, chạy lại → mọi candidate có đúng 1 strategy từ **mỗi** nhóm trend/momentum/structure; `generation_meta.rule='required_families_plus_optional'`; `git diff` cho thấy **0 dòng** đổi ở backtest/evaluator/leaderboard.
-- [ ] AC-15b: Với `space.strategy_ids` chứa `news_sentiment` (`family='information'`) và `cardinality=[3,4]` → có ít nhất 1 candidate trong 40 lần sinh chứa `news_sentiment`, và `generation_meta.chosen` ghi nó dưới key `information`.
-- [ ] AC-15c: Với `space.strategy_ids` **không** chứa strategy nào thuộc `information` → generator vẫn sinh đủ `max_candidates`, `rejected_reason_counts` không có `family_unavailable` cho nhóm tuỳ chọn (nhóm tuỳ chọn vắng mặt không phải lỗi).
-- [ ] AC-16: Kill process `SearchRunService` giữa run → trong ≤ 6 phút sweeper đưa run về `queued` và nó tiếp tục từ `candidates_generated` hiện tại (không chạy lại từ 0).
-- [ ] AC-17: Một candidate có strategy timeout → `candidates_failed=1`, run tiếp tục và hoàn thành đủ `max_candidates`.
-- [ ] AC-18: `cancel` khi có 12 job `queued` → job `queued` thành `cancelled` trong ≤ 5 s; job đang `leased` hoàn thành bình thường; không có job treo `leased`.
+Đổi generator = một dòng config `SEARCH_GENERATOR=domain_guided`.
+`BacktestEngine`, `Evaluator`, `RankingService` và UI: **0 dòng** (demo S4).

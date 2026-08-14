@@ -1,15 +1,15 @@
 flowchart LR
     subgraph Ext["NGUỒN NGOÀI"]
         direction TB
-        BN_R["Binance REST<br/>/api/v3/klines"]
+        BN_R["Binance USDⓈ-M REST<br/>/fapi/v1/klines"]
         BN_W["Binance WSS<br/>@kline_5m"]
         NEWS["RSS / News API<br/><i>allowlist</i>"]
     end
 
     subgraph Client["CLIENT — chỉ render"]
         direction TB
-        P1["Chart Panel 1<br/>BTCUSDT 5m"]
-        P2["Chart Panel 2<br/>BTCUSDT 15m"]
+        P1["Chart Panel 1<br/>ETHUSDT 5m"]
+        P2["Chart Panel 2<br/>ETHUSDT 15m"]
         P3["Chart Panel 3<br/>1h"]
         P4["Chart Panel 4<br/>4h"]
         LB_UI["Leaderboard<br/>+ Trade Table"]
@@ -24,7 +24,7 @@ flowchart LR
         WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(provider,symbol,timeframe,strategy,config_hash)</i>"]
     end
 
-    subgraph LabBox["STRATEGY LAB — Python"]
+    subgraph LabBox["STRATEGY SERVICE — Go"]
         direction TB
 
         subgraph MD["① Market Data Module"]
@@ -113,12 +113,12 @@ flowchart LR
     classDef ext fill:#e8e8e8,stroke:#999,color:#000
     classDef client fill:#dbeafe,stroke:#3b82f6,color:#000
     classDef go fill:#cffafe,stroke:#06b6d4,color:#000
-    classDef py fill:#fef3c7,stroke:#f59e0b,color:#000
+    classDef domain fill:#fef3c7,stroke:#f59e0b,color:#000
     classDef wk fill:#fce7f3,stroke:#ec4899,color:#000
     classDef db fill:#dcfce7,stroke:#22c55e,color:#000
     class BN_R,BN_W,NEWS ext
     class P1,P2,P3,P4,LB_UI,SR_UI,NW_UI client
     class MW,REST,WSHUB go
-    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS py
+    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS domain
     class W1 wk
     class DB db

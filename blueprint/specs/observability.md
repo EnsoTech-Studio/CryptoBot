@@ -4,9 +4,9 @@
 
 Observability ở dự án này **không** phải "cài Prometheus rồi tính sau". Đề bài §32.7 nêu năm câu hỏi rất cụ thể — *Loop đang chạy hay dừng? Đã thử bao nhiêu strategy? Backtest mất bao lâu? Có bao nhiêu job lỗi? Strategy nào đang Top 1?* — nên module này được thiết kế ngược từ câu hỏi: **mỗi câu có đúng một signal trả lời trực tiếp**, không phải suy ra từ ba dashboard.
 
-Phạm vi gồm bốn nhánh. (1) **Metrics**: Prometheus text format, expose ở `GET /metrics` của Go và của Python Lab, chỉ `OPERATOR`/`ADMIN` đọc được qua boundary công khai. (2) **Structured log**: JSON một dòng, cùng một tập field bắt buộc ở cả ba runtime (Go `slog`, Python `logging` với JSON formatter, worker dùng cùng logger với Lab vì là **cùng image**). (3) **Correlation ID**: một id duy nhất theo request đi xuyên browser → Go → Python → `domain_events` → worker → quay lại UI trong error toast. (4) **Health**: `/healthz` liveness tách khỏi `/readyz` readiness, cộng với `UI Progress panel` — phần observability mà người dùng thực sự nhìn.
+Phạm vi gồm bốn nhánh. (1) **Metrics**: Prometheus text format, expose ở `GET /metrics` của Go Strategy Service và Python AI service, chỉ `OPERATOR`/`ADMIN` đọc được qua boundary công khai. (2) **Structured log**: JSON một dòng, cùng một tập field bắt buộc ở cả ba runtime (Go `slog` ở API/worker, Python `logging` ở AI inference). (3) **Correlation ID**: một id duy nhất theo request đi xuyên browser → Go → `domain_events` → worker → quay lại UI trong error toast. (4) **Health**: `/healthz` liveness tách khỏi `/readyz` readiness, cộng với `UI Progress panel` — phần observability mà người dùng thực sự nhìn.
 
-Điểm cần nói rõ: hệ thống có **3 code artifact** (`web/`, `server/` Go, `ai/` Python) nhưng **4 loại runtime workload** — `worker` dùng chung image với `ai/` mà chạy process riêng (`design.md` §1.3.1). Một backtest lỗi có thể bắt nguồn từ HTTP request 40 phút trước đó, được thực thi bởi một worker khác process. Không có correlation ID xuyên suốt thì việc trả lời "vì sao experiment của tôi failed" là mò kim đáy bể qua ba log stream — và đó là tình huống xảy ra **mỗi lần demo**.
+Điểm cần nói rõ: hệ thống có **3 code artifact** (`web/`, `server/` Go, `ai/` Python) nhưng **4 loại runtime workload** — API và worker dùng chung image Go nhưng chạy process riêng; `ai/` chỉ làm inference sentiment (`design.md` §1.3.1). Một backtest lỗi có thể bắt nguồn từ HTTP request 40 phút trước đó, được thực thi bởi một worker khác process. Không có correlation ID xuyên suốt thì việc trả lời "vì sao experiment của tôi failed" là mò kim đáy bể qua log stream — và đó là tình huống xảy ra **mỗi lần demo**.
 
 Giới hạn phạm vi có ý thức: chỉ dùng **Prometheus + structured log**. Không có tracing collector (Jaeger/OpenTelemetry) trong blueprint này — correlation ID đã cho đủ khả năng nối chuỗi cho một hệ thống 3 service, còn một collector là thêm một deployable phải vận hành. Distributed tracing được ghi nhận là **hướng mở rộng**: field `correlation_id` đã có sẵn ở mọi log và mọi row `domain_events`, nên việc bổ sung span sau này không phải sửa lại contract.
 
@@ -22,7 +22,7 @@ Giới hạn phạm vi có ý thức: chỉ dùng **Prometheus + structured log*
 
 ## Contract
 
-- Go public API expose `/healthz`, `/readyz` và `/metrics`; Python Lab expose cùng
+- Go public API expose `/healthz`, `/readyz` và `/metrics`; Python AI expose
   health/metrics surface chỉ trên internal network. Browser không gọi Python trực tiếp.
 - `/healthz` chỉ kiểm tra process còn phản hồi; `/readyz` kiểm tra DB, migration và
   dependency bắt buộc theo từng field. `/metrics` dùng Prometheus text format.
@@ -54,15 +54,15 @@ sequenceDiagram
     autonumber
     participant B as Browser
     participant GO as Go API
-    participant PY as Python Lab
+    participant PY as Python AI Sentiment
     participant DB as PostgreSQL
     participant W as Worker
 
     B->>GO: POST /api/v1/experiments header X-Request-ID req_01JB2X
     Note over GO: thiếu header thì Go tự sinh ULID có tiền tố req_
     GO->>GO: log service=api request_id=req_01JB2X event=experiment_requested
-    GO->>PY: POST /internal/experiments header X-Correlation-ID req_01JB2X
-    PY->>PY: log service=lab correlation_id=req_01JB2X event=experiment_created
+    GO->>W: enqueue experiment header X-Correlation-ID req_01JB2X
+    W->>W: log service=worker correlation_id=req_01JB2X event=experiment_created
     PY->>DB: INSERT experiments, INSERT domain_events correlation_id=req_01JB2X
     PY->>DB: INSERT backtest_jobs status=queued
     PY-->>GO: 202 experiment_id
@@ -147,15 +147,15 @@ stateDiagram-v2
     Migrating --> Ready: migration xong, DB reachable, Lab reachable
     Migrating --> NotReady: migration lỗi hoặc DB unreachable
     NotReady --> Ready: dependency phục hồi
-    Ready --> Degraded: Lab unreachable nhưng DB ổn
-    Degraded --> Ready: Lab phục hồi
+    Ready --> Degraded: Python AI unreachable nhưng DB ổn
+    Degraded --> Ready: Python AI phục hồi
     Ready --> [*]: shutdown, healthz đóng trước, drain 10 giây
 ```
 
 | Endpoint | Kiểm tra gì | Fail thì sao |
 |---|---|---|
 | `GET /healthz` | Chỉ *process còn sống và còn phản hồi được*. Không chạm DB | Orchestrator **restart** container |
-| `GET /readyz` | DB reachable + migration đã chạy đủ + Python Lab reachable | Orchestrator **rút khỏi load balancer**, không restart |
+| `GET /readyz` | DB reachable + Go migration đã chạy đủ. Python AI optional, không chặn core readiness | Orchestrator **rút khỏi load balancer**, không restart |
 
 ```json
 {
@@ -163,7 +163,7 @@ stateDiagram-v2
   "checks": {
     "database": { "ok": true,  "latency_ms": 3 },
     "migration": { "ok": true, "version": "0007_add_search_actions" },
-    "lab": { "ok": false, "error_code": "lab_unreachable" }
+    "ai": { "ok": false, "error_code": "ai_unreachable" }
   },
   "request_id": "req_01JB2X9K7M4NQZ"
 }
@@ -173,14 +173,17 @@ stateDiagram-v2
 
 > **Migration phải chạy TRƯỚC khi readiness báo healthy.** Nếu không, một instance nhận traffic khi bảng chưa tồn tại và trả `500` cho user thật. Thứ tự cứng: `healthz` mở ngay khi process sống (để không bị kill oan trong lúc migrate) → migration → `readyz` mở.
 
-> **Degraded ≠ not ready.** Khi Python Lab down: các route public read (`/markets/candles`, `/leaderboard`) vẫn đọc PostgreSQL và vẫn trả `200` — theo ADR-013, không fake dữ liệu nhưng cũng không tắt cái đang hoạt động. `readyz` báo `lab.ok=false` và các route ghi trả `503` với `error_code=lab_unavailable`.
+> **Degraded ≠ not ready.** Khi Python AI down: các route public read
+> (`/markets/candles`, `/leaderboard`) vẫn đọc PostgreSQL và vẫn trả `200`.
+> Chỉ sentiment route trả `503 ai_unavailable`; market/strategy/backtest core
+> không fake dữ liệu và không bị tắt.
 
 ### F. UI Progress panel — observability mà người dùng nhìn thấy
 
 ```text
 ┌─ Search Run #a3f8 ────────────────── ● RUNNING ─┐
 │ Generator   random_search@1.0.0                 │
-│ Dataset     binance-btcusdt-5m-20260101-0301    │
+│ Dataset     binance-ethusdt-5m-20260101-0301    │
 │ Stop        max_candidates=200 · max_dur=1800s  │
 │                                                 │
 │ Tested      127 / 200      ████████░░░░  63%    │
@@ -244,13 +247,13 @@ RETURNING event_id;   -- 0 row = đã xử lý, dừng lại
 | Python nhận request **không** có `X-Correlation-ID` | Tự sinh id tiền tố `orphan_`, log WARN `event=missing_correlation_id`. Đây là tín hiệu có ai gọi Lab trực tiếp, không qua Go |
 | Worker lease job của experiment đã bị xoá | Log ERROR `error_code=experiment_missing`, đánh job `failed`, **không** retry. Retry một thứ không tồn tại chỉ đốt CPU |
 | `search_run_status` gauge không khớp `search_runs.status` trong DB | DB là nguồn sự thật. Gauge được **reconcile** mỗi 30 giây từ DB, không chỉ cập nhật theo event — event có thể mất khi process restart |
-| Process Python restart giữa lúc search chạy | Counter về 0; Prometheus tự phát hiện counter reset nên rate() vẫn đúng. Gauge được reconcile lại từ DB ở vòng 30 giây đầu |
+| Process Python AI restart giữa lúc sentiment chạy | Counter về 0; Prometheus tự phát hiện counter reset nên rate() vẫn đúng. Core gauge reconcile từ DB |
 | Series `search_run_status{run_id}` tích tụ sau nhiều run | Xoá series khỏi registry **15 phút** sau khi run vào trạng thái terminal. Không xoá thì cardinality tăng vĩnh viễn |
 | `/metrics` bị gọi bởi `RESEARCHER` | `403 forbidden`. Metric để lộ số lượng user, tên strategy đang chạy, và pattern tải — không phải dữ liệu công khai |
 | `/metrics` timeout vì registry quá lớn | Timeout 5 giây ở scrape; log WARN kèm số series. Là tín hiệu cardinality đã sai chỗ nào, cần sửa label chứ không tăng timeout |
 | PostgreSQL down | `/healthz` vẫn `200` (process sống), `/readyz` trả `503` với `database.ok=false`. Container **không** bị restart |
 | Migration lỗi khi boot | `/readyz` trả `503` `migration.ok=false` kèm version đang dở. Process **không** exit, để log còn đọc được; orchestrator không đưa vào LB |
-| Python Lab down nhưng DB ổn | `/readyz` `lab.ok=false`; route public read vẫn `200` từ DB; route ghi trả `503 lab_unavailable` (ADR-013 — không fake dữ liệu) |
+| Python AI down nhưng DB ổn | `/readyz` core vẫn `200`; route public read vẫn `200` từ DB; sentiment route trả `503 ai_unavailable` (ADR-013 — không fake dữ liệu) |
 | Log volume tăng vọt (một strategy log mỗi nến) | Sampling: cùng `event` + cùng `correlation_id` quá 100 dòng/phút thì log 1/100 kèm `sampled: true`. Chặn một strategy lỗi làm đầy disk |
 | `ETA` là `Infinity` khi `tested = 0` | Hiện `ETA —` thay vì số. Chia cho 0 hiện `NaN` trên UI là lỗi rất dễ mắc và rất dễ thấy |
 | Event `BacktestCompleted` đến hai lần | `event_consumptions` chặn ở lần thứ hai; `evaluations_total` **không** tăng hai lần |
@@ -313,9 +316,9 @@ RETURNING event_id;   -- 0 row = đã xử lý, dừng lại
 - [ ] AC-09: Chạy 100 request tới `/api/v1/experiments/{id}` với 100 UUID khác nhau → số series của `http_requests_total` **không tăng** (route là pattern).
 - [ ] AC-10: Kill container PostgreSQL → `/healthz` vẫn `200`, `/readyz` `503` với `database.ok=false`; container API **không** bị restart. Bật lại DB → `/readyz` về `200` trong **< 15 giây**.
 - [ ] AC-11: Boot với migration cố tình lỗi → `/readyz` `503` `migration.ok=false`; process **vẫn sống** và log chứa version migration đang dở.
-- [ ] AC-12: Kill container `ai` → `GET /markets/candles` vẫn `200` từ DB, `POST /experiments` trả `503 lab_unavailable`, `/readyz` báo `lab.ok=false`.
+- [ ] AC-12: Kill container `ai` → `GET /markets/candles` vẫn `200` từ DB, core `POST /experiments` vẫn enqueue được, sentiment route trả `503 ai_unavailable`.
 - [ ] AC-13: Chạy search run 200 candidate → panel hiện đủ `Tested`, `Queued`, `Running`, `Failed`, `Dedup hits`, `Elapsed`, `ETA`, `Current`, `Best`; `Tested` tăng đơn điệu, **không** giảm.
-- [ ] AC-14: Restart container Python giữa lúc search chạy → sau **≤ 30 giây**, `search_run_status{run_id}` khớp `search_runs.status` trong DB (reconcile hoạt động).
+- [ ] AC-14: Restart Python AI giữa lúc sentiment chạy → core search state vẫn khớp DB; sentiment route phục hồi hoặc trả `503` rõ ràng.
 - [ ] AC-15: Publish event `BacktestCompleted` hai lần cùng `event_id` → `evaluations_total` tăng đúng **1**, và `event_consumptions` có đúng **1** row.
 - [ ] AC-16: Search run kết thúc, chờ 16 phút → series `search_run_status{run_id}` **không còn** trong `/metrics`.
 - [ ] AC-17: Log 10.000 dòng cùng `event` trong 1 phút → số dòng thực ghi **≤ 200**, có dòng mang `sampled: true`; đường request không bị chậm quá 1 ms p95.

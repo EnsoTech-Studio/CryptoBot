@@ -10,7 +10,7 @@ Hệ thống là **simulation-only** — không đặt lệnh, không giữ API 
 
 > **Nguồn gốc của toàn bộ spec này: [PD] — product decision.** Đề bài **không** yêu cầu authentication, RBAC hay quota. Nhóm thêm vì không có principal thì không enforce được quota, và quota là điều kiện để §32.5 (Performance) và §43 (scenario scalability) có nghĩa: nếu bất kỳ ai gửi được một request sinh 5,5 giờ CPU thì "1.000 strategy cần backtest" không còn là bài toán thiết kế. Phân loại đầy đủ ở `proposal.md` §4.4.
 
-Hai lỗ hổng **đang tồn tại trong scaffold** phải được đóng như một phần của spec này, không để lại "sẽ làm sau": hàm `withCORS` trong `server/internal/httpapi/handler.go` đang **echo lại Origin** của request, và `docker-compose.yml` đang publish `${AI_PORT:-8000}:8000` ra host khiến Python Lab (không có auth) tiếp cận được từ ngoài. Chi tiết ở Luồng F.
+Hai lỗ hổng **đang tồn tại trong scaffold** phải được đóng như một phần của spec này, không để lại "sẽ làm sau": hàm `withCORS` trong `server/internal/httpapi/handler.go` đang **echo lại Origin** của request, và `docker-compose.yml` đang publish `${AI_PORT:-8000}:8000` ra host khiến Python AI (chỉ là sentiment adapter) tiếp cận được từ ngoài. Chi tiết ở Luồng F.
 
 Đặc biệt phải đảm bảo:
 
@@ -24,19 +24,17 @@ Hai lỗ hổng **đang tồn tại trong scaffold** phải được đóng như
 
 ## Contract
 
-- Browser chỉ gọi public Go API. Go xác thực, RBAC, ownership và validate payload;
-  Python Lab không có public auth surface.
-- `POST /api/v1/search-runs` không tự quyết định quota bằng một read rồi gọi Python.
-  Sau khi Go kiểm tra syntax, nó gọi `POST /internal/search-runs/admit`; Python thực
-  hiện `SearchAdmission` atomically bằng transaction function có `SELECT user_quotas
-  FOR UPDATE` + đếm run active + INSERT `search_runs`.
+- Browser chỉ gọi public Go API. Go xác thực, RBAC, ownership, quota và validate
+  payload; Python AI không có public auth surface.
+- `POST /api/v1/search-runs` chạy `SearchAdmission` ngay trong Go transaction:
+  `SELECT user_quotas FOR UPDATE` + đếm run active + INSERT `search_runs`.
 - `read.search_run_quota_v1` chỉ là projection phục vụ diagnostics. Nó **không** là
   nguồn quyết định admission và không được dùng để pass/fail request.
 - Ownership lookup trong Go nhận `resourceKind` từ allowlist cố định và chỉ query
   `read.experiment_summary_v1` hoặc `read.search_run_v1`; không nhận tên bảng từ
   request và không query domain base table.
-- Python chỉ được gọi domain command với principal/internal token hợp lệ. Go không
-  INSERT/UPDATE domain table trực tiếp.
+- Python AI chỉ được gọi qua sentiment port với internal token hợp lệ. Go sở hữu
+  toàn bộ domain INSERT/UPDATE và migration; AI không ghi DB.
 
 ## Luồng chính
 
@@ -89,7 +87,7 @@ sequenceDiagram
     participant M as Middleware chain
     participant AU as Auth layer
     participant AZ as Authz layer
-    participant PY as Python Lab
+    participant PY as Python AI Sentiment
     participant DB as PostgreSQL
 
     B->>M: POST /api/v1/search-runs
@@ -102,9 +100,7 @@ sequenceDiagram
     AU->>AZ: principal user_id, role
     AZ->>AZ: L3 RBAC route cho phép RESEARCHER
     AZ->>AZ: L4a validate schema, enum, range, symbol
-    AZ->>PY: POST /internal/search-runs/admit kèm principal, idempotency_key, X-Correlation-ID
-    PY->>PY: L4b validate LẠI toàn bộ payload
-    PY->>DB: SearchAdmission: lock user_quotas + count active + INSERT run trong 1 transaction
+    AZ->>DB: SearchAdmission: lock user_quotas + count active + INSERT run trong 1 transaction
     alt quota vượt hoặc candidate limit vượt
         DB-->>PY: rollback → concurrent_run_limit/candidate_limit_exceeded
         PY-->>AZ: 409/422 error
@@ -266,7 +262,7 @@ CSRF trên **mọi** request đổi state (`POST`, `PUT`, `PATCH`, `DELETE`), ba
 2. Header `X-CSRF-Token` khớp cookie `csrf_token` bằng `hmac.Equal` (so sánh constant-time, tránh timing).
 3. Cookie `access_token` hợp lệ.
 
-Lỗ hổng thứ hai trong scaffold: `docker-compose.yml` publish `${AI_PORT:-8000}:8000` ra host. Python Lab **không có auth** — nó tin rằng chỉ Go gọi tới. Cổng publish phá vỡ giả định đó.
+Lỗ hổng thứ hai trong scaffold: `docker-compose.yml` publish `${AI_PORT:-8000}:8000` ra host. Python AI **không có public auth** — nó chỉ nhận sentiment request từ Go. Cổng publish phá vỡ giả định đó.
 
 ```yaml
 # docker-compose.prod.yml — ai KHÔNG có khối ports.
@@ -277,7 +273,9 @@ services:
     expose: ["8000"]
 ```
 
-> **Vì sao giữ mapping ở `docker-compose.yml` dev nhưng bỏ ở prod?** Dev cần gọi trực tiếp `localhost:8000` để test Lab mà không qua Go. Đó là tiện lợi có giá trị thật. Nhưng nó cũng chính là lý do Lớp 4 phải validate lại ở Python: hạ tầng có thể cấu hình sai, và một lớp phòng thủ giả định "chỉ Go gọi tới" là lớp phòng thủ dựa vào cấu hình đúng — thứ không nên tin.
+> **Vì sao giữ mapping ở `docker-compose.yml` dev nhưng bỏ ở prod?** Dev có thể
+> gọi trực tiếp `localhost:8000` để test AI. Production chỉ cho Go gọi qua
+> internal network; domain admission không phụ thuộc AI.
 
 ## Kịch bản lỗi
 
@@ -294,14 +292,14 @@ services:
 | `RESEARCHER` gọi `GET /experiments/{id}` của người khác | `404 not_found` (không `403` — tránh oracle dò tồn tại). Log server ghi `reason=ownership_denied` |
 | `RESEARCHER` gọi `GET /metrics` | `403 forbidden`. Đây là quyền theo role thuần, không có oracle nào để bảo vệ |
 | User đang có 2 run `queued`/`running`/`paused`, tạo run thứ 3 | `409 concurrent_run_limit` kèm `current` và `limit`. `SearchAdmission` khóa `user_quotas` và kiểm tra + INSERT trong cùng transaction, nên hai request đồng thời không cùng vượt qua |
-| `max_candidates=100000` trong `POST /search-runs` | `422 candidate_limit_exceeded` kèm ngưỡng thực tế 500. Chặn ở Go **và** ở Python (`specs/search-loop.md`) |
+| `max_candidates=100000` trong `POST /search-runs` | `422 candidate_limit_exceeded` kèm ngưỡng thực tế 500. Chặn tại Go trước transaction |
 | Request body > 1 MiB | `413 payload_too_large` từ `bodyLimit`, xảy ra **trước** khi parse JSON và trước JWT verify |
 | Vượt token bucket | `429` + `Retry-After` tính từ thời điểm bucket có đủ 1 token, không phải giá trị cố định |
 | Thiếu `X-CSRF-Token` trên `POST` | `403 csrf_failed`. Áp dụng cả khi token hợp lệ — thiếu một trong ba điều kiện là từ chối |
 | `Origin` không thuộc allowlist trên request có credential | Không set header CORS → browser tự chặn ở phía client; ngoài ra server trả `403 origin_not_allowed` cho request đổi state, vì client không phải browser thì không có browser nào chặn hộ |
-| Python Lab bị gọi trực tiếp bằng payload sai | Lớp 4b reject `422`, log WARN `event=internal_validation_failed`. Đây là lý do tồn tại của việc validate hai lần |
+| Python AI bị gọi trực tiếp bằng payload sai | Network policy chặn public access; internal token + schema validation trả `422` |
 | PostgreSQL down khi login | `503 service_unavailable`, không `500`. Không rò rỉ SQL error message ra client (`design.md` §5.5) |
-| Clock skew giữa Go và Python | `leeway` 60 s khi verify `exp`/`nbf`. Không có leeway thì lệch 2 s giữa container làm token vừa cấp đã bị coi là hết hạn |
+| Clock skew giữa Go và Python AI | `leeway` 60 s khi verify `exp`/`nbf` nếu AI route cần token |
 | Signing key private rò rỉ | Rotate keypair: phát hành `kid` mới, giữ public key cũ trong JWKS thêm 15 phút cho token đang lưu hành, rồi xoá |
 
 ## Ràng buộc
@@ -309,7 +307,7 @@ services:
 **Tính đúng đắn**
 
 - Rotation refresh token nằm trong **một** transaction có `SELECT ... FOR UPDATE`; không có đường nào tạo được hai chuỗi token song song từ một token.
-- `SearchAdmission` khóa row `user_quotas` bằng `FOR UPDATE`; quota check, idempotency lookup và INSERT `search_runs` nằm trong **cùng** transaction. Job của từng candidate được tạo ở transaction sau cùng `search_candidates` + `experiments` + `backtest_jobs`. Check bằng read projection trước khi gọi Python chỉ là advisory và không được dùng để accept request.
+- `SearchAdmission` khóa row `user_quotas` bằng `FOR UPDATE`; quota check, idempotency lookup và INSERT `search_runs` nằm trong **cùng** transaction. Job của từng candidate được tạo ở transaction sau cùng `search_candidates` + `experiments` + `backtest_jobs`. Read projection chỉ là advisory và không được dùng để accept request.
 - `users.role` có `CHECK IN ('RESEARCHER','OPERATOR','ADMIN')` ở DB — lớp cuối cùng nếu code có bug (Lớp 4, `design.md` §7.4).
 - `refresh_tokens.token_hash` là `CHAR(64) UNIQUE`: hash trùng là bất khả thi về mặt xác suất, nhưng constraint biến "bất khả thi" thành "được DB bảo đảm".
 - Mọi timestamp là `TIMESTAMPTZ` UTC. So sánh `expires_at` với `now()` của DB, không với clock của process.
@@ -326,7 +324,7 @@ services:
 
 - Cookie: `HttpOnly` + `Secure` + `SameSite=Strict`; `Path=/api/v1` cho access token, `Path=/api/v1/auth/refresh` cho refresh token — thu hẹp phạm vi gửi refresh token xuống đúng một endpoint.
 - Security header cố định: `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`.
-- Access token TTL **15 phút**, refresh **7 ngày**, JWT **RS256** với `kid` trong header để rotate được key. Public key phân phối cho Python/worker; **private key chỉ Go giữ**.
+- Access token TTL **15 phút**, refresh **7 ngày**, JWT **RS256** với `kid` trong header để rotate được key. Public key phân phối cho Go Worker khi cần; **private key chỉ Go API giữ**.
 - **0 secret trong log/metric label**: không log `password`, `token`, `token_hash`, `Cookie`, `Authorization`. Label metric không bao giờ chứa `user_id` hay email (vừa là PII, vừa là cardinality explosion).
 - Rate limit: 120 req/phút per-IP cho public read; per-principal 30/phút `POST /experiments`, 5/phút `POST /search-runs`, 20/phút `POST /ai/predict`.
 - Cửa sổ revoke của access token là **≤ 15 phút** — đánh đổi có ý thức, không phải sơ suất (Luồng E).
@@ -336,7 +334,7 @@ services:
 
 - `http_requests_total{route,status}` cho phép đếm `401`/`403`/`429` theo route mà không cần parse log.
 - Log ERROR bắt buộc kèm `error_code` cho: `refresh_reuse`, `ownership_denied`, `csrf_failed`, `origin_not_allowed`, `quota_exceeded`.
-- Mọi response lỗi mang `request_id` khớp `X-Request-ID`, truy vết được xuyên Go → Python → worker (`specs/observability.md`).
+- Mọi response lỗi mang `request_id` khớp `X-Request-ID`, truy vết được xuyên Go API → Go Worker; AI sentiment nhận correlation ID khi được gọi (`specs/observability.md`).
 - Mọi hành động `pause/resume/cancel` ghi `search_actions.actor_id` — audit trail cho quyền override của OPERATOR.
 
 **UX**
@@ -363,5 +361,5 @@ services:
 - [ ] AC-12: Gửi 6 `POST /search-runs` trong 60 giây → request thứ 6 `429` kèm `Retry-After` là số nguyên giây > 0.
 - [ ] AC-13: Body 2 MiB tới `POST /ai/predict` → `413`, và log cho thấy **không** có bước JWT verify nào chạy cho request đó.
 - [ ] AC-14: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up` rồi `curl localhost:8000/healthz` từ host → **connection refused**; `curl` cùng URL từ trong container `api` → `200`.
-- [ ] AC-15: Gọi trực tiếp Python `POST /internal/search-runs/admit` với `max_candidates=999999` (bỏ qua Go) → `422`, **không** có row nào được thêm vào `search_runs`.
+- [ ] AC-15: Gọi trực tiếp Go admission port với `max_candidates=999999` → `422`, **không** có row nào được thêm vào `search_runs`.
 - [ ] AC-16: `grep -riE "password|token_hash|set-cookie" logs/` → **0** dòng chứa giá trị thật; chỉ có tên field trong thông điệp validation.
