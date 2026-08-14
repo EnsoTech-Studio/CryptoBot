@@ -473,7 +473,7 @@ Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container 
 | Browser ↔ Go API             | HTTPS REST + **WebSocket** (`/api/v1/markets/stream`) | JSON. WebSocket vì cần client→server message (`subscribe`/`unsubscribe` từng panel), SSE một chiều không đủ. Xem ADR-001.            |
 | Go Service ↔ PostgreSQL      | TCP, connection pool                                | Owner của domain: write + migration, chạy **trước** khi readiness báo healthy. Parameterized query. |
 | Go Service ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
-| Go Service ↔ Binance WS      | WSS, persistent                                      | 1 connection multiplexed nhiều stream. Reconnect capped exponential backoff + backfill (§6.1).                                       |
+| Go Service ↔ Binance WS      | WSS, persistent                                      | Binance combined stream `/market/stream?streams=...`; lowercase logical streams, one internal reader + serialized writer, reconnect capped exponential backoff + REST backfill (§6.1). `github.com/coder/websocket` chỉ ở infrastructure. |
 | Go Service ↔ Worker          | **Qua PostgreSQL** (`backtest_jobs` + `FOR UPDATE SKIP LOCKED`) | Không gọi trực tiếp. Job record là contract. Đổi sang broker = đổi adapter.                                                |
 | Go Service → Python AI       | HTTP/1.1 JSON, internal network                     | Chỉ gọi `SentimentAnalyzer` inference; propagate correlation ID and deadline. |
 | Worker → Evaluator / Ranking | **Transactional outbox** trên `domain_events` (§5.7) | **Cross-process**: worker và consumer là process khác nhau nên không dùng in-process dispatcher. Publisher ghi state + event cùng transaction; dispatcher claim/retry; consumer idempotent theo `event_id`. |
@@ -690,7 +690,7 @@ flowchart LR
     subgraph Ext["NGUỒN NGOÀI"]
         direction TB
         BN_R["Binance USDⓈ-M REST<br/>/fapi/v1/klines"]
-        BN_W["Binance WSS<br/>@kline_5m"]
+        BN_W["Binance combined WSS<br/>/market/stream<br/><i>bookTicker + kline</i>"]
         NEWS["RSS / News API<br/><i>allowlist</i>"]
     end
 
@@ -760,8 +760,8 @@ flowchart LR
     BN_W -->|"kline tick"| MDA
     BN_R -->|"backfill nến thiếu"| MDA
     MDA --> MDS
-    MDS -->|"upsert nến đã đóng"| DB
-    MDS --> BUS
+    MDS -->|"closed Candle → bounded ingress → DB writer"| DB
+    MDS -->|"CandleClosed after ingress"| BUS
     BUS -->|"CandleClosed"| OVL
     OVL -->|"ChartOverlayUpdated<br/>+ provider + config_hash"| WSHUB
     MDS -->|"candle delta"| WSHUB
@@ -812,11 +812,32 @@ flowchart LR
     class DB db
 ```
 
+> **HLA abstraction boundary**: sơ đồ giữ `BinanceAdapter → MarketService → DB`
+> như một đường logic để không làm phình C4/HLA. Ở execution layer, adapter
+> chứa `WebSocketClient` dùng `github.com/coder/websocket`; một reader giải mã
+> envelope combined và một writer duy nhất serialize control/write. Nến đóng đi
+> qua bounded ingress tới DB writer/checkpoint rồi mới phát `CandleClosed`; BBO
+> đi vào memory hub/replay, **không** ghi `candles` hay dataset. `WSHUB` chỉ nhận
+> normalized DTO, không nhận raw Binance envelope.
+
 ### 3.1 Sáu điểm tích hợp và cam kết của từng điểm
 
 **① Binance → Market Data Adapter**
 
 - Adapter là **lớp duy nhất** biết raw Binance Kline (`e`, `E`, `s`, `k.t/T/o/h/l/c/v/n/x`). Nó map sang `KlineUpdate` cho chart, không để raw shape rò rỉ.
+- Physical public route là một combined socket tại
+  `wss://fstream.binance.com/market/stream?streams=...` với stream name
+  lowercase (`<symbol>@bookTicker`, `<symbol>@kline_<interval>`). Adapter unwrap
+  `{"stream":...,"data":...}`; control response/ack không đi vào domain event.
+  Private User Data Stream là route khác và không được bật trong simulation-only
+  scope.
+- `WebSocketClient` có lifecycle `Run(ctx)` + terminal, idempotent `Close()`;
+  một reader sở hữu mọi read, một writer sở hữu mọi write/control, keepalive
+  không tranh quyền ghi. Domain chỉ thấy normalized port, không import
+  `coder/websocket`.
+- `bookTicker` map sang `market.BBO` và đi qua bounded memory hub cho paper/UI/
+  replay; không ghi DB. Kline đóng map sang `market.Candle` qua bounded ingress
+  và DB writer.
 - `KlineUpdate.Final=false` là transient chart state; không ghi DB, không vào `AnalysisContext`. Chỉ `Final=true` mới tạo `market.Candle` closed-only để upsert vào `candles`, tính overlay và chạy strategy.
 - De-dup bằng `UNIQUE (provider, symbol, timeframe, open_time)`. Nghĩa là backfill có thể chạy chồng lấp bao nhiêu lần cũng không tạo nến trùng — an toàn để retry.
 - Cam kết: **thêm `OKXAdapter` không sửa `MarketService`, không sửa API contract, không sửa frontend**. Xem `specs/market-data.md`.
@@ -892,6 +913,12 @@ MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,open_time) DO UPDATE
     OC->>HUB: ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
     HUB->>P1: chỉ overlay của config_hash mà Panel 1 đã subscribe
 ```
+
+> Mermaid trên mô tả logical pipeline. Physical implementation đặt
+> `WebSocketClient`/decoder trước adapter, tách bounded candle ingress khỏi DB
+> writer, và tách BBO memory hub khỏi candle persistence. `CandleClosed` chỉ
+> phát sau khi dữ liệu đã qua closed-candle boundary; `StreamRecovered` chỉ phát
+> sau khi desired subscriptions được restore và control ACK đã nhận.
 
 **Vì sao overlay tính ở backend, không ở React**
 
@@ -1817,9 +1844,12 @@ Cú pháp chỉ để minh hoạ; cam kết thiết kế là **contract và hư�
 type MarketDataProvider interface {
 	ProviderID() string
 	ListClosedCandles(ctx context.Context, q CandleQuery) ([]market.Candle, error)
-	Stream(ctx context.Context, keys []market.StreamKey) (<-chan market.Event, error)
+	StreamKlines(ctx context.Context, keys []market.StreamKey,
+		publish func(market.KlineUpdate)) (market.Subscription, error)
 }
-// Implement: BinanceAdapter. Thêm OKX = thêm OKXAdapter; domain không đổi.
+// Implement: BinanceAdapter. Internal transport may use WebSocketClient;
+// the port exposes normalized updates only. Subscription.Close is terminal.
+// Thêm OKX = thêm OKXAdapter; domain không đổi.
 
 // ---------- 2. Strategy (lõi Plugin Architecture) ----------
 type Strategy interface {
@@ -2052,6 +2082,16 @@ Go API sở hữu contract công khai và map sang lệnh nội bộ. `Auth` = c
 | GET    | `/health` · `/ready`                       | public | Liveness (process sống) vs Readiness (DB + migration + Lab reachable)         |
 | GET    | `/metrics`                                   | nội bộ | Prometheus                                                                   |
 
+`/api/v1/markets/stream` là public route canonical của product blueprint.
+`/api/v1/realtime` trong architecture là tên logical normalized event facade;
+nếu runtime expose alias thì alias phải dùng cùng WS Hub, subscription registry,
+sequence source và lifecycle, không tạo thêm protocol hoặc canonical event
+plane. Tương tự, architecture §10 dùng logical names
+`/api/v1/markets/{coin}/candles` và `/api/v1/backtests`; active blueprint giữ
+`/api/v1/markets/candles` và `/api/v1/experiments` làm public contract. Nếu sau
+này expose alias, alias phải map cùng handler/read projection và không tạo thêm
+resource semantics.
+
 **Error envelope thống nhất**
 
 ```json
@@ -2097,6 +2137,22 @@ Quy tắc **không thương lượng** ở boundary:
 | `SearchRunFinished`     | SearchRunService     | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | search_run_id, stop_reason, totals |
 | `NewsCollected`         | NewsCollector        | SentimentAnalyzer                 | **In-proc** (`lab`)                     | news_item_id, source_key, title_hash |
 | `SentimentAnalyzed`     | SentimentAnalyzer    | (chỉ persist)                     | **In-proc** (`lab`)                     | news_item_id, label, score, model_version |
+
+Bảng trên là **domain/outbox vocabulary**, không phải wire schema của browser.
+Public normalized WS DTOs dùng một lớp mapping duy nhất:
+
+| Internal source | Public DTO |
+| --- | --- |
+| `KlineUpdated`/`CandleClosed` | `ChartKline` hoặc `CandleClosed` |
+| BBO memory hub | `BBOUpdated` |
+| `StreamStale`/`StreamRecovered` | `StreamStatusChanged` |
+| signal/composite output | `SignalGenerated` |
+| paper/synthetic order status | `OrderUpdated` |
+| position tracker | `PositionUpdated` |
+| `SearchProgressUpdated`/backtest progress | `BacktestProgress` |
+
+Browser chỉ nhận DTO này qua cùng WS Hub/sequence plane; raw Binance envelope,
+private User Data Stream payload và transport types không phải public event.
 
 > **Chuỗi `BacktestCompleted → Evaluator → StrategyEvaluated → Ranking` là tuần tự, không fan-out.** `Ranking` **không** nằm trong cột Consumer của `BacktestCompleted`, và đó là chủ ý: nó cần `evaluation.score` để so với Top-K, mà score chỉ tồn tại sau khi `Evaluator` chạy xong. Cho cả hai subscribe cùng một event sẽ buộc `Ranking` tự polling xem `evaluations` đã có chưa — tức là tái tạo việc chờ event bằng polling, trong một handler. Số handler mong đợi của từng `event_type` ở §5.7.5.
 
@@ -3567,8 +3623,9 @@ type OKXAdapter struct { /* transport/private payload stays here */ }
 func (OKXAdapter) ProviderID() string { return "okx" }
 func (OKXAdapter) ListClosedCandles(ctx context.Context,
 	q market.CandleQuery) ([]market.Candle, error) { /* normalize */ }
-func (OKXAdapter) Stream(ctx context.Context,
-	keys []market.StreamKey) (<-chan market.Event, error) { /* normalize */ }
+func (OKXAdapter) StreamKlines(ctx context.Context,
+	keys []market.StreamKey,
+	publish func(market.KlineUpdate)) (market.Subscription, error) { /* normalize */ }
 ```
 
 Frontend chỉ nhận Candle/WS DTO chuẩn hoá từ Go. Field `ts/o/h/l/c/vol` của OKX

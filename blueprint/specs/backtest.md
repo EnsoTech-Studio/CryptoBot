@@ -178,8 +178,8 @@ validate:
 quantity = fixed_notional / limit_price
 ```
 
-Mọi phép tính dùng Decimal. `Signal.size` nếu có phải đúng dấu với action;
-execution layer dùng `abs(size)` chỉ khi snapshot chọn sizing policy khác.
+Mọi phép tính dùng Decimal. `Signal.SignedSize` nếu có phải đúng dấu với action;
+execution layer dùng `abs(SignedSize)` chỉ khi snapshot chọn sizing policy khác.
 
 | Intent | Crossing condition | Fill price |
 |---|---|---|

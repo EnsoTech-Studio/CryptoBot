@@ -60,6 +60,17 @@ type Evaluation struct {
 `InitialEquity` lấy từ immutable snapshot; verification baseline là `100 USDT`.
 Không lấy số vốn từ environment hoặc một default khác trong Evaluator.
 
+`Evaluation` là metrics value object và giữ nguyên shape của Go skeleton. Provenance
+định danh (`candidate_hash`, candle/BBO input hashes, execution assumptions,
+`evaluator_version`) thuộc snapshot/read-projection boundary; khi publish một
+evaluation, persistence layer phải tạo canonical result hash từ facts + policy.
+Metrics không đủ mẫu số giữ pointer `nil`; machine-readable undefined reason
+được lưu ở metadata/read projection (không biến thành `0`) để không phá shape
+hiện tại của value object.
+Hash/provenance không được suy ra trong UI, không được dùng để thay thế metrics,
+và không được công bố là verified trước khi engine/evaluator ghi được artifact
+thật.
+
 ## Persistence contract
 
 ```sql
@@ -215,11 +226,13 @@ Evaluator.
 MA20/MA50 fixture `data/formatted/sol/2026-03-04/` chưa có BacktestEngine/
 Evaluator runtime nên chưa claim PnL. Structural acceptance:
 
-- input hashes phải khớp verification record;
+- input hashes/row counts phải được M2-03 ghi vào evidence handoff trước khi
+  đối chiếu; architecture record hiện chỉ chốt shape và structural expectation;
 - strict close crossover: 29 signals, 15 BUY, 14 SELL;
 - BBO LIMIT replay: 29 intents crossing, 15 settled trades sau final-BBO
   settlement;
-- 5 lần chạy cùng facts phải có cùng canonical evaluation/result hash.
+- sau khi engine/evaluator tồn tại, 5 lần chạy cùng facts phải có cùng
+  canonical evaluation/result hash; hiện chưa claim numerical result.
 
 Evaluator unit tests dùng synthetic facts nhỏ, độc lập với marketdata fixture,
 để kiểm chứng công thức không biến thành numeric production claim.

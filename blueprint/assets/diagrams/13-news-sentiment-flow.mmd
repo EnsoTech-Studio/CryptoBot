@@ -28,7 +28,7 @@ sequenceDiagram
     else thành công
         EXT-->>PRV: RSS XML
         PRV->>PRV: parse trong worker isolated + sanitize
-        PRV-->>NC: [NewsItem chuẩn hoá]
+        PRV-->>NC: [Item chuẩn hoá]
         NC->>DB: INSERT news_items ... ON CONFLICT (url_hash) DO NOTHING
         NC->>DB: UPDATE job (items_found, items_new, status=completed)
         NC->>SA: NewsCollected × N

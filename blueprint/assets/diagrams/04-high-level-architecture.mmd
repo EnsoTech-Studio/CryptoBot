@@ -2,7 +2,7 @@ flowchart LR
     subgraph Ext["NGUỒN NGOÀI"]
         direction TB
         BN_R["Binance USDⓈ-M REST<br/>/fapi/v1/klines"]
-        BN_W["Binance WSS<br/>@kline_5m"]
+        BN_W["Binance combined WSS<br/>/market/stream<br/><i>bookTicker + kline</i>"]
         NEWS["RSS / News API<br/><i>allowlist</i>"]
     end
 
@@ -72,8 +72,8 @@ flowchart LR
     BN_W -->|"kline tick"| MDA
     BN_R -->|"backfill nến thiếu"| MDA
     MDA --> MDS
-    MDS -->|"upsert nến đã đóng"| DB
-    MDS --> BUS
+    MDS -->|"closed Candle → bounded ingress → DB writer"| DB
+    MDS -->|"CandleClosed after ingress"| BUS
     BUS -->|"CandleClosed"| OVL
     OVL -->|"ChartOverlayUpdated<br/>+ provider + config_hash"| WSHUB
     MDS -->|"candle delta"| WSHUB
@@ -103,7 +103,7 @@ flowchart LR
     SRS -->|"progress snapshot"| WSHUB --> SR_UI
 
     NEWS --> NWC
-    NWC -->|"NewsItem chuẩn hoá"| DB
+    NWC -->|"Item chuẩn hoá"| DB
     NWC -->|"NewsCollected"| BUS
     BUS --> SNT
     SNT -->|"sentiment + model_version"| DB

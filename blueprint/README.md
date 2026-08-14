@@ -5,10 +5,14 @@ Tài liệu thiết kế kiến trúc cho đồ án cuối kỳ môn Thiết k�
 **Chủ đề**: Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch Crypto.
 
 **Cập nhật kiến trúc 2026-08-14**: Marketdata, Strategy, Backtest, Evaluation và
-DB contract đã được reconciled với skeleton hiện tại. Đọc
-[`blueprint/verification/backend-skeleton.md`](verification/backend-skeleton.md)
-trước khi implement; các quyết định BBO LIMIT, one-net LONG/SHORT, Go ownership
-và fixture policy trong đó là phần chuẩn đã được hấp thụ vào Blueprint này.
+DB contract đã được reconciled. Blueprint này giữ yêu cầu sản phẩm, thiết kế và
+contract ở mức product; execution detail của bốn domain nằm trong bộ tài liệu
+kiến trúc sibling: [`README.md`](../../architecture/README.md),
+[`blueprint-verification.md`](../../architecture/blueprint-verification.md) và
+[`domain-backend.md`](../../architecture/domain-backend.md). Đọc chúng cùng nhau;
+khi cần một rule thực thi cụ thể, resolution trong `blueprint-verification.md`
+và contract trong `domain-backend.md` là canonical. Không ghi nhận PnL fixture
+trước khi engine/evaluator thực sự tồn tại.
 
 **Ranh giới của nhóm** *(product safety / scope decision — không phải câu trích từ đề bài)*: hệ thống là **simulation-only**. Nó không đặt lệnh, không giữ credential sàn giao dịch, không đưa ra khuyến nghị đầu tư. Binance chỉ được truy cập qua adapter read-only trên public market data endpoint. Đề bài nói trọng tâm là kiến trúc và backtest là *giả lập* (§2, §19, §47) nhưng không phát biểu ranh giới này thành yêu cầu — nhóm chọn biến nó thành ranh giới cứng để loại attack surface (không có API key thì không có gì để rò rỉ) và chống scope creep. Lập luận đầy đủ ở `proposal.md` §4.3; phân loại nguồn gốc mọi yêu cầu khác ở `proposal.md` §4.4.
 
@@ -25,10 +29,6 @@ blueprint/
 │   └── diagrams-png/              # PNG 2× cho Word/PowerPoint
 ├── scripts/
 │   └── extract_diagrams.py        # Trích .mmd từ Markdown (Markdown là nguồn sự thật)
-├── verification/
-│   ├── backend-skeleton.md        # Actual-vs-blueprint parity and deferred work
-│   ├── backend-contracts.md       # Go files, interfaces, common types, I/O paths
-│   └── sol-2026-03-04-ma20-50.md  # Fixture passport + replay acceptance
 ├── go-review-checklist.md         # Checklist handoff cho team Go
 └── specs/
     ├── market-data.md             # Binance adapter, realtime, reconnect + backfill
@@ -46,6 +46,12 @@ blueprint/
     ├── auth.md                    # JWT RS256, RBAC 3 role, ownership, Defense in Depth
     └── observability.md           # Metrics, correlation ID, structured log, progress panel
 ```
+
+**Canonical implementation handoff (sibling package)**: parity và execution
+contract không được copy thành một cây `blueprint/verification/` thứ hai. Dùng
+`../../architecture/README.md`, `../../architecture/blueprint-verification.md`
+và `../../architecture/domain-backend.md`; backlog giữ task/AC, còn architecture
+giữ chi tiết triển khai, lifecycle và evidence protocol.
 
 ## Sơ đồ render sẵn
 
@@ -95,13 +101,14 @@ Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/
    - **Ràng buộc** — tính đúng đắn / hiệu năng / bảo mật / mở rộng / quan sát được, có số cụ thể
    - **Tiêu chí chấp nhận** — checklist AC kiểm chứng được
 
-4. **`verification/`** — skeleton parity, reconciliation và fixture thực tế.
-   Nếu một ví dụ cũ trong tài liệu rộng hơn khác contract canonical, dùng
-   `verification/backend-skeleton.md`, `verification/backend-contracts.md` và
-   các spec active đã cập nhật.
-5. **`verification/sol-2026-03-04-ma20-50.md`** — fixture thực tế để team
-   Backtest chạy sau khi engine và evaluator được implement. Hiện chỉ xác nhận
-   shape/hash và structural expectations; không ghi PnL khi chưa có code.
+4. **Bộ architecture sibling** —
+   [`../../architecture/README.md`](../../architecture/README.md) mô tả topology
+   và boundary; [`../../architecture/blueprint-verification.md`](../../architecture/blueprint-verification.md)
+   chốt các reconciliation; [`../../architecture/domain-backend.md`](../../architecture/domain-backend.md)
+   là execution standard cho marketdata/strategy/backtest/evaluation.
+5. **Fixture/evidence** — dữ liệu fixture và acceptance protocol chỉ được công bố
+   cùng implementation thật. Không đưa số PnL hoặc result hash suy đoán vào
+   Blueprint; M2-03 trong backlog là nơi theo dõi deliverable này.
 
 ## Ba câu hỏi kiến trúc quyết định
 

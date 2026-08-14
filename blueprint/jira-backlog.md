@@ -5,8 +5,39 @@ Blueprint-only backlog. No implementation included.
 Import rules: every item is a Jira `Story`; Summary starts with external ID;
 assignees are `Member 1`–`Member 5`; points are Fibonacci; each `Depends on`
 entry becomes a Jira `blocks` link from dependency to dependent task. Existing
-active blueprint and Go skeleton are the contract baseline. Verification-spec
-restoration is intentionally not a separate task.
+active blueprint and Go skeleton are the product baseline. The reconciled domain
+implementation baseline is the sibling architecture package:
+`../../architecture/README.md`, `../../architecture/blueprint-verification.md`,
+and `../../architecture/domain-backend.md`. Verification-spec restoration is
+intentionally not a separate task; fixture evidence belongs in M2-03.
+
+## Architecture handoff gates
+
+These constraints apply to every story that touches the four reconciled domains:
+
+- Binance public market data uses one combined/multiplex market socket. The
+  `github.com/coder/websocket` dependency stays in infrastructure/transport;
+  domain packages never receive `*websocket.Conn` or coder-specific types.
+- One internal reader owns inbound socket reads; one writer owns outbound
+  control commands; consumers receive normalized events through bounded
+  channels. No public `Read` method or competing reader is allowed.
+- WebSocket lifecycle is `Run(ctx)` plus idempotent terminal `Close()` using
+  `CloseNow()`. External cancellation and explicit close share one shutdown
+  path; a terminally closed client never reconnects.
+- Closed candles, BBO, and provisional updates have separate paths: closed
+  candles use a bounded ingress channel and DB writer; BBO stays in memory; a
+  provisional kline never becomes a `Candle`, strategy input, or dataset row.
+- Realtime paper mode and backtest use the same normalized order/status
+  contracts, but live order placement, cancel, credentials, and private User
+  Data Stream activation remain disabled in MVP.
+- Backtest runs are single-threaded and deterministic. Merge key is
+  `(eventTime, priority, sourceSequence)` with BBO before `CandleClosed`;
+  Decimal arithmetic, one net LONG/SHORT position, executable-side LIMIT
+  fills, and final-BBO settlement are mandatory.
+- Public blueprint route `/api/v1/markets/stream` remains the browser contract.
+  Architecture's `/api/v1/realtime` is the logical facade name; M3-06 and
+  M5-01 must record any alias decision in transport/type tests instead of
+  allowing two undocumented contracts.
 
 ## Member 3 — Infrastructure
 
@@ -14,17 +45,25 @@ restoration is intentionally not a separate task.
 
 - **Assignee / points:** Member 3 / 21 SP
 - **Depends on:** M1-01, M2-01, M2-02
+- **Architecture refs:** `../../architecture/blueprint-verification.md`
+  (persistence/task-split reconciliation); `../../architecture/domain-backend.md`
+  §§4, 10.
 - **Purpose:** Make PostgreSQL source of truth for domain facts and views.
 - **Scope:** `server/migrations/`, `server/seeds/`; users, sessions, markets,
-  candles, BBO, datasets, strategies, experiments, jobs, runs, trades,
+  candles, stream checkpoints, datasets, strategies, experiments, jobs, runs, trades,
   equity, evaluations, search, leaderboard, news, sentiment, event
   consumption, and outbox schemas.
 - **Description:** Add fresh-install migrations, immutable snapshots,
   constraints, uniqueness rules, lease columns, append-only facts, indexes,
   projections, and deterministic seed data supporting readiness and ranking.
+  Keep BBO as a memory/replay stream rather than a candle-table row; preserve
+  `api_reader` and versioned `read.*` projections. Add checkpoint state needed
+  by reconnect/backfill and make snapshot/artifact mutation impossible at the
+  database boundary.
 - **Tests:** Fresh PostgreSQL migration; invalid status/duplicate dataset/mixed
   sentiment-version rejection; stale-lease checks; readiness and leaderboard
-  seed queries; snapshot UPDATE/DELETE rejection.
+  seed queries; checkpoint round-trip; BBO is not persisted as a candle; read
+  role grants; snapshot UPDATE/DELETE rejection.
 
 ### M3-02 — Implement PostgreSQL repositories, queue, and outbox
 
@@ -36,10 +75,15 @@ restoration is intentionally not a separate task.
   and event-consumption adapters.
 - **Description:** Add pools, transactions, idempotent writes,
   `FOR UPDATE SKIP LOCKED`, lease tokens, heartbeat, completion/failure guards,
-  retries, and atomic result-plus-outbox commits.
+  retries, and atomic result-plus-outbox commits. Implement the closed-candle
+  DB writer behind a bounded ingress channel; checkpoint updates and retry
+  behavior must be observable and must not reorder market events. Repository
+  code must not create a second domain store outside Go-owned migrations/read
+  projections.
 - **Tests:** Repository integration; duplicate event idempotency; expired lease
   reclaim; heartbeat only for matching token; old worker cannot write after
-  takeover; atomic result/outbox commit.
+  takeover; atomic result/outbox commit; bounded-channel shutdown and retry;
+  checkpoint persistence after reconnect.
 
 ### M3-03 — Consolidate runtime configuration and observability
 
@@ -65,6 +109,9 @@ restoration is intentionally not a separate task.
 - **Description:** Register every manifest route with a handler or explicit
   `501`; add stable errors, request/correlation IDs, structured logs, body
   limits, timeouts, and exact allowlist CORS; async commands return `202`.
+  Register the public market WebSocket contract and keep live trading routes
+  absent. Transport owns protocol conversion only; it must not leak Binance
+  payloads or websocket library types into domain/application packages.
 - **Tests:** Every route registered; stable code/message/request ID/field
   errors; arbitrary origin never echoed; limit/timeout behavior; canonical
   `/health` and `/ready`; async `202` responses.
@@ -91,10 +138,26 @@ restoration is intentionally not a separate task.
 - **Scope:** `transport/httpapi/`, `transport/ws/`, application services,
   market/strategy/experiment/search/leaderboard/news/AI handlers, and
   `/internal/events`.
+- **Architecture refs:** `../../architecture/domain-backend.md` §§3–4, 9–10;
+  `../../architecture/blueprint-verification.md` (resolved gaps, traceability).
 - **Description:** Implement public resource routes, internal event intake,
-  versioned WS frames, sequence numbers, reconnect, and resync.
+  versioned WS frames, sequence numbers, reconnect, and resync. Keep
+  `/api/v1/markets/stream` as the public blueprint route; if the logical
+  `/api/v1/realtime` facade is exposed, make it an explicit tested alias.
+  Enforce per-connection subscription limits and key isolation. Use a Hub
+  with one connection reader/writer ownership model, bounded outbound buffers,
+  provisional-frame dropping before closed/overlay frames, and explicit
+  `resync_required` on unrecoverable backpressure. Route `StreamStale` and
+  `StreamRecovered` only after checkpoint/backfill state is authoritative.
+  Normalize API frames (`CandleClosed`, `BBOUpdated`, `StreamStatusChanged`,
+  `SignalGenerated`, `OrderUpdated`, `PositionUpdated`, and
+  `BacktestProgress`) without exposing Binance or coder types. `/internal/events`
+  remains authenticated/internal and idempotent.
 - **Tests:** `httptest`/WebSocket integration for schemas, auth, ownership,
-  reconnect, ordering, route errors, and no provisional candles in backtests.
+  reconnect, ordering, route errors, subscription limit, sequence gap/resync,
+  stale/recovered ordering, backpressure, idempotent terminal close, and no
+  provisional candles in backtests. Run race/leak/shutdown tests proving one
+  reader, one writer, bounded channels, and no reconnect after `Close()`.
 
 ## Member 1 — Market, indicators, strategy
 
@@ -105,12 +168,18 @@ restoration is intentionally not a separate task.
 - **Purpose:** Establish validated deterministic domain values.
 - **Scope:** `server/internal/domain/common/`, `domain/market/`, causal
   strategy inputs, canonical hash helpers.
+- **Architecture refs:** `../../architecture/domain-backend.md` §§1–2, 9;
+  `../../architecture/blueprint-verification.md` (reconciled common types,
+  runtime safety).
 - **Description:** Implement decimal `Candle`, transient `KlineUpdate`, BBO,
   `CandleQuery`, subscription, validation, stable serialization, and immutable
-  `CausalCandles`; provisional data cannot become `Candle`.
+  `CausalCandles`; provisional data cannot become `Candle`. Preserve optional
+  live BBO `updateID` plus required fixture `sourceSequence`, UTC timestamps,
+  normalized symbols (`SOLUSDT`, not fixture directory `sol`), and keep domain
+  contracts independent of `coder/websocket`.
 - **Tests:** Invalid symbol/timeframe/provider rejection; future access returns
   `LookAheadError`; deterministic hash; provisional exclusion; decimal-stable
-  serialization.
+  serialization; BBO source ordering and provider isolation.
 
 ### M1-02 — Implement causal indicator library
 
@@ -120,7 +189,8 @@ restoration is intentionally not a separate task.
 - **Scope:** `server/internal/domain/indicator/`.
 - **Description:** Implement SMA/MA cross, RSI, Bollinger Bands, and Go MACD
   (`macd.go`) with warm-up, aligned series, decimal precision, and causal
-  `IndicatorView`.
+  `IndicatorView`. Indicator code remains pure: no DB, network, wall clock, or
+  exchange/websocket dependency.
 - **Tests:** Known vectors; warm-up; decimal precision; index bounds;
   look-ahead rejection; MACD is not implemented in Python.
 
@@ -134,7 +204,8 @@ restoration is intentionally not a separate task.
 - **Description:** Implement `Register(definition, factory)`, `Resolve`, sorted
   immutable listing, fingerprint/version validation, parameter schemas,
   warm-up metadata, and pure plugins. Plugin addition must require no core
-  branch.
+  branch. Strategy execution receives normalized causal input only and cannot
+  place live orders or access transport/persistence.
 - **Tests:** Duplicate/unknown version failure; invalid definition/missing
   warm-up failure; fingerprint/version check; plugins run without DB/network;
   deterministic listing; no registry/engine/API/UI branch for new plugin.
@@ -147,7 +218,9 @@ restoration is intentionally not a separate task.
 - **Scope:** `server/internal/domain/strategy/composite/`.
 - **Description:** Implement `weighted_vote` and `majority_vote`; validate
   cardinality, weights, threshold, encoding, and prices; preserve evidence and
-  propagate child errors.
+  propagate child errors. Use strict symmetric threshold comparison, weighted
+  non-HOLD price, and an explicit `SizePolicy` for quantity; do not silently
+  drop a non-HOLD child that lacks price or size.
 - **Tests:** Weighted threshold/boundary; majority tie; HOLD; invalid policy;
   child error; deterministic evidence/output independent of child ordering.
 
@@ -156,27 +229,56 @@ restoration is intentionally not a separate task.
 - **Assignee / points:** Member 1 / 13 SP
 - **Depends on:** M1-01
 - **Purpose:** Normalize historical klines, realtime klines, and BBO.
+- **Architecture refs:** `../../architecture/domain-backend.md` §§3–4;
+  `../../architecture/blueprint-verification.md` (market decisions and
+  resolved gaps).
 - **Scope:** `server/internal/infrastructure/market/binance.go`, private REST/
-  WS payloads, limiter, reconnect client.
-- **Description:** Parse Binance REST, kline WS, and bookTicker; normalize SOL
-  to SOLUSDT; use decimals; enforce final semantics; validate malformed/future
-  data; add weight limiting/backoff; keep BBO separate.
+  WS payloads, `github.com/coder/websocket`, combined-stream client, limiter,
+  reconnect client, and disabled private User Data Stream seam.
+- **Description:** Parse USDⓈ-M Futures REST `/fapi/v1/klines`, combined market
+  stream `/market/stream`, kline, and `bookTicker`; normalize SOL to SOLUSDT;
+  use decimals; enforce final semantics; validate malformed/future data; add
+  weight limiting/backoff; keep BBO separate. Implement a logical facade with
+  `Run(ctx)`, idempotent terminal `Close()`, desired subscription snapshot,
+  `Subscribe`/`Unsubscribe`, bounded `Events`/`Errors`, one internal reader,
+  one serialized writer, and keepalive. Unwrap `{stream,data}` envelopes,
+  correlate numeric control IDs, filter control acknowledgements from domain
+  events, lowercase stream names, restore subscriptions after reconnect, and
+  publish recovered only after acknowledgements. Apply Binance 24-hour,
+  ping/pong, inbound-rate, and stream-count policies in the adapter. Keep
+  `ORDER_TRADE_UPDATE`/`ACCOUNT_UPDATE` parser contracts available for future
+  use; preserve Binance `o.X` (current order status) separately from `o.x`
+  (execution type). Never activate private UDS or live order placement without
+  a valid explicitly enabled adapter.
 - **Tests:** Mock parsing, malformed payloads, final/non-final events, BBO order,
-  rate limits, reconnect; opt-in live test with `BINANCE_LIVE=1`.
+  combined unwrap, control-ID correlation, stream isolation, one-reader/
+  one-writer ownership, bounded event behavior, ping timeout, 24-hour
+  reconnect, idempotent `Close()`/`CloseNow()`, no reconnect after close,
+  rate limits, and reconnect snapshot restore; opt-in live test with
+  `BINANCE_LIVE=1`. Race and goroutine-leak tests are mandatory.
 
 ### M1-06 — Implement market service, reconnect, checkpoints, and datasets
 
 - **Assignee / points:** Member 1 / 13 SP
 - **Depends on:** M1-05
-- **Purpose:** Produce reliable closed-candle/BBO datasets and events.
+- **Purpose:** Produce reliable closed-candle datasets plus in-memory BBO events.
 - **Scope:** Market service, checkpoint ports, dataset builder, event
   envelopes, market integration tests.
-- **Description:** Convert callbacks, backfill reconnect gaps, deduplicate by
-  provider/symbol/timeframe/open time, persist checkpoints, publish stale/
-  recovered/closed events, and create immutable content-hashed datasets.
+- **Architecture refs:** `../../architecture/domain-backend.md` §4;
+  `../../architecture/blueprint-verification.md` (reconciled persistence and
+  task-split readiness).
+- **Description:** Convert adapter callbacks into normalized events. Send
+  closed candles through a bounded ingress channel to the DB writer and a
+  separate closed-candle strategy bus; send BBO to a low-latency in-memory hub
+  and never to candle persistence. Backfill reconnect gaps from the DB
+  checkpoint, deduplicate by provider/symbol/timeframe/open time, suppress
+  duplicate downstream closed events, publish stale/recovered/closed events,
+  and create immutable content-hashed datasets. A DB failure is observable and
+  retryable without silently reordering market events.
 - **Tests:** 60-second disconnect has zero missing/duplicate closed candles;
   provisional exclusion; stable dataset hash; idempotent repeated backfill;
-  deterministic BBO sequence; provider isolation.
+  deterministic BBO sequence; provider isolation; bounded-channel cancellation;
+  DB-writer retry; recovered event only after backfill and subscription restore.
 
 ## Member 2 — Backtest, evaluation, jobs, search
 
@@ -186,13 +288,28 @@ restoration is intentionally not a separate task.
 - **Depends on:** M1-01, M1-02, M1-03, M1-04
 - **Purpose:** Produce deterministic raw trade/order/signal/equity facts.
 - **Scope:** `domain/backtest/`, `ports.BacktestEngine` implementation, event
-  merger, position simulator, BBO replay.
+  merger, order manager, position tracker, synthetic order-status stream, BBO
+  replay.
+- **Architecture refs:** `../../architecture/domain-backend.md` §§5, 7–9;
+  `../../architecture/blueprint-verification.md` (replay/position decisions,
+  task-split readiness).
 - **Description:** Run chronologically on closed candles; BBO precedes same-time
   candle; fixed notional, one-net position, BBO LIMIT, final-BBO exit, initial
-  100 USDT, notional 10 USDT, leverage 1, fee 10 bps, zero slippage.
+  100 USDT, notional 10 USDT, leverage 1, fee 10 bps, zero slippage. Use one
+  single-thread event loop with key `(eventTime, priority, sourceSequence)`:
+  BBO, `CandleClosed`, strategy/order command, synthetic order status, then
+  position/equity observation. BUY LIMIT crosses `ask <= limit` and fills at
+  ask; SELL LIMIT crosses `bid >= limit` and fills at bid. Maintain one net
+  LONG/SHORT position: opposite signals exit, same-side signals are ignored,
+  pending opposite entries cancel-and-replace, and an entry owns a logical
+  OCO SL/TP plan. MVP full-fills/cancel only; parse and observe partial-fill
+  statuses without applying them. Settle an open LONG at final executable bid
+  or SHORT at final executable ask. No live order path.
 - **Tests:** Synthetic golden replay; warm-up/no-lookahead; deterministic facts;
   fill-side/fee; opposite and same-side behavior; missing final BBO; invalid
-  snapshot with no partial result.
+  snapshot with no partial result; event-priority ties; OCO stop-loss-first;
+  cancel/replace; partial-fill non-application; final-BBO settlement; race
+  check proving each run owns isolated state.
 
 ### M2-02 — Implement evaluation metrics and score policy
 
@@ -200,9 +317,15 @@ restoration is intentionally not a separate task.
 - **Depends on:** M2-01
 - **Purpose:** Calculate reproducible metrics from immutable facts.
 - **Scope:** `server/internal/domain/evaluation/` and evaluation service.
+- **Architecture refs:** `../../architecture/domain-backend.md` §8;
+  `../../architecture/blueprint-verification.md` (pure evaluation and fixture
+  verification boundary).
 - **Description:** Calculate return, drawdown, volatility/Sharpe, win rate,
   trade count, profit factor, average trade, and policy/version provenance;
-  undefined values stay null.
+  undefined values stay null with a machine-readable reason. Evaluator is pure:
+  it receives immutable execution facts and cannot call strategy, exchange,
+  clock, or DB. Include input/strategy/evaluator hashes and canonical result
+  hash.
 - **Tests:** Empty/no-trade; zero variance; missing equity; decimal determinism;
   invalid policy; evaluator/score provenance; minimum-trade eligibility.
 
@@ -211,14 +334,19 @@ restoration is intentionally not a separate task.
 - **Assignee / points:** Member 2 / 8 SP
 - **Depends on:** M1-06, M2-01, M2-02
 - **Purpose:** Verify the market-to-evaluation chain with supplied fixture.
-- **Scope:** Fixture loaders/replay and
-  `blueprint/verification/sol-2026-03-04-ma20-50.md`.
+- **Scope:** Fixture loaders/replay for
+  `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; update the evidence
+  handoff recorded in `../../architecture/blueprint-verification.md` only after
+  the implementation produces a result.
 - **Description:** Load the SOL OHLCV/BBO files; record hashes, configuration,
   structural outputs, metrics, and reproducibility. Record PnL only when engine
-  produces it.
+  produces it. The current architecture record intentionally contains only
+  structural expectations and notes that the fixture passport is absent; do not
+  recreate a second verification document in `blueprint/` or guess missing
+  values.
 - **Tests:** 1,443 candles and 800,692 BBO rows; 29 strict MA20/MA50 signals;
   15 settled trades under fixed policy; five identical result hashes; no
-  invented PnL.
+  invented PnL; input-file SHA-256 and sourceSequence/order-policy evidence.
 
 ### M2-04 — Implement experiments, worker execution, and lease lifecycle
 
@@ -229,7 +357,10 @@ restoration is intentionally not a separate task.
   worker command, persistence, retry/cancel, lease heartbeat.
 - **Description:** Implement snapshot creation, async enqueue, claim/heartbeat/
   complete/fail, retries, cancellation, stale-worker rejection, idempotent
-  completion, and atomic facts/run/outbox commit.
+  completion, and atomic facts/run/outbox commit. Keep each backtest run
+  single-threaded and deterministic; use the same normalized order/status
+  contract as realtime paper mode, with `SyntheticOrderStatusStream` rather
+  than a private/live exchange stream.
 - **Tests:** Snapshot immutability; retry; heartbeat; takeover; stale commit
   rejection; cancellation; duplicate completion; restart recovery.
 
@@ -339,7 +470,15 @@ restoration is intentionally not a separate task.
 - **Scope:** `web/lib/api.ts`, DTOs for market/WS/experiments/search/
   leaderboard/news/auth/errors/loading/degraded states.
 - **Description:** Consume only Go REST/WS contracts; define stable envelopes,
-  ownership/auth states, and distinct provisional/closed payloads.
+  ownership/auth states, and distinct provisional/closed payloads. Keep the
+  public route `/api/v1/markets/stream` aligned with the blueprint, document
+  any `/api/v1/realtime` alias, and type normalized events
+  `CandleClosed | BBOUpdated | StreamStatusChanged | SignalGenerated |
+  OrderUpdated | PositionUpdated | BacktestProgress`. Preserve Decimal values
+  as strings at the boundary, sequence metadata, stale/recovered status, and
+  control acknowledgements. Define `ChartKline` separately from `market.Candle`,
+  including `final`, `seq`, `last_sequence`, and `resync_required` semantics;
+  never expose Binance combined envelopes or coder connection types.
 - **Tests:** Type-check against mocked Go responses; malformed/error handling;
   typed reconnect; static scan finds no DB/Python calls.
 
@@ -351,10 +490,16 @@ restoration is intentionally not a separate task.
 - **Scope:** Chart, indicator/strategy overlays, market status, four timeframe
   subscriptions, reconnect state, accessibility.
 - **Description:** Support stale/recovered status, sequence checks, provisional
-  updates, closed overlays, and isolated panel state; calculations stay backend.
+  updates, closed overlays, and isolated panel state; calculations stay
+  backend. Restore all panel subscriptions after reconnect, refetch REST before
+  applying deltas, reject stale sequence frames, keep BBO/status/order/position
+  displays separate, and show a static degraded chart when live transport is
+  down. Each panel owns state; no shared dashboard object may cause unrelated
+  panel rerenders.
 - **Tests:** Mock reconnect; timeframe isolation; stale-event rejection;
   provisional/closed rendering; loading/error/empty; keyboard/accessibility;
-  one panel change does not rerender others.
+  one panel change does not rerender others; BBO-before-candle ordering;
+  sequence-gap refetch; subscription restore; no Binance schema import.
 
 ### M5-03 — Implement experiment and backtest visualization
 
@@ -405,21 +550,28 @@ restoration is intentionally not a separate task.
   limits, ownership, and concurrent experiments.
 - **Description:** Run SOL fixture; connect with `BINANCE_LIVE=1`; disconnect
   provider for 60 seconds; reconnect/backfill; exercise complete stack and
-  bounded concurrent jobs; collect reproducibility evidence.
+  bounded concurrent jobs; exercise coder/websocket lifecycle (combined stream,
+  control correlation, ping/pong, terminal close), actor/channel shutdown,
+  and collect reproducibility evidence.
 - **Tests:** Zero candle loss/duplication; reproducible fixture; containers
   interoperate; AI outage preserves technical functionality; rate limits,
-  lease recovery, ownership, auth, four-timeframe WS, and scale bounds pass.
+  lease recovery, ownership, auth, four-timeframe WS, combined-stream
+  reconnect/resync, no reconnect after explicit close, race/leak checks, and
+  scale bounds pass.
 
 ## Component interaction acceptance
 
 ```text
 Binance REST/WSS
-  -> MarketDataProvider/BBO capability
-  -> MarketService
-  -> closed Candle + BBO dataset + events
+  -> coder/websocket combined client (one reader/writer)
+  -> decode + normalize
+  -> bounded closed-candle ingress -> DB writer
+  -> closed-candle strategy bus
+  -> closed Candle + BBO memory hub + events
   -> StrategyRegistry
   -> causal AnalysisContext
   -> Signal / ResolvedSignal
+  -> OrderManager / PositionTracker
   -> BacktestEngine(snapshot, Candle[], BBO[])
   -> Result
   -> Evaluator
@@ -446,6 +598,10 @@ Experiment API
   -> PostgreSQL projections/outbox
   -> REST/WebSocket/frontend
 ```
+
+The private User Data Stream and live order adapter remain disabled seams. BBO
+does not become a candle-table row; provisional klines do not enter persistence,
+datasets, strategy input, or backtest facts.
 
 ## Totals
 

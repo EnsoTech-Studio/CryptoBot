@@ -11,7 +11,30 @@ The active implementation contracts are the Go domain contracts in
 - Strategy: `StrategyRegistry` resolves `(strategy_id,version)`; `AnalysisContext` has causal candles/indicators and no DB/network; plugin code is trusted compiled Go.
 - Backtest: merge BBO before `CandleClosed`; LIMIT BUY crosses ask, LIMIT SELL crosses bid; one net LONG/SHORT; fixed `10 USDT`, initial `100 USDT`, leverage `1x`.
 - Persistence: Go owns migrations, repositories, `api_reader`/`read.*` projections, dataset snapshots and transactional outbox; Python is sentiment inference only.
-- Fixture: verify `blueprint/verification/sol-2026-03-04-ma20-50.md`; never commit guessed PnL or result hashes.
+- Fixture: verify the shape/evidence recorded in
+  [`blueprint-verification.md`](../../architecture/blueprint-verification.md)
+  against `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; never commit
+  guessed PnL or result hashes.
+
+## Architecture Consistency Gates
+
+Use the sibling architecture docs as the execution reference; do not copy their
+rules into a second checklist. Before merge, verify:
+
+- WebSocket infrastructure is `github.com/coder/websocket` only; domain and
+  ports expose normalized values, never `Conn`, Binance envelopes, or raw `Read`.
+- One reader owns inbound frames and one writer serializes outbound/control
+  frames; `Events`/ingress channels are bounded and their overflow policy is
+  observable.
+- `Run(ctx)` has a terminal, idempotent `Close()`/`CloseNow()` path; shutdown
+  unblocks I/O, waits for goroutines, and never reconnects after close.
+- Combined Binance public stream, desired-subscription restore, control ACK,
+  REST backfill, and `StreamRecovered` ordering match
+  [`domain-backend.md`](../../architecture/domain-backend.md) §3–4.
+- BBO remains memory/replay input; closed Candle persistence uses the DB writer;
+  `o.X` (current status) and `o.x` (execution type) are not conflated.
+- No duplicate public route/hub or second canonical rule is introduced when
+  adding the logical `/api/v1/realtime` facade.
 
 # Concurrency & Synchronization
 

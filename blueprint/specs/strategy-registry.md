@@ -68,6 +68,10 @@ type Signal struct {
 }
 ```
 
+Architecture shorthand gọi `SignedSize` là `size`; đây là cùng một signed
+quantity field trong active Go contract. BUY phải dương, SELL phải âm; combiner
+và engine không được đổi dấu hoặc diễn giải lại field này.
+
 `composite@1.0.0` là virtual root version, `IsComposite=true`, `Family=""`.
 Root dùng cho FK/provenance, không vào search space và không làm child của
 composite khác. Child thật resolve theo `(strategy_id, version)` trước snapshot.

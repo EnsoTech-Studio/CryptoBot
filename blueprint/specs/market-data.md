@@ -4,11 +4,46 @@
 
 Module duy nhất trong hệ thống biết Binance tồn tại. Trách nhiệm:
 
-- Lấy nến lịch sử (USDⓈ-M Futures REST `/fapi/v1/klines`) và nến realtime (WSS `<symbol>@kline_<interval>`).
+- Lấy nến lịch sử (USDⓈ-M Futures REST `/fapi/v1/klines`) và nến realtime qua
+  Binance combined WSS `/market/stream?streams=...` với logical streams
+  lowercase (`<symbol>@kline_<interval>`, `<symbol>@bookTicker`).
 - Tách ba representation: raw Binance `KlineEvent` chỉ trong adapter; `KlineUpdate` chỉ cho realtime chart/provisional state; `Candle` **chỉ cho nến đã đóng** mà strategy/backtest được đọc.
 - Tự phục hồi khi mất kết nối: reconnect có backoff + backfill khoảng nến đã mất.
 - Chống vượt rate limit của Binance (weight-based).
 - Đóng gói một tập nến thành `market_dataset` bất biến để experiment tái lập được. `candles` là cache vận hành; bản snapshot dùng cho backtest nằm ở `market_dataset_candles`.
+
+### Execution handoff
+
+Chi tiết lifecycle và ownership nằm một lần trong
+[`../../architecture/domain-backend.md`](../../architecture/domain-backend.md) §3–4;
+spec này giữ product contract và acceptance criteria. Các điểm bắt buộc khi
+implement:
+
+| Boundary | Canonical rule |
+| --- | --- |
+| Binance public transport | Một combined `/market/stream` cho public market data; `coder/websocket` chỉ ở infrastructure; private User Data Stream/order path tách riêng và disabled. |
+| Socket ownership | Một reader cho mọi inbound frame, một writer serialize mọi outbound/control frame; control ACK không phải domain event; không expose raw `Read` cho consumer. |
+| Lifecycle | `Run(ctx)` kết thúc theo context; `Close()` terminal + idempotent, `CloseNow()` chỉ để unblock I/O; sau close không reconnect. `StreamRecovered` chỉ sau restore desired subscriptions và ACK/backfill. |
+| Internal flow | Kline đóng đi bounded ingress → DB writer/checkpoint + strategy bus; `bookTicker` → bounded memory BBO hub/replay, không ghi candle/dataset. |
+
+`MarketDataProvider` bên dưới là normalized port; adapter có thể dùng facade
+WebSocket nội bộ nhưng không làm `coder/websocket` hoặc Binance envelope rò vào
+domain.
+
+### Combined-stream provider limits
+
+Các limit này là adapter guardrails, không phải domain policy:
+
+| Provider rule | Adapter behavior |
+| --- | --- |
+| Connection lifetime tối đa 24 giờ | Đánh dấu stream stale/reconnect trước hoặc tại expiry; chạy backfill theo checkpoint. |
+| Binance gửi ping khoảng mỗi 3 phút; pong trong 10 phút | Reader/keepalive trả pong đúng connection; timeout làm connection unhealthy. |
+| Tối đa 10 control messages/giây từ client và 1024 logical streams/connection | Control writer rate-limit/bounds `SUBSCRIBE`/`UNSUBSCRIBE`; reject vượt quota trước khi gửi. |
+| Combined envelope `{"stream":"...","data":...}` | Unwrap bằng decoder; `SUBSCRIBE`, `UNSUBSCRIBE`, `LIST_SUBSCRIPTIONS`, `SET_PROPERTY` dùng numeric request ID và ACK correlation; control frames không phát thành market event. |
+
+Một reconnect chỉ phát `StreamRecovered` sau khi desired-subscription snapshot
+được restore, ACK hợp lệ và REST backfill hoàn tất. Không tạo connection riêng
+cho từng consumer/panel.
 
 Đặc biệt phải đảm bảo:
 

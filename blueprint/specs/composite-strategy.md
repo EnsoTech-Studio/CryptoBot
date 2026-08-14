@@ -16,6 +16,9 @@ space và không được nested làm child của composite khác.
 - Child HOLD không tạo direction.
 - Child lỗi không bị biến thành HOLD âm thầm.
 - Composite không tự sizing/fill/position; Backtest Engine xử lý fixed notional.
+- Sizing phải được chọn bởi `SizePolicy` tường minh trước khi tạo
+  `OrderIntent`; combiner không được suy diễn quantity từ weighted score hoặc
+  weighted price.
 - Thêm combiner mới = file Go mới, không sửa Backtest/Evaluation/API/UI.
 
 ## Contract
@@ -45,6 +48,12 @@ type SignalCombiner interface {
 	Combine(children []ResolvedSignal, policy CombinationPolicy) (strategy.Signal, error)
 }
 ```
+
+`CombinationPolicy` chỉ quyết định direction/price/evidence. Nó không thay thế
+`SizePolicy`: MVP dùng `fixed_notional` từ immutable snapshot (`10 USDT` trong
+fixture), còn policy khác phải được encode và validate trước khi BacktestEngine
+tạo order. Vì vậy cùng một composite signal không thể âm thầm tạo quantity khác
+giữa realtime paper và deterministic replay.
 
 The Go skeleton owns these types in
 `internal/domain/strategy/composite/contract.go`; it aliases the shared

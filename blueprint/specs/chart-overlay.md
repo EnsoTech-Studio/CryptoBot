@@ -131,6 +131,15 @@ type ChartKline struct {
 // Frame Kline có Final. MarketService chỉ tạo market.Candle khi Final=true.
 ```
 
+**Realtime transport boundary**: `/api/v1/markets/stream` là public product
+route của blueprint. Architecture gọi cùng normalized event plane là
+`/api/v1/realtime`; đó là logical facade name, không phải một hub thứ hai. Nếu
+runtime expose alias, hai route phải dùng cùng registry, lifecycle và sequence
+source. Các event ngoài chart (`CandleClosed`, `BBOUpdated`,
+`StreamStatusChanged`, `SignalGenerated`, `OrderUpdated`, `PositionUpdated`,
+`BacktestProgress`) đều là DTO normalized; browser không nhận Binance envelope,
+`coder/websocket` type hoặc private User Data Stream payload.
+
 ```json
 // client → server
 { "action": "subscribe",   "key": "binance_usdm|ETHUSDT|5m|rsi@1.0.0|sha256:4d1f9c...", "req": "c17" }
