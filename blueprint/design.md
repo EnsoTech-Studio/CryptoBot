@@ -487,7 +487,7 @@ Vì thế cách nói chính xác là: **3 image, 4 loại workload, 5 container 
 | -------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Binance WebSocket**      | Không có nến mới                            | Chart hiển thị badge `STALE` + `last_update`. Nến lịch sử vẫn render từ DB. Adapter reconnect backoff; sau khi nối lại **backfill REST** khoảng thiếu, de-dup theo unique key → 0 nến mất. |
 | **Binance REST**           | Không load được lịch sử mới                 | Request bị ảnh hưởng trả `502` với `error.code = market_provider_unavailable`. Nến đã cache trong PostgreSQL vẫn phục vụ. Backtest trên dataset đã có **vẫn chạy**. |
-| **Go Strategy Service**    | Không phục vụ domain API hoặc overlay | `/healthz` của Go vẫn `200` (liveness ≠ readiness); worker tiếp tục xử lý job đã claim. |
+| **Go Strategy Service**    | Không phục vụ domain API hoặc overlay | `/health` của Go vẫn `200` (liveness ≠ readiness); worker tiếp tục xử lý job đã claim. |
 | **Backtest Worker (tất cả)** | Job không được xử lý                      | Job giữ trạng thái `queued`, **không mất**. UI hiển thị `queued: N, running: 0` + cảnh báo "no worker available". Khi worker lên, tiếp tục từ chỗ dừng.        |
 | **PostgreSQL**             | Không đọc/ghi được gì                       | Readiness fail → API `503`. **Không** trả kết quả partial như completed. Job đang chạy fail và **không** commit evaluation nửa vời.                            |
 | **News Provider**          | Không thu được tin mới                      | Job news đó fail, ghi `failure_reason`, retry theo schedule. Chart, backtest technical, leaderboard **không bị ảnh hưởng**. Trang News hiển thị dữ liệu cũ + `last_collected_at`. |
@@ -791,7 +791,7 @@ flowchart LR
     SRS -->|"progress snapshot"| WSHUB --> SR_UI
 
     NEWS --> NWC
-    NWC -->|"NewsItem chuẩn hoá"| DB
+    NWC -->|"Item chuẩn hoá"| DB
     NWC -->|"NewsCollected"| BUS
     BUS --> SNT
     SNT -->|"sentiment + model_version"| DB
@@ -852,9 +852,9 @@ flowchart LR
 **⑥ News → Sentiment (hai job tách rời)**
 
 - `NewsCollector` chỉ collect và chuẩn hoá. Nó **không** import model ML, **không** biết BERT tồn tại.
-- `SentimentAnalyzer` chỉ classify. Nó nhận `NewsItem` đã lưu, ghi `sentiment_results` với `model_version`.
+- `SentimentAnalyzer` chỉ classify. Nó nhận `Item` đã lưu, ghi `sentiment_results` với `model_version`.
 - `NewsSentimentStrategy` đọc **aggregate theo cửa sổ thời gian** từ DB qua repository port — như mọi strategy khác, qua `AnalysisContext`, không query SQL trực tiếp. Nó khai báo `family="information"` (nhóm thứ 5 của đề bài §17), nên `DomainGuidedGenerator` đưa được nó vào search space mà không cần rule riêng.
-- Bảo mật: `ApprovedNewsSource` là **cấu hình server**, không nhận URL từ browser. Chống SSRF chi tiết ở `specs/news.md`.
+- Bảo mật: `ApprovedSource` là **cấu hình server**, không nhận URL từ browser. Chống SSRF chi tiết ở `specs/news.md`.
 - Cam kết: **sentiment down → chart và backtest technical vẫn 100%**.
 
 ### 3.2 Đường đi của một nến, từ Binance tới pixel
@@ -1900,7 +1900,7 @@ type AnalysisContext struct {
 	Candles       CausalCandles
 	Index         int
 	Indicators     IndicatorView
-	NewsSentiment  *NewsSentimentWindow
+	NewsSentiment  *sentiment.NewsSentimentWindow
 	Params         Params
 }
 ```
@@ -1957,17 +1957,9 @@ O(n) và backtest 20.000 candle không biến thành O(n²).
 | 2 | `IndicatorView` | Đọc indicator tương lai → `LookAheadError` |
 | 3 | `fill_policy = bbo_limit` | LIMIT chỉ khớp khi BBO executable side thỏa điều kiện |
 
-`NewsSentimentWindow` cũng là aggregate Go đã tính, không phải danh sách news
-thô:
-
-```go
-type NewsSentimentWindow struct {
-	WindowSec    int
-	AvgScore     decimal.Decimal
-	ItemCount    int
-	ModelVersion string
-}
-```
+`sentiment.NewsSentimentWindow` là aggregate Go canonical đã tính, không phải
+danh sách news thô. Strategy chỉ tham chiếu type này qua `AnalysisContext`; không
+có bản sao trong package `strategy`.
 
 `ItemCount == 0` truyền `nil`, không chuyển thành NEUTRAL giả. Vì vậy
 `NewsSentimentStrategy` vẫn là strategy thuần; nó không biết news đến từ RSS
@@ -2057,7 +2049,7 @@ Go API sở hữu contract công khai và map sang lệnh nội bộ. `Auth` = c
 | GET    | `/api/v1/news`                               | public | News + sentiment (`null` nếu chưa/không phân tích được)                       |
 | GET    | `/api/v1/news/aggregate`                     | public | Phân bố sentiment theo cửa sổ thời gian                                       |
 | POST   | `/api/v1/ai/predict`                         | Auth   | Endpoint tương thích scaffold hiện có; validate text 1–10.000 ký tự           |
-| GET    | `/healthz` · `/readyz`                       | public | Liveness (process sống) vs Readiness (DB + migration + Lab reachable)         |
+| GET    | `/health` · `/ready`                       | public | Liveness (process sống) vs Readiness (DB + migration + Lab reachable)         |
 | GET    | `/metrics`                                   | nội bộ | Prometheus                                                                   |
 
 **Error envelope thống nhất**
@@ -2721,7 +2713,7 @@ sequenceDiagram
     else thành công
         EXT-->>PRV: RSS XML
         PRV->>PRV: parse trong worker isolated + sanitize
-        PRV-->>NC: [NewsItem chuẩn hoá]
+        PRV-->>NC: [Item chuẩn hoá]
         NC->>DB: INSERT news_items ... ON CONFLICT (url_hash) DO NOTHING
         NC->>DB: UPDATE job (items_found, items_new, status=completed)
         NC->>SA: NewsCollected × N
@@ -2792,9 +2784,9 @@ Hệ thống dùng **RBAC 3 role** kết hợp **ownership check** trên resourc
 | `POST /ai/predict`                           | ❌        | ✅ (rate-limited per user) | ✅  | ✅    |
 | `GET /metrics`                               | ❌        | ❌              | ✅             | ✅    |
 | `POST /admin/users` · `/quotas`              | ❌        | ❌              | ❌             | ✅    |
-| `POST /admin/news-sources`                   | ❌        | ❌              | ❌             | ✅    |
+| `POST /api/v1/admin/news-sources`                   | ❌        | ❌              | ❌             | ✅    |
 | `POST /admin/score-policies`                 | ❌        | ❌              | ❌             | ✅    |
-| `GET /healthz` · `/readyz`                   | ✅        | ✅              | ✅             | ✅    |
+| `GET /health` · `/ready`                   | ✅        | ✅              | ✅             | ✅    |
 
 **Vì sao market data và leaderboard mở cho anonymous**
 
@@ -3506,7 +3498,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 - **Bối cảnh**: Python cần đẩy `ChartOverlayUpdated`, `LeaderboardUpdated`, `SearchProgressUpdated` sang Go để Go fan-out theo subscription. Hai phương án: mở một WebSocket nội bộ Python→Go và giữ nó, hoặc POST HTTP mỗi batch event.
 - **Quyết định**: **HTTP POST `/internal/events`**, batch tới 64 event, internal bearer token, idempotency theo `event_id`, retry 3 lần với backoff `[0.2s, 1s, 3s]`, circuit breaker sau 20 fail liên tiếp. Chi tiết contract ở §5.8.
-- **Vì sao không WebSocket nội bộ**: (a) một connection dài giữa hai service tạo **stateful coupling** — cần reconnect logic, heartbeat, và xử lý "connection còn mở nhưng peer đã restart", tức là viết lại đúng những thứ HTTP + retry đã cho miễn phí; (b) không có ack per-message trong WebSocket thô, nên muốn biết Go đã nhận chưa thì phải tự định nghĩa một protocol ack — lúc đó nó là RPC trên WebSocket, phức tạp hơn HTTP mà không hơn gì; (c) `readyz` của Go và Python bị ràng buộc lẫn nhau qua trạng thái connection, dễ dẫn tới một service restart kéo service kia xuống.
+- **Vì sao không WebSocket nội bộ**: (a) một connection dài giữa hai service tạo **stateful coupling** — cần reconnect logic, heartbeat, và xử lý "connection còn mở nhưng peer đã restart", tức là viết lại đúng những thứ HTTP + retry đã cho miễn phí; (b) không có ack per-message trong WebSocket thô, nên muốn biết Go đã nhận chưa thì phải tự định nghĩa một protocol ack — lúc đó nó là RPC trên WebSocket, phức tạp hơn HTTP mà không hơn gì; (c) `ready` của Go và Python bị ràng buộc lẫn nhau qua trạng thái connection, dễ dẫn tới một service restart kéo service kia xuống.
 - **Vì sao HTTP là đủ**: các event này đều **best-effort có chủ ý** — mọi thông tin đi qua đường này đã hoặc sẽ được persist trong PostgreSQL (§5.8.2). Mất một frame realtime không làm dữ liệu sai; client phát hiện gap qua `seq` và refetch REST. Đường nào **không** được mất event thì đi outbox, không đi đường này (§5.7.1).
 - **Vì sao có `Idempotency-Key` và ring buffer `event_id` ở Go**: retry của Python có thể tới sau khi Go đã xử lý thành công nhưng response bị mất. Không dedup thì một frame overlay được fan-out hai lần và client vẽ trùng.
 - **Đánh đổi**: overhead HTTP header cho mỗi batch (bù bằng batch 64 event) và độ trễ cao hơn WebSocket một chút (~1 ms). Chấp nhận: đơn giản hơn hẳn và không tạo trạng thái chung giữa hai service.
@@ -3731,7 +3723,7 @@ Nói cách khác: **Worker không phải "tính năng Phase 6", và Redis không
 
 | Phase | Kết quả                                                                                            | Bằng chứng hoàn thành                                                            |
 | ----- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **0. Nền** | Thêm PostgreSQL + Go migration runner vào compose. Chuẩn hoá error envelope, request ID, structured log, `/healthz` vs `/readyz`. Siết CORS về allowlist. Bỏ publish port `ai` ra host trong profile production. | `docker compose up` → migration chạy, readiness đúng; contract test error envelope |
+| **0. Nền** | Thêm PostgreSQL + Go migration runner vào compose. Chuẩn hoá error envelope, request ID, structured log, `/health` vs `/ready`. Siết CORS về allowlist. Bỏ publish port `ai` ra host trong profile production. | `docker compose up` → migration chạy, readiness đúng; contract test error envelope |
 | **1. Market vertical slice** | `BinanceAdapter` (REST + WSS), `candles`, `stream_checkpoints`, `market_datasets`. WebSocket hub trong Go + `POST /internal/events`. **1 chart panel** realtime. | Test reconnect + backfill: ngắt 60 s → 0 nến thiếu. UI hiện badge STALE.          |
 | **2. Multi-chart + Strategy plugin** | 4 panel độc lập. Registry + 4 strategy (MA, RSI, BB, SR). `IndicatorLibrary`. `GET /chart-overlays`. | Demo S1 (đổi Chart 1 không re-render Chart 2–4) + demo S3 (thêm MACD, 0 dòng sửa core) |
 | **3. Experiment + Backtest + Worker** | `experiments`, `backtest_jobs` (có `lease_token`), `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`. `domain_events` + `event_consumptions` + `OutboxDispatcher`. **Worker workload với 1 replica** (bắt buộc, không tuỳ chọn — §12.0). `202 + run_id`. | Demo S5: fixture 200 nến có kết quả tính tay → khớp chính xác, chạy 2 lần giống nhau. AC-05b/c/d (lease take-over) và AC-14b (outbox không mất event) pass. |
@@ -3746,10 +3738,10 @@ Thứ tự này có một nguyên tắc: **mỗi phase kết thúc bằng một 
 
 | Bước | Hành động                                              | Điểm kiến trúc chứng minh                                       |
 | ---- | ------------------------------------------------------ | --------------------------------------------------------------- |
-| 1    | `docker compose up`, show `/readyz` tất cả service healthy | Migration chạy trước readiness; startup < 120 s              |
+| 1    | `docker compose up`, show `/ready` tất cả service healthy | Migration chạy trước readiness; startup < 120 s              |
 | 2    | Mở ETHUSDT `5m \| 15m \| 1h \| 4h` — 4 chart realtime  | Multi-timeframe; frontend không biết Binance                    |
 | 3    | Đổi Chart 1 `5m → 1h`; mở DevTools Network + React Profiler | **S1**: 1 request mới, Chart 2–4 render count = 0           |
-| 4    | Ngắt network container Python 60 s rồi nối lại          | **S9**: badge STALE → reconnect → backfill, 0 nến mất           |
+| 4    | Ngắt kết nối market provider Binance 60 s rồi nối lại    | **S9**: badge STALE → reconnect → backfill, 0 nến mất           |
 | 5    | Bật MA, RSI, Bollinger, S/R trên Chart 1                | Overlay do backend tính (mở Network xem `chart-overlays`)       |
 | 6    | Bấm `START SEARCH` với `max_candidates=50`             | Progress panel: tested/queued/failed/dedup/best/current/ETA     |
 | 7    | Bấm `PAUSE` ở candidate ~20, chờ, `RESUME`             | **S6**: state machine + idempotent command                      |
@@ -3761,7 +3753,7 @@ Thứ tự này có một nguyên tắc: **mỗi phase kết thúc bằng một 
 | 13   | Chuyển tab News: phân bố Positive/Neutral/Negative      | Pipeline collect → store → analyze                              |
 | 14   | `docker stop` sentiment; reload News; chạy backtest technical | **S8**: news `unavailable` (không phải NEUTRAL), chart + backtest vẫn chạy |
 | 15   | Thêm `SentimentStrategy` vào search space, chạy lại     | Sentiment là strategy như mọi strategy (§30 đề bài)              |
-| 16   | **Live**: tạo `macd.py`, restart, MACD xuất hiện ở `GET /strategies` + form UI + search space | **S3**: `git diff --stat` = 1 file mới, 0 file core |
+| 16   | **Live**: tạo `macd.go`, restart, MACD xuất hiện ở `GET /strategies` + form UI + search space | **S3**: `git diff --stat` = 1 file mới, 0 file core |
 | 17   | **Live**: đổi config `generator=domain_guided`, restart, chạy search | **S4**: Backtester/Evaluator/Leaderboard 0 dòng đổi     |
 | 18   | `docker compose up --scale worker=4`, chạy lại search 40 candidate | **S10**: thời gian giảm ≥ 3×, 0 dòng code đổi          |
 
@@ -4018,13 +4010,18 @@ CryptoBot/
 
 **3. Worker nằm cùng codebase Go với API.** Không phải một service hay repo riêng. Cùng image, cùng dependency, cùng `BacktestEngine`. Đây là điều làm §11.4 (scale 100 → 100.000) thành một thay đổi deployment thay vì một dự án.
 
-### 13.2 Hai thay đổi cần làm ngay trên scaffold hiện tại
+### 13.2 Deferred scaffold compatibility và migration exceptions
 
-Hai điểm dưới đây là vấn đề trong code đang có, cần xử lý ở Phase 0:
+Hai điểm dưới đây là khác biệt đã biết giữa scaffold và target. Chúng được giữ
+nguyên trong skeleton phase để không mở rộng scope runtime; endpoint/transport
+migration là công việc deferred, không phải hành vi target đã resolved:
 
 | Vấn đề hiện tại                                                                 | Ảnh hưởng                                                        | Xử lý                                                             |
 | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `withCORS` trong `server/internal/httpapi/handler.go` **echo lại Origin** của request | Mọi website gọi được API. Thành lỗ CSRF ngay khi thêm session cookie | Allowlist tường minh từ `CORS_ALLOWED_ORIGINS`, so sánh chính xác |
-| `docker-compose.yml` publish `${AI_PORT:-8000}:8000` ra host                     | Python service (không có auth) truy cập được từ ngoài            | Giữ cho dev; `docker-compose.prod.yml` bỏ mapping này              |
+| `withCORS` trong legacy `server/internal/httpapi/handler.go` **echo lại Origin** của request | Mọi website gọi được API. Thành lỗ CSRF ngay khi thêm session cookie | Deferred: target migration dùng allowlist tường minh từ `CORS_ALLOWED_ORIGINS`, so sánh chính xác |
+| `docker-compose.yml` publish `${AI_PORT:-8000}:8000` ra host                     | Python service (không có auth) truy cập được từ ngoài            | Scaffold compatibility cho dev; production hardening deferred, `docker-compose.prod.yml` bỏ mapping này |
+
+Scaffold vẫn dùng `CORS_ORIGIN`; đây là tên cấu hình compatibility hiện tại.
+Target dùng `CORS_ALLOWED_ORIGINS` sau khi transport migration hoàn tất.
 
 Ngoài ra `NEXT_PUBLIC_API_URL` hiện được truyền như build ARG nên bị bake vào client bundle — đổi giá trị lúc runtime không có tác dụng lên browser. Nếu cần cấu hình theo môi trường mà không rebuild, phải chuyển sang runtime config (ví dụ một endpoint `/config` hoặc inject qua `window.__ENV__`). Không phải blocker cho MVP, nhưng cần biết trước khi ai đó mất một buổi debug vì nó.

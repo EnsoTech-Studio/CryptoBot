@@ -4,7 +4,7 @@
 
 Module duy nhất trong hệ thống được phép mở kết nối HTTP ra một địa chỉ **không phải Binance**. Trách nhiệm:
 
-- Đọc danh sách nguồn đã phê duyệt từ `news_sources` (**cấu hình server**), fetch, chuẩn hoá thành `NewsItem`.
+- Đọc danh sách nguồn đã phê duyệt từ `news_sources` (**cấu hình server**), fetch, chuẩn hoá thành `Item`.
 - De-dup theo `url_hash` — một bài được 3 nguồn đăng lại 5 lần vẫn chỉ có 1 row trong `news_items`.
 - Ghi vết mỗi lần chạy vào `news_collection_jobs`, để một job fail là **sự kiện quan sát được**, không phải một khoảng lặng.
 - Publish `NewsCollected`. Hết. Module này **không biết sentiment tồn tại**.
@@ -26,19 +26,19 @@ Vì input đến từ Internet, đây là bề mặt tấn công lớn nhất c�
 
 ```go
 type NewsProvider interface {
-	Collect(context.Context, ApprovedNewsSource, time.Time) ([]NewsItem, error)
+	Collect(context.Context, ApprovedSource, time.Time) ([]Item, error)
 }
 ```
 
 ```go
-type ApprovedNewsSource struct {
+type ApprovedSource struct {
 	ID int
 	SourceKey, DisplayName, Kind string
 	AllowedOrigin, URLTemplate string
 	IsActive bool
 }
 
-type NewsItem struct {
+type Item struct {
 	SourceID int
 	URL, URLHash, Title string
 	Content *string
@@ -47,7 +47,7 @@ type NewsItem struct {
 }
 ```
 
-> **`ApprovedNewsSource` không có field nào nhận từ HTTP request.** Nó được `NewsService` dựng từ một row `news_sources`. Đây không phải chi tiết implementation — đó là **contract chống SSRF**: nếu dataclass này có thêm field `url: str` do caller truyền vào, toàn bộ phần "Bảo mật" bên dưới trở nên vô nghĩa.
+> **`ApprovedSource` không có field nào nhận từ HTTP request.** Nó được `NewsService` dựng từ một row `news_sources`. Đây không phải chi tiết implementation — đó là **contract chống SSRF**: nếu dataclass này có thêm field `url: str` do caller truyền vào, toàn bộ phần "Bảo mật" bên dưới trở nên vô nghĩa.
 
 Event publish ra (`design.md` §5.6, envelope chung):
 
@@ -83,7 +83,7 @@ sequenceDiagram
 
     SCH->>NS: collect_all()
     NS->>SRC: SELECT * WHERE is_active = TRUE
-    SRC-->>NS: [ApprovedNewsSource × N]
+    SRC-->>NS: [ApprovedSource × N]
     Note over NS,SRC: URL đến từ CẤU HÌNH SERVER.<br/>Không có đường nào để browser đưa URL vào đây.
 
     loop mỗi source, tối đa 4 source song song
@@ -104,7 +104,7 @@ sequenceDiagram
         else thành công
             EXT-->>PRV: XML hoặc JSON
             PRV->>PRV: parse an toàn, sanitize, canonical URL, url_hash
-            PRV-->>NS: [NewsItem × M, M ≤ 200]
+            PRV-->>NS: [Item × M, M ≤ 200]
             NS->>DB: INSERT ... ON CONFLICT (url_hash) DO NOTHING RETURNING id
             DB-->>NS: id của row THẬT SỰ mới
             NS->>JOB: UPDATE items_found=M, items_new=len(ids), status=completed
@@ -194,7 +194,7 @@ Matching là keyword khớp trên `title + content` đã lowercase, word-boundar
 
 ### E. Quản lý `news_sources` — chỉ ADMIN
 
-`POST /admin/news-sources` là route **ADMIN-only** (`design.md` §7.3). Không phải vì nội dung tin tức nhạy cảm, mà vì **thêm một source = thêm một origin vào allowlist egress của server**. Đó là quyết định bảo mật cùng loại với sửa firewall rule, không phải cấu hình nội dung. Nếu OPERATOR (hoặc tệ hơn, RESEARCHER) thêm được source, thì họ vừa được cấp quyền chọn địa chỉ mà server sẽ đi tới — đúng thứ mà toàn bộ SSRF Guard đang cố ngăn.
+`POST /api/v1/admin/news-sources` là route **ADMIN-only** (`design.md` §7.3). Không phải vì nội dung tin tức nhạy cảm, mà vì **thêm một source = thêm một origin vào allowlist egress của server**. Đó là quyết định bảo mật cùng loại với sửa firewall rule, không phải cấu hình nội dung. Nếu OPERATOR (hoặc tệ hơn, RESEARCHER) thêm được source, thì họ vừa được cấp quyền chọn địa chỉ mà server sẽ đi tới — đúng thứ mà toàn bộ SSRF Guard đang cố ngăn.
 
 Validate lúc INSERT: `allowed_origin` phải khớp `^https://[a-z0-9.-]+$` (không path, không port, không userinfo), `url_template` phải có origin **bằng đúng** `allowed_origin`, và phải qua `assert_public_https` **ngay tại thời điểm INSERT** — nguồn nào không validate được thì không lưu.
 
@@ -267,7 +267,7 @@ Validate lúc INSERT: `allowed_origin` phải khớp `^https://[a-z0-9.-]+$` (kh
 - 0 endpoint nào nhận URL, host, IP, hay port từ client. Chỉ `source_id` (SMALLINT, đối chiếu `news_sources`).
 - Validate tại **3** điểm: trước fetch, sau resolve DNS (kèm pin IP), sau **mỗi** redirect (≤ 3).
 - Chặn: non-HTTPS, port ≠ 443, loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16), CGNAT, reserved, và IPv6 tương đương (`::1`, `fc00::/7`, `fe80::/10`, `::ffff:0:0/96`).
-- `POST /admin/news-sources` chỉ ADMIN — thêm source là thay đổi allowlist egress.
+- `POST /api/v1/admin/news-sources` chỉ ADMIN — thêm source là thay đổi allowlist egress.
 - Không lưu HTML thô có thể render. Sanitize ở biên adapter, không ở tầng render.
 - Error envelope: `{"error":{"code":"news_source_unavailable","message":"…","request_id":"req_…"}}`. **Không** forward raw body của nguồn, không trả IP nội bộ, không trả stack trace (`design.md` §5.5).
 - Parse chạy trong worker, không trong process phục vụ HTTP.
@@ -302,4 +302,4 @@ Validate lúc INSERT: `allowed_origin` phải khớp `^https://[a-z0-9.-]+$` (kh
 - [ ] AC-11: Hai worker chạy `collect_all()` đồng thời → mỗi source chỉ 1 job `running` (advisory lock), 0 row trùng, mỗi `news_item` mới sinh đúng **1** event `NewsCollected`.
 - [ ] AC-12: Kill worker giữa lúc job `running` → sau ≤ 10 phút sweeper set `failed` với `failure_reason='lease_expired'`; lần collect sau chạy bình thường.
 - [ ] AC-13: `server/tests/architecture/module_boundaries_test.go` assert news infrastructure **không** import Python model internals hoặc Go strategy domain — fail build nếu vi phạm (`design.md` §9.1, §9.5).
-- [ ] AC-14: RESEARCHER gọi `POST /admin/news-sources` → `403`; ADMIN gọi với `allowed_origin='htps://x'` → `422`; ADMIN gọi với origin hợp lệ nhưng resolve ra IP private → `422`, không lưu row.
+- [ ] AC-14: RESEARCHER gọi `POST /api/v1/admin/news-sources` → `403`; ADMIN gọi với `allowed_origin='htps://x'` → `422`; ADMIN gọi với origin hợp lệ nhưng resolve ra IP private → `422`, không lưu row.

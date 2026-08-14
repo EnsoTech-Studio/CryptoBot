@@ -21,28 +21,34 @@ space và không được nested làm child của composite khác.
 ## Contract
 
 ```go
-type ChildSpec struct {
+type ChildDefinition struct {
 	StrategyID string
 	Version    string
-	Parameters json.RawMessage
+	Parameters Params
 	Weight     decimal.Decimal
 }
 
 type CombinationPolicy struct {
-	Name      string // weighted_vote | majority_vote
+	Policy    string // weighted_vote | majority_vote
 	Threshold decimal.Decimal
-	Encoding  map[Action]int // BUY:+1, HOLD:0, SELL:-1
+	Encoding  string // versioned action encoding
 }
 
 type CompositeDefinition struct {
-	Children []ChildSpec
-	Policy   CombinationPolicy
+	StrategyID  string
+	Version     string
+	Children    []ChildDefinition
+	Combination CombinationPolicy
 }
 
-type Combiner interface {
+type SignalCombiner interface {
 	Combine(children []ResolvedSignal, policy CombinationPolicy) (strategy.Signal, error)
 }
 ```
+
+The Go skeleton owns these types in
+`internal/domain/strategy/composite/contract.go`; it aliases the shared
+strategy value objects and keeps combination algorithms deferred.
 
 `ResolvedSignal` giữ child definition + signal để evidence tái tạo được:
 

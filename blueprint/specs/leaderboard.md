@@ -241,7 +241,7 @@ Event: `LeaderboardUpdated` (publisher `RankingService` → consumer WS Hub). Me
 | Hai `RankingService` (2 process) xử lý cùng event | `event_consumptions` có PK `(event_id, consumer)`; process thua nhận conflict và bỏ. Không có hai INSERT |
 | `evaluations.trade_count = 2`, return `+40%` | Không vào Top-K (`min_trades = 10`). Ghi log DEBUG `reason=insufficient_trades`, **không** phải lỗi, không tăng `jobs_failed_total` |
 | `evaluations.trade_count = 0` | Cùng nhánh trên. Ngoài ra `score` không được tính (chia cho 0 ở `win_rate` là bug tiềm ẩn khi công thức tiến hoá) |
-| Không có policy nào `is_active` (bootstrap/migration lỗi) | `/readyz` fail và `RankingService` log ERROR `error_code=no_active_score_policy`; event chưa được ack. Không có runtime path hợp lệ nào cho phép trạng thái này tồn tại sau migration |
+| Không có policy nào `is_active` (bootstrap/migration lỗi) | `/ready` fail và `RankingService` log ERROR `error_code=no_active_score_policy`; event chưa được ack. Không có runtime path hợp lệ nào cho phép trạng thái này tồn tại sau migration |
 | Cố `UPDATE score_policies SET is_active = true` trực tiếp | Trigger `score_policies_immutable` từ chối → transaction rollback. Chỉ `activate_score_policy()` được đổi active flag |
 | Hai request activate hai policy khác nhau đồng thời | Advisory lock serialize; một thành công, request còn lại đọc policy hiện tại hoặc nhận `409 policy_activation_conflict`. Không tồn tại trạng thái hai policy active |
 | Đổi policy khi 20 job đang chạy | Job đang chạy vẫn ghi `evaluations` bình thường; entry của chúng dùng policy **đang active lúc chấm điểm**. `score_policy_version` trên entry ghi rõ nên không có sự nhập nhằng |

@@ -55,7 +55,7 @@ type AnalysisContext struct {
 	Candles        CausalCandles
 	Index          int
 	Indicators     IndicatorView
-	NewsSentiment  *NewsSentimentWindow
+	NewsSentiment  *sentiment.NewsSentimentWindow
 	Params         Params
 }
 

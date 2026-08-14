@@ -66,7 +66,7 @@ Endpoints kiểm tra:
 
 `docker-compose.yml` là profile dev/smoke của scaffold nên còn publish Python port để
 debug. Đây **không** phải production topology của blueprint. Target contract dùng
-`GET /healthz` và `GET /readyz` ở Go; Python chỉ nghe internal network và không có port
+`GET /health` và `GET /ready` ở Go; Python chỉ nghe internal network và không có port
 host. Override production tối thiểu nằm ở [`docker-compose.prod.yml`](docker-compose.prod.yml);
 health route target và migration/DB vẫn là phần implementation của Phase 0 trong
 [`blueprint/design.md`](blueprint/design.md) §12.0.
@@ -86,7 +86,8 @@ cd server
 go run ./cmd/api
 ```
 
-Biến môi trường chính: `PORT`, `AI_SERVICE_URL`, `CORS_ORIGIN`.
+Biến môi trường chính: `PORT`, `AI_SERVICE_URL`, `CORS_ORIGIN` (scaffold
+compatibility; target `CORS_ALLOWED_ORIGINS` deferred tới transport migration).
 
 Python AI:
 

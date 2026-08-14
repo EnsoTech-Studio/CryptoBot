@@ -87,7 +87,7 @@ Ba nhãn này quan trọng vì trộn chúng lại sẽ làm sai ý nghĩa của
 | Replicas | `web=1, api=1, lab=1, worker=1` — trừ dòng scale ghi rõ `worker=4` |
 | Client | 1 browser tab, 4 panel; cho load test: `k6`/`hey` 10 virtual user, 60 s, không ramp |
 | Cách đo latency | p95 trên **≥ 20 mẫu**, đo từ Go API (không tính RTT internet); loại 5 request đầu (warm-up JIT/pool) |
-| Trạng thái ban đầu | Migration xong, dữ liệu khởi tạo xong, `/readyz` = 200 trên cả 3 service |
+| Trạng thái ban đầu | Migration xong, dữ liệu khởi tạo xong, `/ready` = 200 trên cả 3 service |
 
 | Chỉ tiêu | Nguồn | Mục tiêu | Điều kiện đo riêng |
 | --- | --- | --- | --- |
@@ -161,7 +161,7 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 
 **News & Sentiment**
 
-- News provider adapter (RSS + News API) trả về `NewsItem` chuẩn hoá; crawler **không** biết gì về ML.
+- News provider adapter (RSS + News API) trả về `Item` chuẩn hoá; crawler **không** biết gì về ML.
 - Sentiment service riêng (FastAPI hiện có): `POSITIVE | NEUTRAL | NEGATIVE` + score + `model_version`.
 
 **Nền tảng & Vận hành**
@@ -251,7 +251,7 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | R6  | **Kết quả Leaderboard không tái lập được**                                        | Không bảo vệ được đồ án: "+18.2% từ đâu ra?"                    | Snapshot bất biến append-only: strategy version + params + dataset version + fee/slippage + evaluator version | `specs/leaderboard.md`          |
 | R7  | **Strategy plugin lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết                                        | Trusted Go plugin boundary + context cancellation + worker lease 120 s. Exception/look-ahead → `candidate.status = failed` + `failure_reason`, run tiếp | `specs/strategy-registry.md`    |
 | R8  | **News provider chết hoặc trả HTML rác**                                          | Pipeline news dừng                                              | Job news độc lập; failure chỉ ảnh hưởng job đó; chart/backtest technical không phụ thuộc                     | `specs/news.md`                 |
-| R9  | **SSRF qua news source** (nếu cho phép nhập URL)                                  | Đọc được metadata service nội bộ / port scan                    | `ApprovedNewsSource` là **server config**, không nhận URL từ browser; allowlist HTTPS origin + chặn private/loopback IP sau mỗi redirect/DNS | `specs/news.md` §Bảo mật        |
+| R9  | **SSRF qua news source** (nếu cho phép nhập URL)                                  | Đọc được metadata service nội bộ / port scan                    | `ApprovedSource` là **server config**, không nhận URL từ browser; allowlist HTTPS origin + chặn private/loopback IP sau mỗi redirect/DNS | `specs/news.md` §Bảo mật        |
 | R10 | **Sentiment model đổi version** → kết quả cũ không so được với mới                | Backtest có sentiment mất tính so sánh                          | `model_version` là phần của snapshot; đổi model = dataset mới, không ghi đè kết quả cũ                        | `specs/sentiment.md`            |
 | R11 | **Sentiment model down**                                                          | News không có nhãn                                              | Lưu news **không có** sentiment, đánh dấu `unavailable`. **Không** fake `NEUTRAL` (sẽ làm sai strategy)      | `specs/sentiment.md`            |
 | R12 | **Duplicate event `BacktestCompleted`**                                           | 1 candidate xuất hiện 2 lần trên Leaderboard                    | Consumer idempotent theo `event_id`; UNIQUE `(backtest_run_id)` trên `evaluations`                            | `specs/leaderboard.md`          |
@@ -276,7 +276,7 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | S6  | **Search loop có kiểm soát**    | Start search với `max_candidates=50`. Bấm Pause ở candidate ~20, chờ 10 s, Resume, rồi Cancel.                    | UI hiển thị `tested/queued/failed/best_score/current_candidate/elapsed`. Loop dừng đúng 50 hoặc đúng lúc cancel. Không có `while(true)`. |
 | S7  | **Truy nguồn Leaderboard**      | Click Top-1, mở tab Provenance.                                                                                  | Hiển thị `strategy_id@version`, toàn bộ params, `dataset_version`, `from/to`, toàn bộ execution assumptions (`fee_bps`, `slippage_bps`, `fill_policy`, `position_policy`, `open_position_at_end`, `risk_policy`), `evaluator_version`. Sửa param → **version mới**, entry cũ **không bị ghi đè**. |
 | S8  | **Cô lập lỗi**                  | `docker stop` service sentiment (hoặc set news provider = URL chết).                                             | Chart realtime **vẫn chạy**. Backtest technical **vẫn chạy**. News hiển thị `sentiment: unavailable`, **không** có nhãn NEUTRAL giả. |
-| S9  | **Reconnect + backfill**        | `docker network disconnect` service Python khỏi internet 60 s rồi nối lại.                                        | Log có reconnect với backoff. Sau khi nối lại, **0 nến đã đóng bị thiếu** (query `candles` liên tục, không gap).       |
+| S9  | **Reconnect + backfill**        | `docker network disconnect` market provider Binance khỏi internet 60 s rồi nối lại.                              | Log có reconnect với backoff. Sau khi nối lại, **0 nến đã đóng bị thiếu** (query `candles` liên tục, không gap).       |
 | S10 | **Scale proof**                 | Chạy cùng 1 search run 40 candidate với `WORKER_REPLICAS=1` rồi `=4`.                                             | Thời gian giảm **≥ 3×**. **0 dòng** thay đổi trong API contract, schema, hay experiment snapshot format.               |
 
 Điều kiện chung: `docker compose up` → toàn bộ service healthy + migration xong + seed data sẵn trong **< 120 s**.

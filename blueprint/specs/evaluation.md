@@ -23,7 +23,7 @@ chỉ cần bump `evaluator_version` và tính lại từ facts, không chạy l
 
 ```go
 type Evaluator interface {
-	Evaluate(input EvaluationInput, policy EvaluationPolicy) (Evaluation, error)
+	Evaluate(ctx context.Context, input EvaluationInput, policy EvaluationPolicy) (Evaluation, error)
 }
 
 // Pure core. Repository adapter đọc facts từ read projections ở ngoài package.

@@ -363,7 +363,7 @@ Im lặng hiển thị nến cũ như thể mới là kịch bản tệ nhất: 
 - [ ] AC-08: Ngắt WS 60 s → badge `STALE` hiện ≤ 45 s sau nến lẽ ra phải đóng; nến lịch sử vẫn render; sau `StreamRecovered` chart không có gap và overlay khớp REST refetch.
 - [ ] AC-09: Đổi timeframe 5 lần trong 2 s → chart cuối cùng khớp lựa chọn cuối cùng; **0** response cũ ghi đè (kiểm bằng assert trên `subscriptionKey` của mỗi response được apply).
 - [ ] AC-10: Dừng overlay calculator trong Go → endpoint trả `503 overlay_unavailable`, panel vẫn vẽ nến lịch sử, không màn hình trắng.
-- [ ] AC-11: Thêm `macd.py` với `overlay_types=["macd_line","macd_signal","buy_signal","sell_signal"]`, restart Lab → `GET /strategies` có `macd@1.0.0`, chọn được ở picker, chart vẽ 2 đường mới. `git diff --stat web/ server/` = **0 file**.
+- [ ] AC-11: Thêm `macd.go` với `overlay_types=["macd_line","macd_signal","buy_signal","sell_signal"]`, restart Lab → `GET /strategies` có `macd@1.0.0`, chọn được ở picker, chart vẽ 2 đường mới. `git diff --stat web/ server/` = **0 file**.
 - [ ] AC-12: Chạy 4 panel 30 phút → `overlay_delta` p95 từ `CandleClosed` < 300 ms (đo bằng histogram Prometheus `overlay_delta_latency_seconds`), memory tab tăng ≤ 50 MB.
 - [ ] AC-13: Inject gap 3 nến vào dataset → `points[].v = null` tại vị trí gap, `gaps` có 1 phần tử, chart **ngắt đường** (kiểm bằng screenshot test).
 - [ ] AC-14: Sửa `rsi.py` mà không bump version → Lab **fail startup** với thông báo `strategy rsi@1.0.0 changed, bump version`; không có overlay nào được serve bằng code lệch fingerprint.

@@ -5,8 +5,8 @@ Tài liệu thiết kế kiến trúc cho đồ án cuối kỳ môn Thiết k�
 **Chủ đề**: Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch Crypto.
 
 **Cập nhật kiến trúc 2026-08-14**: Marketdata, Strategy, Backtest, Evaluation và
-DB contract đã được reconciled với [`architecture/`](../architecture/). Đọc
-[`architecture/blueprint-verification.md`](../architecture/blueprint-verification.md)
+DB contract đã được reconciled với skeleton hiện tại. Đọc
+[`blueprint/verification/backend-skeleton.md`](verification/backend-skeleton.md)
 trước khi implement; các quyết định BBO LIMIT, one-net LONG/SHORT, Go ownership
 và fixture policy trong đó là phần chuẩn đã được hấp thụ vào Blueprint này.
 
@@ -26,6 +26,8 @@ blueprint/
 ├── scripts/
 │   └── extract_diagrams.py        # Trích .mmd từ Markdown (Markdown là nguồn sự thật)
 ├── verification/
+│   ├── backend-skeleton.md        # Actual-vs-blueprint parity and deferred work
+│   ├── backend-contracts.md       # Go files, interfaces, common types, I/O paths
 │   └── sol-2026-03-04-ma20-50.md  # Fixture passport + replay acceptance
 ├── go-review-checklist.md         # Checklist handoff cho team Go
 └── specs/
@@ -93,12 +95,13 @@ Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/
    - **Ràng buộc** — tính đúng đắn / hiệu năng / bảo mật / mở rộng / quan sát được, có số cụ thể
    - **Tiêu chí chấp nhận** — checklist AC kiểm chứng được
 
-4. **`architecture/`** — reconciliation và domain backend reference. Nếu một
-   ví dụ cũ trong tài liệu rộng hơn khác contract canonical, dùng
-   `architecture/blueprint-verification.md` và các spec active đã cập nhật.
-5. **`verification/`** — fixture thực tế để team Backtest chạy sau khi engine
-   và evaluator được implement. Hiện chỉ xác nhận shape/hash và structural
-   expectations; không ghi PnL khi chưa có code.
+4. **`verification/`** — skeleton parity, reconciliation và fixture thực tế.
+   Nếu một ví dụ cũ trong tài liệu rộng hơn khác contract canonical, dùng
+   `verification/backend-skeleton.md`, `verification/backend-contracts.md` và
+   các spec active đã cập nhật.
+5. **`verification/sol-2026-03-04-ma20-50.md`** — fixture thực tế để team
+   Backtest chạy sau khi engine và evaluator được implement. Hiện chỉ xác nhận
+   shape/hash và structural expectations; không ghi PnL khi chưa có code.
 
 ## Ba câu hỏi kiến trúc quyết định
 
@@ -188,7 +191,7 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Strategy plugin lỗi giết cả worker                 | Trusted Go plugin boundary + context cancellation + lease 120 s      | `specs/strategy-registry.md` |
 | Plugin đọc `indicators[t+1]` (look-ahead ẩn)        | `IndicatorView` causal — chặn `[t+1]`, `[-1]`, `len()`, `slice`         | `design.md` §5.2.1           |
 | Đổi công thức score phải chạy lại backtest         | Tách trade facts (thô) khỏi metrics (dẫn xuất)                         | `specs/evaluation.md`        |
-| SSRF qua news source                               | `ApprovedNewsSource` là **server config**; validate sau mỗi redirect/DNS | `specs/news.md`              |
+| SSRF qua news source                               | `ApprovedSource` là **server config**; validate sau mỗi redirect/DNS | `specs/news.md`              |
 | Crawler phụ thuộc chặt vào ML                      | `NewsCollected` event; crawler không import model; test static ở CI    | `specs/news.md`              |
 | Sentiment model down → nhãn giả                    | **Không insert row**; `sentiment: null` + `unavailable`. Không fake NEUTRAL | `specs/sentiment.md`, ADR-013 |
 | Đổi model sentiment mất khả năng so sánh           | `model_version` là phần của UNIQUE key và của provenance               | `specs/sentiment.md`         |

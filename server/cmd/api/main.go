@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/cryptobot/server/internal/config"
-	"github.com/example/cryptobot/server/internal/httpapi"
+	"github.com/EnsoTech-Studio/CryptoBot/server/internal/config"
+	"github.com/EnsoTech-Studio/CryptoBot/server/internal/httpapi"
 )
 
 func main() {

@@ -22,8 +22,8 @@ Module duy nhất trong hệ thống biết Binance tồn tại. Trách nhiệm:
 ```go
 type MarketDataProvider interface {
 	ProviderID() string
-	ListClosedCandles(ctx context.Context, key MarketKey, from, to time.Time) ([]market.Candle, error)
-	StreamKlines(ctx context.Context, keys []StreamKey, publish func(KlineUpdate)) (Subscription, error)
+	ListClosedCandles(ctx context.Context, query market.CandleQuery) ([]market.Candle, error)
+	StreamKlines(ctx context.Context, keys []market.StreamKey, publish func(market.KlineUpdate)) (market.Subscription, error)
 }
 ```
 

@@ -29,13 +29,14 @@ Thứ hai: `score` trong `Sentiment` là **confidence của model** trong `[0, 1
 ```go
 type SentimentAnalyzer interface {
 	ModelVersion() string
-	Analyze(context.Context, string) (Sentiment, error)
+	Analyze(context.Context, string) (sentiment.Result, error)
 }
 ```
 
 ```go
-type Sentiment struct {
-	Label string // POSITIVE | NEUTRAL | NEGATIVE
+// internal/domain/sentiment/contract.go
+type Result struct {
+	Label Label // POSITIVE | NEUTRAL | NEGATIVE
 	Score decimal.Decimal // [0,1], confidence
 	Model, ModelVersion string
 	AnalyzedAt time.Time
@@ -54,6 +55,11 @@ type NewsSentimentWindow struct {
 	ModelVersion string
 }
 ```
+
+Canonical Go owner is `internal/domain/sentiment`; `strategy.AnalysisContext`
+references `sentiment.NewsSentimentWindow` and does not redeclare this type.
+The blueprint narrative calls the model output `Sentiment`; the Go contract
+name is `sentiment.Result`.
 
 > **Ba field cố ý *không* có trong `Sentiment`.** Không có `news_item_id` (value object không biết nó thuộc về ai — quan hệ là việc của repository). Không có `raw_logits` / `probabilities` (model internals không được rời khỏi adapter; nếu chúng có trong VO, chúng sẽ rò ra API). Không có `is_fallback` — vì không có fallback nào tồn tại; có field đó là mở cửa cho chính thứ ADR-013 cấm.
 

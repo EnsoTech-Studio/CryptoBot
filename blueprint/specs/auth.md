@@ -10,7 +10,7 @@ Hệ thống là **simulation-only** — không đặt lệnh, không giữ API 
 
 > **Nguồn gốc của toàn bộ spec này: [PD] — product decision.** Đề bài **không** yêu cầu authentication, RBAC hay quota. Nhóm thêm vì không có principal thì không enforce được quota, và quota là điều kiện để §32.5 (Performance) và §43 (scenario scalability) có nghĩa: nếu bất kỳ ai gửi được một request sinh 5,5 giờ CPU thì "1.000 strategy cần backtest" không còn là bài toán thiết kế. Phân loại đầy đủ ở `proposal.md` §4.4.
 
-Hai lỗ hổng **đang tồn tại trong scaffold** phải được đóng như một phần của spec này, không để lại "sẽ làm sau": hàm `withCORS` trong `server/internal/httpapi/handler.go` đang **echo lại Origin** của request, và `docker-compose.yml` đang publish `${AI_PORT:-8000}:8000` ra host khiến Python AI (chỉ là sentiment adapter) tiếp cận được từ ngoài. Chi tiết ở Luồng F.
+Skeleton verification ghi nhận hai điểm compatibility còn tồn tại: hàm `withCORS` trong legacy `server/internal/httpapi/handler.go` đang **echo lại Origin** của request, và `docker-compose.yml` đang publish `${AI_PORT:-8000}:8000` ra host khiến Python AI (chỉ là sentiment adapter) tiếp cận được từ ngoài. Endpoint/transport migration là công việc deferred; Luồng F mô tả target hardening, không tuyên bố scaffold hiện tại đã đạt target.
 
 Đặc biệt phải đảm bảo:
 
@@ -213,6 +213,11 @@ Mọi hành động vượt ownership của `OPERATOR`/`ADMIN` để lại vết
 
 ### F. CORS allowlist, CSRF và hai lỗ hổng trong scaffold hiện tại
 
+Phần này là target contract cho endpoint migration. Trong skeleton phase, legacy
+HTTP code và `CORS_ORIGIN` vẫn được giữ nguyên để không mở rộng scope runtime;
+verification document ghi rõ đây là migration exception, không phải trạng thái
+đã resolved.
+
 Code hiện tại (`server/internal/httpapi/handler.go`, dòng ~100) đặt thẳng giá trị cấu hình vào header và **phản chiếu Origin**:
 
 ```go
@@ -360,6 +365,6 @@ services:
 - [ ] AC-11: `POST /api/v1/experiments` có cookie hợp lệ nhưng thiếu `X-CSRF-Token` → `403 csrf_failed`; thêm header đúng → `202`.
 - [ ] AC-12: Gửi 6 `POST /search-runs` trong 60 giây → request thứ 6 `429` kèm `Retry-After` là số nguyên giây > 0.
 - [ ] AC-13: Body 2 MiB tới `POST /ai/predict` → `413`, và log cho thấy **không** có bước JWT verify nào chạy cho request đó.
-- [ ] AC-14: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up` rồi `curl localhost:8000/healthz` từ host → **connection refused**; `curl` cùng URL từ trong container `api` → `200`.
+- [ ] AC-14: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up` rồi `curl localhost:8000/health` từ host → **connection refused**; `curl` cùng URL từ trong container `api` → `200`.
 - [ ] AC-15: Gọi trực tiếp Go admission port với `max_candidates=999999` → `422`, **không** có row nào được thêm vào `search_runs`.
 - [ ] AC-16: `grep -riE "password|token_hash|set-cookie" logs/` → **0** dòng chứa giá trị thật; chỉ có tên field trong thông điệp validation.
