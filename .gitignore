@@ -12,6 +12,7 @@ server/*.test
 ai/.venv/
 ai/__pycache__/
 ai/.pytest_cache/
+ai/pytest-cache-files-*/
 **/__pycache__/
 *.py[cod]
 
@@ -20,6 +21,7 @@ web/node_modules/
 web/.next/
 web/out/
 web/.env.local
+web/tsconfig.tsbuildinfo
 
 # Tooling / OS
 .DS_Store
