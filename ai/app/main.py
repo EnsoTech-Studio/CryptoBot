@@ -14,7 +14,7 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ai", "model": "stub-v0"}
+    return {"status": "ok", "service": "ai", "model": "sentiment-v1"}
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -24,5 +24,6 @@ def predict(payload: PredictRequest) -> PredictResponse:
         label=result.label,
         score=result.score,
         model=result.model,
+        model_version=result.model_version,
         received_at=datetime.now(timezone.utc),
     )

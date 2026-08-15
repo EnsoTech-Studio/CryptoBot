@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CryptoBot | AI workspace",
-  description: "Next.js frontend for the CryptoBot platform",
+  title: "Crypto Strategy Lab",
+  description: "Full-stack crypto strategy research dashboard",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

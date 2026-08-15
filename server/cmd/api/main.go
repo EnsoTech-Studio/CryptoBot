@@ -12,16 +12,47 @@ import (
 
 	"github.com/EnsoTech-Studio/CryptoBot/server/internal/config"
 	"github.com/EnsoTech-Studio/CryptoBot/server/internal/httpapi"
+	"github.com/EnsoTech-Studio/CryptoBot/server/internal/lab"
 )
 
 func main() {
+	// configure logger and load config
 	cfg := config.Load()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	handler := httpapi.NewRouter(
-		httpapi.NewHandler(cfg.AIServiceURL, &http.Client{Timeout: 30 * time.Second}),
-		cfg.CORSOrigin,
-	)
+	// bootstrapping context for database and migration
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer bootCancel()
+
+	// open database connection and run migrations
+	db, err := lab.OpenDatabase(bootCtx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("database is unavailable", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := lab.MigrateAndSeed(bootCtx, db); err != nil {
+		logger.Error("migration or seed failed", "error", err)
+		os.Exit(1)
+	}
+
+	signer, err := lab.NewSigner()
+	if err != nil {
+		logger.Error("jwt signer failed", "error", err)
+		os.Exit(1)
+	}
+
+	app := lab.NewApp(db, cfg.AIServiceURL, &http.Client{Timeout: 30 * time.Second}, signer)
+	if err := lab.AnalyzeNewsSentiment(bootCtx, db, cfg.AIServiceURL); err != nil {
+		logger.Warn("news sentiment unavailable", "error", err)
+	}
+
+	runtimeCtx, runtimeCancel := context.WithCancel(context.Background())
+	defer runtimeCancel()
+	app.StartMarketClock(runtimeCtx)
+
+	handler := httpapi.NewRouter(httpapi.NewHandler(app, cfg.CORSAllowedOrigins))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -47,6 +78,7 @@ func main() {
 		}
 	case <-shutdownContext.Done():
 		logger.Info("shutting down api server")
+		runtimeCancel()
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
 
