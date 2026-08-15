@@ -19,4 +19,5 @@ class PredictResponse(BaseModel):
     label: str
     score: float = Field(ge=0, le=1)
     model: str
+    model_version: str
     received_at: datetime
