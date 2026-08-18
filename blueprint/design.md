@@ -2083,12 +2083,12 @@ Go API sở hữu contract công khai và map sang lệnh nội bộ. `Auth` = c
 | GET    | `/metrics`                                   | nội bộ | Prometheus                                                                   |
 
 `/api/v1/markets/stream` là public route canonical của product blueprint.
-`/api/v1/realtime` trong architecture là tên logical normalized event facade;
+`/api/v1/realtime` là tên logical normalized event facade trong thiết kế;
 nếu runtime expose alias thì alias phải dùng cùng WS Hub, subscription registry,
 sequence source và lifecycle, không tạo thêm protocol hoặc canonical event
-plane. Tương tự, architecture §10 dùng logical names
-`/api/v1/markets/{coin}/candles` và `/api/v1/backtests`; active blueprint giữ
-`/api/v1/markets/candles` và `/api/v1/experiments` làm public contract. Nếu sau
+plane. Tương tự, các tên logical cũ (`/api/v1/markets/{coin}/candles`,
+`/api/v1/backtests`) được thay bằng public contract của blueprint:
+`/api/v1/markets/candles` và `/api/v1/experiments`. Nếu sau
 này expose alias, alias phải map cùng handler/read projection và không tạo thêm
 resource semantics.
 
