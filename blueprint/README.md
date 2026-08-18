@@ -35,6 +35,7 @@ blueprint/
     ├── composite-strategy.md      # Kết hợp tín hiệu, combination policy
     ├── experiment.md              # ExperimentSnapshot bất biến, job queue, lease token
     ├── backtest.md                # Backtest engine, fill policy, chống look-ahead
+    ├── python-research.md         # Python Strategy/Backtest Backend — canonical, float64 (`py_backend/`)
     ├── evaluation.md              # Metrics dẫn xuất, tách khỏi trade facts
     ├── search-loop.md             # Continuous loop, stop condition, pause/resume
     ├── leaderboard.md             # Top-K, scoring policy, provenance
@@ -142,6 +143,11 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | §29–§30 Module 11 — Sentiment Analysis | `specs/sentiment.md`                            |
 | §35 Database                           | `design.md` §4.1, §4.2                          |
 | §36 Strategy Version, Reproducibility  | `design.md` §4.2, ADR-009 · `specs/experiment.md` |
+
+> `specs/python-research.md` là đặc tả **Python Strategy/Backtest Backend** (`py_backend/`) —
+> implementation canonical (float64) của Strategy Engine, Backtest, Evaluation, Search,
+> Ranking/Leaderboard và Visualization-of-results, tách khỏi Go backend (xem `design.md` §1.2,
+> ADR-011 · `proposal.md` §4.4 nhãn **[PD]**).
 
 ### Architectural drivers (đề bài §32)
 

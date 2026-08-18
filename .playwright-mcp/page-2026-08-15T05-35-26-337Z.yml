@@ -1,0 +1,22 @@
+- generic [ref=e2]:
+  - main [ref=e3]:
+    - generic [ref=e6]:
+      - heading "404" [level=1] [ref=e7]
+      - generic [ref=e8]: Page not found
+      - paragraph [ref=e9]: "Request ID: fa7b1c9c597d4a37a7bfe5c8491ba874"
+  - contentinfo [ref=e10]:
+    - generic [ref=e11]:
+      - list [ref=e12]:
+        - listitem [ref=e13]:
+          - link "Atlassian Status" [ref=e14] [cursor=pointer]:
+            - /url: https://status.atlassian.com
+          - text: ·
+        - listitem [ref=e15]:
+          - link "Release Summary" [ref=e16] [cursor=pointer]:
+            - /url: https://confluence.atlassian.com/display/cloud/What's+New
+          - text: ·
+        - listitem [ref=e17]:
+          - link "Documentation" [ref=e18] [cursor=pointer]:
+            - /url: https://confluence.atlassian.com/display/Cloud/Atlassian+Cloud+Documentation
+      - link "Atlassian" [ref=e20] [cursor=pointer]:
+        - /url: http://www.atlassian.com/

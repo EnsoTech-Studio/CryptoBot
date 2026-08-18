@@ -8,9 +8,11 @@ flowchart TB
 
         API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
 
-        Lab["<b>Strategy Service</b><br/>[Container: Go 1.23]<br/><br/>Market normalization, indicator, strategy registry,<br/>composite, experiment, backtest, evaluate, rank,<br/>news orchestration."]
+        Lab["<b>Strategy Service</b><br/>[Container: Go 1.23]<br/><br/>Market normalization + realtime candles,<br/>news orchestration, auth/RBAC, observability."]
 
-        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Go,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
+        Py["<b>Strategy/Backtest Backend</b><br/>[Container: Python FastAPI, float64]<br/><br/>Strategy registry, composite, indicator,<br/>backtest, evaluation, search, ranking/leaderboard,<br/>visualization-of-results."]
+
+        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
         DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, dataset snapshots,<br/>strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
 
@@ -23,9 +25,10 @@ flowchart TB
     Researcher -->|"HTTPS"| Web
     Web -->|"REST JSON + WebSocket<br/><code>/api/v1/*</code>"| API
     Lab -->|"SQL"| DB
+    Py -->|"SQL: ghi trades/evaluations/leaderboard"| DB
     Worker -->|"SQL: FOR UPDATE SKIP LOCKED<br/>+ ghi trades/evaluations"| DB
-    Lab -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB
-    Lab -.->|"cache overlay"| Cache
+    Py -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB
+    Py -.->|"cache overlay"| Cache
     Worker -.->|"outbound rate-limit chung"| Cache
 
     Lab -->|"HTTPS REST: klines"| Binance
@@ -38,7 +41,7 @@ flowchart TB
     classDef optional fill:#7aa9d6,stroke:#2e6295,color:#fff,stroke-dasharray: 5 5
     classDef external fill:#999,stroke:#6b6b6b,color:#fff
     class Researcher person
-    class Web,API,Lab,Worker container
+    class Web,API,Lab,Py,Worker container
     class DB db
     class Cache optional
     class Binance,NewsSrc external

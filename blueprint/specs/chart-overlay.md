@@ -366,7 +366,7 @@ Im lặng hiển thị nến cũ như thể mới là kịch bản tệ nhất: 
 - [ ] AC-02: Panel 1 `rsi(14)` và Panel 2 `rsi(21)` cùng `ETHUSDT 5m`. Ghi log mọi frame nhận ở Panel 1 trong 10 phút → **0 frame** có `config_hash` của Panel 2.
 - [ ] AC-03: `grep -rE "calculateRSI|computeSMA|bollingerBands|backtest|winRate|maxDrawdown|sharpeRatio|profitFactor" web/{app,components,lib}` → **0 match** (`web/__tests__/no-domain-logic.test.ts` pass).
 - [ ] AC-04: Gửi 20 tick provisional cho một `close_time` → chart cập nhật giá 20 lần, `overlay_delta` nhận **0 frame**, `candles` trong DB **0 row** cho `close_time` đó.
-- [ ] AC-05: Nến đóng lúc `T` → so `series.rsi` tại `T` với giá trị `BacktestEngine` tính cho cùng nến trên cùng dataset → lệch tuyệt đối < `1e-8`.
+- [ ] AC-05: Nến đóng lúc `T` → so `series.rsi` tại `T` với giá trị mà **Python backend** tính (`IndicatorLibrary`, cùng nguồn với `BacktestEngine`) cho cùng nến trên cùng dataset → lệch tuyệt đối < `1e-8`.
 - [ ] AC-06: Gọi `chart-overlays` với `config_hash` bịa → `422 config_hash_mismatch`; **0 row** cache được ghi.
 - [ ] AC-07: Subscribe 9 khoá trên 1 connection (anonymous) → khoá thứ 9 trả `{"error":"subscription_limit"}`, connection **vẫn open**, 8 khoá đầu vẫn nhận frame.
 - [ ] AC-08: Ngắt WS 60 s → badge `STALE` hiện ≤ 45 s sau nến lẽ ra phải đóng; nến lịch sử vẫn render; sau `StreamRecovered` chart không có gap và overlay khớp REST refetch.

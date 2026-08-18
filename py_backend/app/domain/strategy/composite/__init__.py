@@ -1,0 +1,1 @@
+"""Composite strategy (signal combination)."""
