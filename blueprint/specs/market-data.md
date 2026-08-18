@@ -14,10 +14,9 @@ Module duy nhất trong hệ thống biết Binance tồn tại. Trách nhiệm:
 
 ### Execution handoff
 
-Chi tiết lifecycle và ownership nằm một lần trong
-[`../../architecture/domain-backend.md`](../../architecture/domain-backend.md) §3–4;
-spec này giữ product contract và acceptance criteria. Các điểm bắt buộc khi
-implement:
+Chi tiết lifecycle và ownership là contract của Go skeleton
+(`server/internal/domain/marketdata`) và spec này; spec giữ product contract và
+acceptance criteria. Các điểm bắt buộc khi implement:
 
 | Boundary | Canonical rule |
 | --- | --- |

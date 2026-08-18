@@ -235,10 +235,11 @@ Quy tắc:
 
 ### D. Risk exits (optional)
 
-Nếu risk policy bật, chốt `sl_price`/`tp_price` tại entry. Trigger dùng quote
-executable side khi có BBO; nếu chỉ có candle OHLCV fallback thì dùng `low`/
-`high` với `intrabar_priority` explicit. Signal mới không hủy risk order đã
-được trigger trong cùng event boundary.
+Nếu risk policy bật, chốt `sl_price`/`tp_price` tại entry. Trigger bắt buộc dùng
+quote executable side từ BBO; không fallback sang OHLCV hoặc candle close. Nếu
+một BBO chạm đồng thời hai mức, áp dụng `stop_loss_first`. Thiếu quote hợp lệ
+trả input error deterministically. Signal mới không hủy risk order đã được
+trigger trong cùng event boundary.
 
 Fixture không bật risk policy. Acceptance test risk policy vẫn kiểm tra mức
 trigger, priority và overlay provenance độc lập với fixture MA20/50.

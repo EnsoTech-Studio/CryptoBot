@@ -6,12 +6,12 @@ Import rules: every item is a Jira `Story`; Summary starts with external ID;
 assignees are `Member 1`–`Member 5`; points are Fibonacci; each `Depends on`
 entry becomes a Jira `blocks` link from dependency to dependent task. Existing
 active blueprint and Go skeleton are the product baseline. The reconciled domain
-implementation baseline is the sibling architecture package:
-`../../architecture/README.md`, `../../architecture/blueprint-verification.md`,
-and `../../architecture/domain-backend.md`. Verification-spec restoration is
-intentionally not a separate task; fixture evidence belongs in M2-03.
+rules were verified against the active Go skeleton and `blueprint/` specs; all
+task references below point to active repository `blueprint/` documents.
+Verification-spec restoration is intentionally not a separate task; fixture
+evidence belongs in M2-03.
 
-## Architecture handoff gates
+## Reconciled handoff gates
 
 These constraints apply to every story that touches the four reconciled domains:
 
@@ -45,9 +45,11 @@ These constraints apply to every story that touches the four reconciled domains:
 
 - **Assignee / points:** Member 3 / 21 SP
 - **Depends on:** M1-01, M2-01, M2-02
-- **Architecture refs:** `../../architecture/blueprint-verification.md`
-  (persistence/task-split reconciliation); `../../architecture/domain-backend.md`
-  §§4, 10.
+- **Blueprint refs:** `blueprint/design.md` §§4.1–4.2, 5.7, 8.3;
+  `blueprint/specs/experiment.md`, `blueprint/specs/evaluation.md`,
+  `blueprint/specs/market-data.md`, `blueprint/specs/news.md`,
+  `blueprint/specs/sentiment.md`, `blueprint/specs/search-loop.md`,
+  `blueprint/specs/leaderboard.md`.
 - **Purpose:** Make PostgreSQL source of truth for domain facts and views.
 - **Scope:** `server/migrations/`, `server/seeds/`; users, sessions, markets,
   candles, stream checkpoints, datasets, strategies, experiments, jobs, runs, trades,
@@ -138,8 +140,10 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Scope:** `transport/httpapi/`, `transport/ws/`, application services,
   market/strategy/experiment/search/leaderboard/news/AI handlers, and
   `/internal/events`.
-- **Architecture refs:** `../../architecture/domain-backend.md` §§3–4, 9–10;
-  `../../architecture/blueprint-verification.md` (resolved gaps, traceability).
+- **Blueprint refs:** `blueprint/design.md` §§5.5, 5.8, 6.1;
+  `blueprint/specs/market-data.md`, `blueprint/specs/chart-overlay.md`,
+  `blueprint/specs/experiment.md`, `blueprint/specs/auth.md`,
+  `blueprint/specs/observability.md`.
 - **Description:** Implement public resource routes, internal event intake,
   versioned WS frames, sequence numbers, reconnect, and resync. Keep
   `/api/v1/markets/stream` as the public blueprint route; if the logical
@@ -168,9 +172,9 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Purpose:** Establish validated deterministic domain values.
 - **Scope:** `server/internal/domain/common/`, `domain/market/`, causal
   strategy inputs, canonical hash helpers.
-- **Architecture refs:** `../../architecture/domain-backend.md` §§1–2, 9;
-  `../../architecture/blueprint-verification.md` (reconciled common types,
-  runtime safety).
+- **Blueprint refs:** `blueprint/design.md` §§5.1–5.3;
+  `blueprint/specs/market-data.md`, `blueprint/specs/strategy-registry.md`,
+  `blueprint/specs/composite-strategy.md`, `blueprint/specs/backtest.md`.
 - **Description:** Implement decimal `Candle`, transient `KlineUpdate`, BBO,
   `CandleQuery`, subscription, validation, stable serialization, and immutable
   `CausalCandles`; provisional data cannot become `Candle`. Preserve optional
@@ -229,9 +233,8 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Assignee / points:** Member 1 / 13 SP
 - **Depends on:** M1-01
 - **Purpose:** Normalize historical klines, realtime klines, and BBO.
-- **Architecture refs:** `../../architecture/domain-backend.md` §§3–4;
-  `../../architecture/blueprint-verification.md` (market decisions and
-  resolved gaps).
+- **Blueprint refs:** `blueprint/design.md` §6.1, §9;
+  `blueprint/specs/market-data.md` (execution handoff and provider limits).
 - **Scope:** `server/internal/infrastructure/market/binance.go`, private REST/
   WS payloads, `github.com/coder/websocket`, combined-stream client, limiter,
   reconnect client, and disabled private User Data Stream seam.
@@ -264,9 +267,8 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Purpose:** Produce reliable closed-candle datasets plus in-memory BBO events.
 - **Scope:** Market service, checkpoint ports, dataset builder, event
   envelopes, market integration tests.
-- **Architecture refs:** `../../architecture/domain-backend.md` §4;
-  `../../architecture/blueprint-verification.md` (reconciled persistence and
-  task-split readiness).
+- **Blueprint refs:** `blueprint/design.md` §§4.2, 6.1;
+  `blueprint/specs/market-data.md`, `blueprint/specs/experiment.md`.
 - **Description:** Convert adapter callbacks into normalized events. Send
   closed candles through a bounded ingress channel to the DB writer and a
   separate closed-candle strategy bus; send BBO to a low-latency in-memory hub
@@ -290,9 +292,9 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Scope:** `domain/backtest/`, `ports.BacktestEngine` implementation, event
   merger, order manager, position tracker, synthetic order-status stream, BBO
   replay.
-- **Architecture refs:** `../../architecture/domain-backend.md` §§5, 7–9;
-  `../../architecture/blueprint-verification.md` (replay/position decisions,
-  task-split readiness).
+- **Blueprint refs:** `blueprint/design.md` §§5.2–5.4, 6.3;
+  `blueprint/specs/backtest.md`, `blueprint/specs/market-data.md`,
+  `blueprint/specs/composite-strategy.md`.
 - **Description:** Run chronologically on closed candles; BBO precedes same-time
   candle; fixed notional, one-net position, BBO LIMIT, final-BBO exit, initial
   100 USDT, notional 10 USDT, leverage 1, fee 10 bps, zero slippage. Use one
@@ -317,9 +319,8 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Depends on:** M2-01
 - **Purpose:** Calculate reproducible metrics from immutable facts.
 - **Scope:** `server/internal/domain/evaluation/` and evaluation service.
-- **Architecture refs:** `../../architecture/domain-backend.md` §8;
-  `../../architecture/blueprint-verification.md` (pure evaluation and fixture
-  verification boundary).
+- **Blueprint refs:** `blueprint/design.md` §§4.2, 6.3;
+  `blueprint/specs/evaluation.md`, `blueprint/specs/backtest.md`.
 - **Description:** Calculate return, drawdown, volatility/Sharpe, win rate,
   trade count, profit factor, average trade, and policy/version provenance;
   undefined values stay null with a machine-readable reason. Evaluator is pure:
@@ -335,12 +336,14 @@ These constraints apply to every story that touches the four reconciled domains:
 - **Depends on:** M1-06, M2-01, M2-02
 - **Purpose:** Verify the market-to-evaluation chain with supplied fixture.
 - **Scope:** Fixture loaders/replay for
-  `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; update the evidence
-  handoff recorded in `../../architecture/blueprint-verification.md` only after
-  the implementation produces a result.
+  `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; update the reconciled
+  fixture evidence record only after the implementation produces a result.
+- **Blueprint refs:** `blueprint/specs/backtest.md` (Verification fixture),
+  `blueprint/specs/evaluation.md` (Verification fixture), `blueprint/README.md`
+  (fixture/evidence rule).
 - **Description:** Load the SOL OHLCV/BBO files; record hashes, configuration,
   structural outputs, metrics, and reproducibility. Record PnL only when engine
-  produces it. The current architecture record intentionally contains only
+  produces it. The current reconciled record intentionally contains only
   structural expectations and notes that the fixture passport is absent; do not
   recreate a second verification document in `blueprint/` or guess missing
   values.
