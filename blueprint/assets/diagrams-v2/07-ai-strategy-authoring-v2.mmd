@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+    actor A as Strategy Author
+    participant UI as Web Authoring UI
+    participant GO as Go Edge API
+    participant SAS as Python Authoring Service
+    participant FETCH as Safe Document Fetcher
+    participant LLM as Structured LLM Adapter
+    participant VAL as StrategySpec Validator
+    participant PRE as Preview/Sandbox Evaluator
+    participant REG as StrategyRegistry
+    participant DB as PostgreSQL
+
+    A->>UI: nhập JSON DSL hoặc mô tả tự nhiên hoặc URL
+    UI->>GO: POST /strategy-drafts (idempotency key)
+    GO->>GO: auth + quota + body/rate limit
+    GO->>SAS: principal + source_type + source
+
+    alt source_type = URL
+        SAS->>FETCH: fetch allowlisted URL
+        FETCH->>FETCH: HTTPS + DNS/IP/redirect/size guard
+        FETCH-->>SAS: extracted text + source_url + content_hash
+    else source_type = text/DSL
+        SAS->>SAS: normalize text or parse JSON
+    end
+
+    opt mô tả tự nhiên hoặc extracted text
+        SAS->>LLM: schema-constrained prompt<br/>model_version + prompt_version
+        LLM-->>SAS: StrategySpec JSON only
+    end
+
+    SAS->>VAL: validate schema + supported indicators/operators<br/>bounded lookback + no network/DB/tool/code
+    alt invalid/unsupported/ambiguous
+        VAL-->>SAS: field errors/questions
+        SAS-->>GO: draft rejected + structured errors
+        GO-->>UI: draft rejected + field errors/questions
+    else valid
+        VAL->>PRE: compile deterministic execution plan<br/>run bounded preview fixture
+        PRE-->>SAS: normalized rules + sample signals + warnings<br/>source/model/prompt versions
+        SAS-->>GO: safe preview DTO
+        GO-->>UI: preview DTO
+        A->>UI: explicit approve
+        UI->>GO: POST /strategy-drafts/{id}/approve
+        GO->>SAS: approve(draft_id, principal)
+        SAS->>DB: BEGIN · immutable strategy_definition<br/>+ strategy_version + source/provenance + fingerprint · COMMIT
+        SAS->>REG: refresh approved version
+        REG-->>SAS: strategy_id@version registered
+        SAS-->>GO: approved strategy DTO
+        GO-->>UI: strategy_id@version available
+    end
+
+    Note over LLM,REG: LLM không sinh rồi chạy Python/Go tùy ý.<br/>Nó chỉ tạo declarative StrategySpec hợp lệ.<br/>Validator và compiler quyết định spec nào được thực thi.

@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    participant W1 as Python Worker 1
+    participant DB as PostgreSQL Job Queue
+    participant W2 as Python Worker 2
+    participant OBS as Metrics/Alerting
+
+    W1->>DB: claim J attempt=1, lease_token=T1, expires=T+120s
+    W1->>DB: heartbeat at T+30s and T+60s WHERE token=T1
+    Note over W1: process crashes/OOM at T+75s
+    W1--xDB: no more heartbeat
+
+    DB->>OBS: oldest leased age and expired lease metrics
+    W2->>DB: claim WHERE queued OR<br/>(leased AND lease_expires_at < now)<br/>AND attempt < max_attempts
+    DB-->>W2: before expiry: no job
+    W2->>DB: after expiry: atomic takeover J<br/>attempt=2, new lease_token=T2
+    DB-->>W2: JobEnvelope + immutable input hashes
+    W2->>W2: rerun deterministic StrategyRuntime from start
+
+    par stale worker unexpectedly returns
+        W1->>DB: commit result WHERE lease_token=T1
+        DB-->>W1: 0 rows → ROLLBACK and stop
+    and valid worker completes
+        W2->>DB: result + completed + outbox<br/>WHERE lease_token=T2 in one transaction
+        DB-->>W2: COMMIT
+    end
+
+    alt attempt reaches max without success
+        W2->>DB: mark job/run failed + durable error context
+        W2->>DB: INSERT BacktestFailed outbox/dead-letter record
+        DB->>OBS: alert failed/DLQ count
+    end
+
+    Note over W1,W2: At-least-once computation được chấp nhận.<br/>Lease guard + immutable unique facts ngăn duplicate logical result.

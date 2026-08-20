@@ -1,0 +1,42 @@
+sequenceDiagram
+    autonumber
+    participant P as Producer Transaction
+    participant DB as PostgreSQL Outbox
+    participant D as Dispatcher
+    participant C as Consumer
+    participant DLQ as Dead Letter Store
+
+    P->>DB: BEGIN · domain state change<br/>+ INSERT event(event_id,aggregate_id,aggregate_seq,pending) · COMMIT
+    Note over P,DB: State và event không thể commit lệch nhau.
+
+    D->>DB: claim pending/expired event<br/>FOR UPDATE SKIP LOCKED, lease_token=T
+    DB-->>D: event E, attempt n, aggregate_seq s
+    D->>C: deliver E (at-least-once)
+
+    C->>DB: BEGIN
+    C->>DB: INSERT event_consumptions(event_id,consumer) ON CONFLICT DO NOTHING
+    alt duplicate consumption
+        DB-->>C: 0 row
+        C->>DB: COMMIT and return already_processed
+    else first delivery
+        C->>DB: lock consumer_checkpoint(aggregate_id)
+        alt aggregate_seq = last_seq + 1
+            C->>DB: apply idempotent side effect<br/>+ checkpoint last_seq=s + optional next outbox event
+            C->>DB: COMMIT
+        else aggregate_seq <= last_seq
+            C->>DB: COMMIT and return stale_or_duplicate
+        else aggregate_seq > last_seq + 1
+            C->>DB: ROLLBACK and return sequence_gap
+        end
+    end
+
+    alt success/already processed
+        D->>DB: mark delivered WHERE lease_token=T
+    else transient/sequence gap and attempt < max
+        D->>DB: pending + exponential backoff + jitter<br/>last_error, next_attempt_at
+    else permanent or attempts exhausted
+        D->>DLQ: persist full payload + headers + error + versions
+        D->>DB: mark dead and emit alert metric
+    end
+
+    Note over D,C: Delivery có thể lặp vật lý nhưng side effect logic chỉ xảy ra một lần.<br/>Ordering được bảo đảm theo aggregate, không giả định global order.

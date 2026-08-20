@@ -1,0 +1,47 @@
+sequenceDiagram
+    autonumber
+    participant REPLAY as Chronological Replay
+    participant RT as Python StrategyRuntime
+    participant POS as PositionEngine
+    participant RISK as RiskPolicy
+    participant BBO as BBO Timeline
+    participant FILL as ExecutionSimulator
+    participant FACT as TradeFact Builder
+
+    REPLAY->>RT: causal context at candle close t
+    RT-->>REPLAY: Signal(BUY/SELL/HOLD, signal_t, evidence)
+    REPLAY->>POS: apply signal to state FLAT/LONG/SHORT
+
+    alt FLAT + BUY
+        POS->>FILL: open LONG order at next executable event
+        FILL->>BBO: first BBO with event_time > signal_t
+        BBO-->>FILL: best_ask, ask_qty, best_bid, bid_qty
+        FILL->>FILL: buy at ask + configured slippage<br/>subject to available quantity
+        FILL-->>POS: LONG entry fill
+    else FLAT + SELL
+        POS->>FILL: open SHORT order at next executable event
+        FILL->>BBO: first BBO after signal_t
+        BBO-->>FILL: bid/ask + quantities
+        FILL->>FILL: sell at bid - configured slippage
+        FILL-->>POS: SHORT entry fill
+    else LONG + SELL or SHORT + BUY
+        POS->>FILL: close/reverse according to position policy
+    end
+
+    loop every ordered BBO/candle event while position open
+        POS->>RISK: evaluate SL/TP/exit signal without future access
+        alt recorded BBO can execute trigger
+            RISK->>FILL: exit order
+            FILL->>BBO: executable side/price/quantity
+            FILL-->>FACT: entry + exit fills
+        else no BBO coverage
+            RISK->>FILL: documented candle fallback
+            FILL->>FILL: conservative intrabar priority<br/>+ fixed 5 bps fallback
+            FILL-->>FACT: fill with fallback_used=true
+        end
+    end
+
+    FACT->>FACT: compute gross_pnl<br/>entry_fee + exit_fee<br/>spread_cost + slippage_cost<br/>net_pnl and pnl_pct
+    FACT-->>REPLAY: immutable TradeFact
+
+    Note over BBO,FACT: BUY sử dụng ask, SELL sử dụng bid.<br/>Mọi fallback và assumption phải nằm trong provenance,<br/>không được âm thầm dùng candle close.

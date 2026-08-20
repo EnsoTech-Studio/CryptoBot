@@ -1,0 +1,28 @@
+flowchart LR
+    UI["Web / Strategy / Backtest<br/><i>chỉ biết normalized contracts</i>"]
+    Registry["MarketProviderRegistry<br/>resolve(provider_id)"]
+    Port["MarketDataProvider port<br/>historical · stream · backfill<br/>Candle + BBO schemas"]
+    Binance["BinanceAdapter<br/>REST klines + WSS<br/>kline/bookTicker"]
+    OKX["OKXAdapter<br/>REST candles + WSS<br/>candles/books5"]
+    Future["FutureProviderAdapter"]
+    Normalize["Canonical Normalizer<br/>symbol map · timeframe map<br/>decimal/time/sequence validation"]
+    Contract["Canonical output<br/>CandleV2 · BBOEventV2<br/>ProviderStatusV2"]
+
+    UI --> Registry --> Port
+    Binance -.->|"implements"| Port
+    OKX -.->|"implements"| Port
+    Future -.->|"implements"| Port
+    Binance --> Normalize
+    OKX --> Normalize
+    Future --> Normalize
+    Normalize --> Contract --> UI
+
+    Note["Thêm provider = adapter + symbol/timeframe mapping + config.<br/>Không đổi frontend, StrategyRuntime, BacktestEngine hoặc schema TradeFact."]
+    Contract --- Note
+
+    classDef core fill:#fde68a,stroke:#d97706,color:#111
+    classDef adapter fill:#bbf7d0,stroke:#16a34a,color:#111
+    classDef contract fill:#dbeafe,stroke:#2563eb,color:#111
+    class Registry,Port,Normalize core
+    class Binance,OKX,Future adapter
+    class UI,Contract contract

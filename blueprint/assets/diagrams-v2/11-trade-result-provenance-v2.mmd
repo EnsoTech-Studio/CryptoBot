@@ -1,0 +1,40 @@
+flowchart TB
+    LB["LeaderboardEntry<br/>rank · score · observed_at"]
+    EV["Evaluation<br/>return · win rate · MDD<br/>Sharpe · profit factor<br/>evaluator_version"]
+    RUN["BacktestRun<br/>worker/attempt/duration<br/>result_hash"]
+    EXP["ExperimentSnapshot<br/>candidate_hash<br/>range + assumptions"]
+
+    STR["StrategyVersion<br/>StrategySpec/params<br/>code/spec fingerprint<br/>AI source/model/prompt version"]
+    DATA["MarketDatasetSnapshot<br/>Candle hash + BBO hash<br/>provider/symbol/timeframe<br/>range + revision"]
+    EXEC["ExecutionPolicyVersion<br/>LONG/SHORT policy<br/>fill rule · fee<br/>spread/slippage · SL/TP<br/>fallback rule"]
+    SCORE["ScorePolicyVersion<br/>weights + normalization"]
+    SENT["SentimentSnapshot<br/>model/version<br/>window/content hashes"]
+
+    TRADES["TradeFacts[]<br/>pair · entry/exit time<br/>LONG/SHORT · USD notional<br/>entry/exit · SL/TP<br/>fee · spread · slippage<br/>gross/net PnL"]
+    SIGNALS["SignalRecords[]<br/>signal_t · action<br/>confidence · evidence"]
+    EQUITY["EquityPoints[]<br/>equity · drawdown"]
+
+    LB --> EV --> RUN --> EXP
+    LB --> SCORE
+    EXP --> STR
+    EXP --> DATA
+    EXP --> EXEC
+    EXP -.->|"only when used"| SENT
+    RUN --> TRADES
+    RUN --> SIGNALS
+    RUN --> EQUITY
+
+    API["GET /leaderboard/{id}/provenance"] --> LB
+    Verify["Reproduction verifier<br/>recompute hashes + rerun fixture"]
+    STR --> Verify
+    DATA --> Verify
+    EXEC --> Verify
+    SENT --> Verify
+    RUN --> Verify
+
+    classDef result fill:#dbeafe,stroke:#2563eb,color:#111
+    classDef source fill:#fef3c7,stroke:#d97706,color:#111
+    classDef fact fill:#dcfce7,stroke:#16a34a,color:#111
+    class LB,EV,RUN,EXP,SCORE,API result
+    class STR,DATA,EXEC,SENT source
+    class TRADES,SIGNALS,EQUITY,Verify fact

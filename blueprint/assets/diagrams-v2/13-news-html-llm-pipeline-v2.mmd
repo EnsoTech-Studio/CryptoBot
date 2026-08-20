@@ -1,0 +1,50 @@
+sequenceDiagram
+    autonumber
+    participant SCH as Python Scheduler
+    participant NC as News Intelligence Service
+    participant CFG as Approved Source Registry
+    participant RSS as RSS Adapter
+    participant WEB as Safe HTML Fetcher
+    participant EXT as External Source
+    participant EXTCT as Content Extractor
+    participant TAG as LLM Tagger
+    participant SENT as SentimentAnalyzer
+    participant DB as PostgreSQL/Object Storage
+    participant STR as StrategyRuntime
+
+    SCH->>NC: collect_all(since checkpoint)
+    NC->>CFG: active allowlisted sources
+    CFG-->>NC: RSS feeds + article origin rules
+
+    alt RSS source
+        NC->>RSS: collect metadata
+        RSS->>EXT: GET RSS with timeout/size limit
+        EXT-->>RSS: RSS XML
+        RSS-->>NC: title, URL, summary, published_at
+    else approved article URL
+        NC->>WEB: fetch URL
+        WEB->>WEB: HTTPS + DNS/IP + redirect + size guards
+        WEB->>EXT: GET article
+        EXT-->>WEB: HTML
+        WEB->>EXTCT: sanitize + readability extraction
+        EXTCT-->>NC: canonical text + content_hash
+    end
+
+    NC->>DB: UPSERT NewsDocument by url_hash/content_hash<br/>store raw_html_uri optionally
+    NC->>TAG: structured tag request<br/>coin/entity/topic/event + model/prompt version
+    TAG-->>NC: validated tags + confidence + evidence spans
+    NC->>DB: UPSERT NewsTags(document,tagger_model,prompt_version)
+
+    NC->>SENT: classify canonical text
+    alt model available and output valid
+        SENT-->>NC: label + score + model_version
+        NC->>DB: UPSERT SentimentResult by document/model/version
+    else model unavailable
+        NC->>DB: record analysis_attempt failed + alert metadata
+        Note over NC,DB: Không tạo sentiment giả NEUTRAL.<br/>Document và tags vẫn tái sử dụng được.
+    end
+
+    STR->>DB: read versioned SentimentSnapshot by coin/window/as_of
+    DB-->>STR: aggregate + item hashes + model versions
+
+    Note over TAG,DB: LLM tagging chỉ chạy lại khi content hash,<br/>model hoặc prompt version thay đổi. Tag đã lưu được tái sử dụng.

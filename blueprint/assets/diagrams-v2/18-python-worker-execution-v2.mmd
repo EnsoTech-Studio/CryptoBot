@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant W as Python Backtest Worker
+    participant DB as PostgreSQL
+    participant REG as StrategyRegistry
+    participant RT as StrategyRuntime
+    participant EX as BBO ExecutionSimulator
+    participant OUT as Transactional Outbox
+
+    W->>DB: atomic claim queued/expired job<br/>SKIP LOCKED → lease_token T, attempt n
+    DB-->>W: JobEnvelope(experiment_id, exact versions/hashes)
+    W->>DB: UPSERT run=running WHERE current lease permits
+    W->>DB: load immutable Candle+BBO dataset ordered by event_time/seq
+    W->>DB: load StrategySpec + ExecutionPolicy + optional SentimentSnapshot
+    W->>REG: resolve exact strategy version/fingerprint
+
+    par deterministic execution
+        W->>RT: chronological replay with causal views
+        RT->>EX: BUY/SELL/HOLD signals
+        EX-->>W: LONG/SHORT TradeFacts + signals + equity<br/>fee/spread/slippage/SL/TP/fallback flags
+    and heartbeat every lease/4
+        W->>DB: extend lease WHERE job_id AND lease_token=T
+        alt 0 rows
+            W->>W: cancel computation and discard buffered result
+        end
+    end
+
+    W->>DB: BEGIN
+    W->>DB: batch INSERT immutable signals/trades/equity
+    W->>DB: UPDATE run completed WHERE lease_token=T
+    W->>DB: UPDATE job completed WHERE lease_token=T
+    W->>OUT: INSERT BacktestCompleted pending<br/>result_hash + aggregate_seq
+    W->>DB: COMMIT
+
+    alt any guarded UPDATE affects 0 rows
+        W->>DB: ROLLBACK
+        Note over W,DB: Stale worker không được ghi đè worker mới.
+    end
+
+    Note over REG,EX: Worker và realtime service import cùng Python package/runtime.<br/>Không tồn tại backtest-only strategy implementation.

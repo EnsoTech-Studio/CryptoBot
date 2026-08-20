@@ -1,0 +1,59 @@
+flowchart LR
+    subgraph Py["🐍 Python Strategy Platform — TARGET V2"]
+        direction LR
+
+        subgraph App["Application — use cases"]
+            direction TB
+            ContentSvc["StrategyAuthoringService<br/>NewsIntelligenceService"]
+            MarketSvc["RealtimeAnalysisService"]
+            ResearchSvc["SearchRunService<br/>ExperimentService<br/>RankingService"]
+        end
+
+        subgraph Domain["Domain — deterministic, không framework I/O"]
+            direction TB
+            StrategyCore["StrategySpec DSL → StrategyRegistry<br/>→ StrategyRuntime dùng chung<br/>IndicatorLibrary · SignalCombiner"]
+            ExecutionCore["ExecutionSimulator<br/>BBO · LONG/SHORT · SL/TP<br/>fee · spread · slippage"]
+            ResultCore["Evaluator + ScorePolicy<br/>ProvenanceBuilder"]
+        end
+
+        subgraph Ports["Ports — interface do Python sở hữu"]
+            direction TB
+            IntelligencePorts["StructuredLLM<br/>NewsDocumentProvider"]
+            ExtensionPorts["MarketEventStream<br/>CandidateGenerator"]
+            DataPorts["Repositories<br/>JobQueue · EventPublisher"]
+        end
+
+        subgraph Adapters["Adapters — thay provider/protocol tại đây"]
+            direction TB
+            GoAdapter["Go Gateway WS Client"]
+            AIAdapters["LLM Adapter<br/>RSS + Safe HTML Extract"]
+            GeneratorAdapters["Random · Domain-guided<br/>Genetic generators"]
+            DataAdapters["PostgreSQL repos/queue/outbox<br/>Broker adapter chỉ khi benchmark cần"]
+        end
+    end
+
+    ContentSvc --> StrategyCore
+    ContentSvc --> IntelligencePorts
+    MarketSvc --> StrategyCore
+    MarketSvc --> ExtensionPorts
+    ResearchSvc --> StrategyCore
+    ResearchSvc --> ExecutionCore --> ResultCore
+    ResearchSvc --> ExtensionPorts
+
+    ContentSvc --> DataPorts
+    MarketSvc --> DataPorts
+    ResearchSvc --> DataPorts
+
+    IntelligencePorts -.->|implemented by| AIAdapters
+    ExtensionPorts -.->|market stream| GoAdapter
+    ExtensionPorts -.->|generator plugins| GeneratorAdapters
+    DataPorts -.->|default| DataAdapters
+
+    classDef app fill:#bfdbfe,stroke:#2563eb,color:#111
+    classDef domain fill:#fde68a,stroke:#d97706,color:#111
+    classDef port fill:#e5e7eb,stroke:#6b7280,color:#111
+    classDef adapter fill:#bbf7d0,stroke:#16a34a,color:#111
+    class ContentSvc,MarketSvc,ResearchSvc app
+    class StrategyCore,ExecutionCore,ResultCore domain
+    class IntelligencePorts,ExtensionPorts,DataPorts port
+    class GoAdapter,AIAdapters,GeneratorAdapters,DataAdapters adapter

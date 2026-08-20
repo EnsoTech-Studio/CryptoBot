@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    participant EX as Exchange WSS
+    participant AD as Go ProviderAdapter
+    participant MS as Go MarketService
+    participant DB as PostgreSQL
+    participant PY as Python RealtimeAnalysis
+    participant RT as Python StrategyRuntime
+    participant IN as Go Internal Event Ingress
+    participant HUB as Go Public WS Hub
+    participant UI as Matching Chart Panel
+
+    EX->>AD: raw kline update + bookTicker/BBO update
+    AD->>AD: validate sequence, symbol, timestamp, decimals
+    AD->>MS: Normalized KlineUpdate / BBOUpdate
+
+    par Price rendering path
+        MS->>HUB: presentation MarketDelta(provider,symbol,timeframe,seq)
+        HUB->>UI: only matching subscription key
+    and Durable market path
+        MS->>DB: batch UPSERT candles + APPEND bbo_events
+        MS->>DB: update stream_checkpoint(last_seq,last_closed_at)
+    and Strategy path — no Python→Go porting
+        MS->>PY: internal WS MarketEvent (normalized schema v2)
+        PY->>RT: analyze same StrategySpec used by backtest
+        RT-->>PY: Signal(action, confidence, evidence, strategy_version)
+        PY->>DB: persist realtime_signal + strategy/data version
+        PY->>IN: signed SignalUpdated (retry/backoff, idempotency_key)
+        IN->>HUB: normalized overlay/signal frame
+        HUB->>UI: signal/overlay delta
+    end
+
+    Note over AD,RT: Go sở hữu connection + normalization.<br/>Python sở hữu strategy semantics.<br/>Không generate hay port Go strategy bằng LLM.
+
