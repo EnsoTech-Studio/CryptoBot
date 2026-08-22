@@ -12,6 +12,7 @@ server/*.test
 ai/.venv/
 ai/__pycache__/
 ai/.pytest_cache/
+ai/pytest-cache-files-*/
 py_backend/.venv/
 py_backend/.pytest_cache/
 py_backend/.ruff_cache/
@@ -23,8 +24,10 @@ web/node_modules/
 web/.next/
 web/out/
 web/.env.local
+web/tsconfig.tsbuildinfo
 
 # Tooling / OS
 .DS_Store
 Thumbs.db
 *.log
+.playwright-mcp/

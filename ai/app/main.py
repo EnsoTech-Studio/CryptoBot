@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 
 from app.schemas import PredictRequest, PredictResponse
 from app.services.predictor import predictor
@@ -14,15 +14,22 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ai", "model": "stub-v0"}
+    return {"status": "ok", "service": "ai", "model": "sentiment-v1"}
 
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(payload: PredictRequest) -> PredictResponse:
-    result = predictor.predict(payload.text)
-    return PredictResponse(
-        label=result.label,
-        score=result.score,
-        model=result.model,
-        received_at=datetime.now(timezone.utc),
-    )
+    try:
+        result = predictor.predict(payload.text)
+        return PredictResponse(
+            label=result.label,
+            score=result.score,
+            model=result.model,
+            model_version=result.model_version,
+            received_at=datetime.now(timezone.utc),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "sentiment_unavailable"},
+        ) from exc

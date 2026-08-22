@@ -4,7 +4,17 @@ name: cryptobot
 # docker-compose.yml remains the local scaffold profile and intentionally exposes
 # Python for direct smoke testing. This override removes that public surface.
 services:
+  postgres:
+    ports: !reset []
+    expose:
+      - "5432"
+
   ai:
     ports: !reset []
     expose:
       - "8000"
+
+  py_backend:
+    ports: !reset []
+    expose:
+      - "8001"

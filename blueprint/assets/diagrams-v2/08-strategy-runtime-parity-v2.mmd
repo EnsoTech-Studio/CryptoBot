@@ -1,0 +1,41 @@
+flowchart TB
+    Spec["Immutable StrategySpec@version<br/>parameters + combination + fingerprint"]
+    Registry["Python StrategyRegistry<br/>resolve exact version"]
+    Runtime["Python StrategyRuntime<br/>IndicatorLibrary + SignalCombiner"]
+
+    subgraph Realtime["Realtime path"]
+        LiveInput["Normalized closed Candle<br/>+ BBO/sentiment window"]
+        LiveCtx["Causal AnalysisContext<br/>data ≤ event time"]
+        LiveSignal["Realtime SignalRecord"]
+    end
+
+    subgraph Backtest["Backtest path"]
+        Snapshot["Immutable Candle+BBO snapshot<br/>+ sentiment/model snapshot"]
+        Replay["Chronological replay<br/>causal context at t"]
+        BackSignal["Backtest SignalRecord"]
+    end
+
+    Compare["Parity contract test<br/>same inputs + same versions<br/>⇒ same action/confidence/evidence"]
+
+    Spec --> Registry --> Runtime
+    LiveInput --> LiveCtx --> Runtime --> LiveSignal
+    Snapshot --> Replay --> Runtime --> BackSignal
+    LiveSignal --> Compare
+    BackSignal --> Compare
+
+    Guard1["Không Strategy implementation trong Go"]
+    Guard2["Không nhánh strategy riêng trong Backtester"]
+    Guard3["Không future candle/indicator access"]
+    Runtime --- Guard1
+    Runtime --- Guard2
+    Runtime --- Guard3
+
+    classDef core fill:#fde68a,stroke:#d97706,color:#111
+    classDef live fill:#cffafe,stroke:#0891b2,color:#111
+    classDef back fill:#fce7f3,stroke:#db2777,color:#111
+    classDef guard fill:#fee2e2,stroke:#dc2626,color:#111
+    class Spec,Registry,Runtime,Compare core
+    class LiveInput,LiveCtx,LiveSignal live
+    class Snapshot,Replay,BackSignal back
+    class Guard1,Guard2,Guard3 guard
+
