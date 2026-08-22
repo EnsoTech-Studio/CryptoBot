@@ -320,3 +320,9 @@ Dùng index `idx_sentiment_agg (model_version, analyzed_at DESC)`.
 - [ ] AC-13: Backtest 20.000 nến với `NewsSentimentStrategy` → đếm số query tới `sentiment_results` **≤ 2** (precompute), không phải 20.000.
 - [ ] AC-14: Anonymous gọi `POST /api/v1/ai/predict` → `401`; RESEARCHER gọi 21 lần/phút → lần 21 trả `429` + `Retry-After`; model down → `502 sentiment_unavailable`, response **không** chứa tên file model hay stack trace.
 - [ ] AC-15: Thay `SentimentModelAdapter` bằng fixture adapter trả nhãn từ file JSON → toàn bộ `NewsSentimentStrategy`, backtest, evaluation, leaderboard chạy với **0 dòng** thay đổi ngoài dòng wiring adapter (`design.md` §11.6).
+
+## Target additions (unified blueprint)
+
+- **Orchestration thuộc Python platform**: pipeline news → tag → sentiment orchestration chạy trong service `research`; Go không tham gia (ADR-011 mới, `design.md` §1.2).
+- **`ai` là inference adapter thuần**: service `ai` chỉ nhận canonical text, trả `POSITIVE|NEUTRAL|NEGATIVE` + score + `model_version`; không crawl, không orchestration, không DB. Python platform gọi `ai` qua HTTP nội bộ với correlation ID + deadline.
+- Mọi quy tắc degradation của spec này (model down → null, không fake NEUTRAL, versioned provenance) giữ nguyên qua sự dịch chuyển owner.

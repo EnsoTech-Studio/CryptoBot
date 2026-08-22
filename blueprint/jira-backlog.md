@@ -39,6 +39,45 @@ These constraints apply to every story that touches the four reconciled domains:
   M5-01 must record any alias decision in transport/type tests instead of
   allowing two undocumented contracts.
 
+## Target gap epics (unified blueprint)
+
+Epics derived from the ten target gaps of the unified blueprint
+(`design.md` §12.4; verification gates in `traceability.md`). Each epic is a
+Jira `Epic`; its member stories, points, and assignees are set at refinement —
+they are intentionally not counted in the totals below, which track the
+pre-existing reconciled backlog only. Owner language: Go = realtime market +
+edge/auth/quota; Python platform (`research`) = strategy runtime, backtest,
+search, ranking, news extraction/tagging + sentiment orchestration; `ai` =
+inference adapter.
+
+- **GAP-01 — Strategy registry/StrategySpec enforcement.** Architecture test
+  forbidding `if/switch` on strategy ID; add-one-plugin diff proof. (trace #1)
+- **GAP-02 — AI strategy authoring.** Text/URL → declarative `StrategySpec`
+  with validation, preview, human approval, SSRF/sandbox guards
+  (`specs/strategy-authoring.md`). (trace #2)
+- **GAP-03 — Search generator registry.** Resolve generators via
+  `GeneratorRegistry`; contract test running one candidate through ≥2
+  generators with zero core diff. (trace #3)
+- **GAP-04 — Market provider registry + normalized Candle/BBO DTO.** Add a
+  second provider adapter returning the same canonical DTOs; frontend/domain
+  unchanged. (trace #4)
+- **GAP-05 — WSS reconnect/backfill hardening.** Checkpoint + REST backfill
+  tests: zero missing/duplicate closed candles after a forced disconnect.
+  (trace #5)
+- **GAP-06 — LONG/SHORT execution states.** FLAT/LONG/SHORT one-net position
+  simulation with hand-calculated fixtures for open/close/reverse. (trace #6)
+- **GAP-07 — Full trade fact fields.** Pair, time, side, notional, price,
+  SL/TP, fee, spread, slippage, gross/net PnL across API/schema/UI. (trace #7)
+- **GAP-08 — Frozen BBO snapshot + fallback provenance.** BBO replay frozen
+  with dataset; BUY=ask/SELL=bid; 5 bps fallback flagged in provenance.
+  (trace #8)
+- **GAP-09 — News HTML extraction + LLM tagging cache.** Safe HTML fetch,
+  readability extraction, content-hash tag reuse, model/prompt versions,
+  null-on-model-down. (trace #9)
+- **GAP-10 — Scale/reliability proof.** Load benchmark, crash/takeover,
+  duplicate delivery, sequence gap, rerun-hash tests; publish scale numbers
+  only with metrics. (trace #10)
+
 ## Member 3 — Infrastructure
 
 ### M3-01 — Create PostgreSQL migrations, projections, and seeds

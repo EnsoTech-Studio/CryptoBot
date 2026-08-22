@@ -1,17 +1,25 @@
 stateDiagram-v2
-    [*] --> queued : INSERT cùng transaction với job
-    queued --> running : worker claim và ghi started_at
-    running --> completed : trades và equity đã COMMIT
-    running --> failed : lỗi engine hoặc cạn max_attempts
-    queued --> cancelled : search run bị cancel trước khi chạy
-    running --> cancelled : OPERATOR hoặc owner cancel search run
+    [*] --> queued : experiment transaction commits
+    queued --> running : worker claims lease
+    running --> completed : facts + result + event commit atomically
+    running --> retry_wait : transient error or lease lost and attempts remain
+    retry_wait --> queued : backoff elapsed
+    running --> failed : permanent error or max_attempts exhausted
+    queued --> cancelled : owner/operator cancel before claim
+    retry_wait --> cancelled : cancel during backoff
+    running --> cancelled : cooperative cancel + token-guarded commit
     completed --> [*]
     failed --> [*]
     cancelled --> [*]
 
     note right of completed
-        3 state terminal.
-        Không có đường quay lại queued
-        từ bất kỳ state terminal nào.
-        Mọi lệnh tới đây bị reject 409.
+        Terminal và append-only.
+        Rerun tạo experiment/run mới hoặc
+        trả immutable result đã reuse.
     end note
+
+    note right of retry_wait
+        error_code + attempt + next_attempt_at
+        được lưu bền. Không retry vô hạn.
+    end note
+

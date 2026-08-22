@@ -21,29 +21,32 @@ blueprint/
 ├── README.md                      # File này — index + mapping yêu cầu
 ├── proposal.md                    # Bối cảnh, mục tiêu định lượng, phạm vi, rủi ro, tiêu chí thành công
 ├── design.md                      # Tài liệu trung tâm: 13 section
+├── traceability.md                # Yêu cầu đích → sơ đồ → verification gate
+├── jira-backlog.md                # Epic/task backlog (gap-derived + roadmap)
 ├── assets/                        # Sơ đồ render sẵn — đọc offline / export PDF được
-│   ├── README.md                  # Danh mục 19 sơ đồ + cách render lại
-│   ├── diagrams/                  # Mermaid source (.mmd) + SVG vector
+│   ├── README.md                  # Danh mục 24 sơ đồ + cách render lại
+│   ├── diagrams/                  # Mermaid source (.mmd) + SVG vector + index.json
 │   └── diagrams-png/              # PNG 2× cho Word/PowerPoint
 ├── scripts/
-│   └── extract_diagrams.py        # Trích .mmd từ Markdown (Markdown là nguồn sự thật)
+│   └── extract_diagrams.py        # Trích .mmd từ Markdown (Markdown là nguồn sự thật cho sơ đồ origin:doc)
 ├── go-review-checklist.md         # Checklist handoff cho team Go
 └── specs/
-    ├── market-data.md             # Binance adapter, realtime, reconnect + backfill
+    ├── market-data.md             # Binance adapter, realtime, reconnect + backfill, provider registry
     ├── chart-overlay.md           # Overlay live, subscription per panel, multi-timeframe
     ├── strategy-registry.md       # Plugin Architecture — lõi khả năng mở rộng
+    ├── strategy-authoring.md      # Text/URL → StrategySpec (AI), approval, SSRF/sandbox
     ├── composite-strategy.md      # Kết hợp tín hiệu, combination policy
     ├── experiment.md              # ExperimentSnapshot bất biến, job queue, lease token
-    ├── backtest.md                # Backtest engine, fill policy, chống look-ahead
-    ├── python-research.md         # Python Strategy/Backtest Backend — canonical, float64 (`py_backend/`)
+    ├── backtest.md                # Backtest engine, fill policy, chống look-ahead, frozen BBO
+    ├── python-research.md         # Python Strategy Platform — canonical, float64 (`app/`, service `research`)
     ├── evaluation.md              # Metrics dẫn xuất, tách khỏi trade facts
-    ├── search-loop.md             # Continuous loop, stop condition, pause/resume
+    ├── search-loop.md             # Continuous loop, stop condition, pause/resume, generator registry
     ├── leaderboard.md             # Top-K, scoring policy, provenance
     ├── visualization.md           # Overlay của kết quả, trade table, equity curve
-    ├── news.md                    # News collector, provider abstraction, chống SSRF
-    ├── sentiment.md               # Sentiment analysis, model version, sentiment-as-strategy
+    ├── news.md                    # News extraction (RSS + HTML), LLM tagging, chống SSRF — owner Python
+    ├── sentiment.md               # Sentiment orchestration (Python platform), model version — `ai` là adapter
     ├── auth.md                    # JWT RS256, RBAC 3 role, ownership, Defense in Depth
-    └── observability.md           # Metrics, correlation ID, structured log, progress panel
+    └── observability.md           # Metrics, correlation ID, structured log, progress panel, scale gate
 ```
 
 **Canonical implementation handoff**: parity và execution contract không được
@@ -53,7 +56,7 @@ backlog (`jira-backlog.md`) giữ task/AC.
 
 ## Sơ đồ render sẵn
 
-Mọi sơ đồ trong tài liệu đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×). Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
+Mọi sơ đồ đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×) — tổng cộng **24 sơ đồ** đánh số thống nhất. Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
 
 Bảy góc nhìn kiến trúc bắt buộc đều có sơ đồ tương ứng:
 
@@ -61,14 +64,14 @@ Bảy góc nhìn kiến trúc bắt buộc đều có sơ đồ tương ứng:
 | ----------------- | ----- | ------- |
 | System Context | `01-c4-l1-system-context` | `design.md` §2.1 |
 | Container / HLA | `02-c4-l2-container`, `04-high-level-architecture` | §2.2, §3 |
-| Component responsibilities | `03-c4-l3-component-strategy-lab` | §2.3 |
+| Component responsibilities | `03-c4-l3-python-strategy-platform` | §2.3 |
 | ERD | `06-erd` | §4.3 |
-| Data Flow | `05-candle-path-binance-to-pixel`, `07-outbox-scenarios`, `13-news-sentiment-flow` | §3.2, §5.7.5, §6.4 |
-| Realtime / Reconnect Flow | `09-realtime-reconnect-backfill-flow` | §6.1 |
-| Strategy Flow | `10-strategy-flow` | §6.2 |
-| Search / Backtest Flow | `11-search-backtest-flow`, `15-job-queue-scale`, `17`–`19` | §6.3, §8.3, `specs/experiment.md` |
+| Data Flow | `05-market-realtime-candle-bbo`, `07-outbox-retry-order`, `13-news-html-llm-pipeline` | §3.2, §5.7.5, §6.4 |
+| Realtime / Reconnect Flow | `09-realtime-reconnect-backfill-flow`, `05-market-realtime-candle-bbo` | §6.1 |
+| Strategy Flow | `10-strategy-flow`, `22-strategy-runtime-parity`, `21-ai-strategy-authoring` | §6.2 |
+| Search / Backtest Flow | `11-search-backtest-pipeline`, `15-job-queue-scale`, `16`–`19`, `23`, `24` | §6.3, §8.3, `specs/experiment.md` |
 
-Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/README.md`**.
+Danh mục đầy đủ 24 sơ đồ và hướng dẫn render lại: **`assets/README.md`**. Mapping yêu cầu → sơ đồ → verification gate: **`traceability.md`**.
 
 ## Cách đọc
 
@@ -88,7 +91,7 @@ Danh mục đầy đủ 19 sơ đồ và hướng dẫn render lại: **`assets/
    | 9   | 5 anti-pattern đề bài + 3 bổ sung, kèm test kiểm chứng |
    | 10  | **17 ADR**                                     |
    | 11  | **Trả lời 8 câu hỏi kiến trúc trung tâm**      |
-   | 12  | **Target Architecture vs Delivery Roadmap** (§12.0) + 7 phase + Demo script 18 bước + Truy vết yêu cầu |
+   | 12  | **Target Architecture vs Delivery Roadmap** (§12.0) + 7 phase + Demo script 18 bước + Truy vết yêu cầu + **10 target gap & bất biến xuyên sơ đồ (§12.4)** |
    | 13  | Phụ lục: cấu trúc thư mục source code          |
 
 3. **`specs/*.md`** — đặc tả chi tiết từng tính năng. Mỗi file có cấu trúc thống nhất:
@@ -144,10 +147,11 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | §35 Database                           | `design.md` §4.1, §4.2                          |
 | §36 Strategy Version, Reproducibility  | `design.md` §4.2, ADR-009 · `specs/experiment.md` |
 
-> `specs/python-research.md` là đặc tả **Python Strategy/Backtest Backend** (`py_backend/`) —
-> implementation canonical (float64) của Strategy Engine, Backtest, Evaluation, Search,
-> Ranking/Leaderboard và Visualization-of-results, tách khỏi Go backend (xem `design.md` §1.2,
-> ADR-011 · `proposal.md` §4.4 nhãn **[PD]**).
+> `specs/python-research.md` là đặc tả **Python Strategy Platform** (codebase `app/` ở repo
+> root, service `research`) — implementation canonical (float64) của Strategy Engine,
+> Backtest, Evaluation, Search, Ranking/Leaderboard, Visualization-of-results và
+> News/Sentiment orchestration, tách khỏi Go backend (xem `design.md` §1.2, ADR-011 ·
+> `proposal.md` §4.4 nhãn **[PD]**).
 
 ### Architectural drivers (đề bài §32)
 
@@ -219,6 +223,7 @@ Năm nguyên tắc được áp dụng nhất quán trong toàn bộ blueprint, 
 
 ## Phiên bản
 
+- **v1.4** — 2026-08-22 — Hợp nhất bộ tài liệu về **một phiên bản duy nhất**: chốt ownership thống nhất (Go = realtime market + edge/auth/quota; Python platform `research` = strategy runtime/backtest/search/ranking + news extraction/tagging + sentiment orchestration; `ai` = inference adapter — ADR-011/015 cập nhật); gộp bộ sơ đồ đích vào đánh số 01–24 (index + catalog mới ở `assets/README.md`); thêm `traceability.md`, `specs/strategy-authoring.md`, mục "Target additions" cho 7 spec, §12.4 "10 gap + bất biến xuyên sơ đồ" trong `design.md`; service Python chuyển từ thư mục riêng về repo root (`app/`, service `research`, `RESEARCH_PORT`).
 - **v1.3** — 2026-08-12 — Đóng contract read projection bằng schema/view/role/grant DDL; thêm DB guard cho artifact bất biến; version dataset `revision_no` + advisory lock; làm rõ ML integration seam, giới hạn public/internal và cách đếm domain port.
 - **v1.2** — 2026-08-12 — Đồng bộ provenance với `risk_policy`; làm rõ SL/TP trigger so với execution fill; thêm virtual composite root cho FK; khóa causal `IndicatorView` và family constraint; xác nhận `requirements.html` là nguồn yêu cầu chính.
 - **v1.1** — 2026-08-11 — Làm rõ ranh giới kiến trúc sau review: architectural style theo từng process (§1.1) + Service Boundary & Ownership (§1.2) + read projection cho Go (§1.2.5) + artifact vs workload (§1.3.1); chốt transactional outbox (§5.7) và `POST /internal/events` (§5.8); chốt lease token cho retry/take-over (§8.3.1); tách Target Architecture khỏi Delivery Roadmap (§12.0); thêm ADR-015, ADR-016; sửa bug `weighted_vote` với `threshold = 0`; phân loại nguồn gốc yêu cầu [SRC]/[PD]/[NFR] (`proposal.md` §4.4) + điều kiện đo cho mọi SLO (§2.2); thêm 19 sơ đồ render sẵn ở `assets/`.

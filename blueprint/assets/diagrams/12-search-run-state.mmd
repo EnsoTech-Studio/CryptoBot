@@ -1,19 +1,30 @@
 stateDiagram-v2
-    [*] --> queued : POST /search-runs
-    queued --> running : worker picks up
-    running --> paused : action=pause
-    paused --> queued : action=resume
-    running --> completed : stop condition đạt
-    running --> failed : lỗi hệ thống
-    queued --> cancelled : action=cancel
-    running --> cancelled : action=cancel
-    paused --> cancelled : action=cancel
+    [*] --> queued : atomic admission accepted
+    queued --> running : SearchRunService starts
+    running --> paused : pause command
+    paused --> running : resume command
+    running --> stopping : stop condition reached
+    stopping --> draining : no new candidates; wait queued/running jobs
+    draining --> completed : all accepted candidates terminal
+    running --> cancelled : cancel command
+    paused --> cancelled : cancel command
+    draining --> cancelled : cancel command
+    running --> failed : unrecoverable orchestration error
+    queued --> cancelled : cancel before start
     completed --> [*]
     failed --> [*]
     cancelled --> [*]
 
-    note right of completed
-        3 state terminal.
-        Mọi control command tới đây
-        đều bị reject 409.
+    note right of running
+        Stop conditions bắt buộc:
+        max_candidates, max_duration,
+        max_non_improving, failure_rate,
+        quota/resource budget.
     end note
+
+    note right of draining
+        Pause: không generate/enqueue mới.
+        Cancel: cancel queued jobs; running job
+        chỉ dừng tại cooperative cancellation point.
+    end note
+

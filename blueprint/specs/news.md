@@ -303,3 +303,12 @@ Validate lúc INSERT: `allowed_origin` phải khớp `^https://[a-z0-9.-]+$` (kh
 - [ ] AC-12: Kill worker giữa lúc job `running` → sau ≤ 10 phút sweeper set `failed` với `failure_reason='lease_expired'`; lần collect sau chạy bình thường.
 - [ ] AC-13: `server/tests/architecture/module_boundaries_test.go` assert news infrastructure **không** import Python model internals hoặc Go strategy domain — fail build nếu vi phạm (`design.md` §9.1, §9.5).
 - [ ] AC-14: RESEARCHER gọi `POST /api/v1/admin/news-sources` → `403`; ADMIN gọi với `allowed_origin='htps://x'` → `422`; ADMIN gọi với origin hợp lệ nhưng resolve ra IP private → `422`, không lưu row.
+
+## Target additions (unified blueprint)
+
+Các điểm dưới đây là yêu cầu đích của bộ sơ đồ thống nhất (`assets/diagrams/` 13; `design.md` §12.4) — owner là **Python platform** (`research`), không phải Go:
+
+- **Owner**: news collection/extraction/tagging thuộc Python platform (migrate từ Go theo ADR-011 mới); `news_sources`/`news_items`/`sentiment_results`/`news_collection_jobs` do Python sở hữu write + migration (`design.md` §1.2.4).
+- **Article HTML extraction**: ngoài RSS, source dạng "approved article URL" được fetch bằng Safe HTML Fetcher (HTTPS + DNS/IP + redirect + size guard như SSRF rules ở trên), sanitize + readability extract ra canonical text; lưu `content_hash`, raw HTML lớn tách sang object storage tuỳ chọn.
+- **LLM tagging có version**: gán nhãn structured (coin/entity/topic/event) qua LLM; mọi batch tag ghi kèm `tagger_model` + `prompt_version` và lưu DB để tái sử dụng.
+- **Content-hash cache**: tagging chỉ chạy lại khi `content_hash`, model hoặc prompt version thay đổi; tag đã lưu được tái sử dụng giữa các lần collect.

@@ -1,6 +1,6 @@
 # Crypto Strategy Lab
 
-Full-stack implementation for the Crypto Strategy Lab blueprint. The app follows the product boundary in `blueprint/`: the browser renders normalized DTOs only; Go owns market normalization, indicator/strategy logic, backtest, evaluation, ranking, auth and database writes; the worker consumes PostgreSQL jobs; Python is sentiment inference only.
+Full-stack implementation for the Crypto Strategy Lab blueprint. The app follows the unified product boundary in `blueprint/`: the browser renders normalized DTOs only and talks exclusively to the Go API; Go owns realtime market data (candle/BBO normalization, WSS reconnect/backfill), the edge/API, auth/RBAC and quota; the Python platform (`research`) owns the strategy runtime, backtest, search, ranking, and news extraction/tagging + AI/sentiment orchestration; `ai` is the sentiment inference adapter. See the transitional note under Architecture for how today's code maps to that target.
 
 ## Run
 
@@ -50,15 +50,25 @@ Demo login:
 
 ## Architecture
 
-Runtime topology:
+Unified target topology (blueprint `design.md` §1.2):
 
 ```text
 Browser (Next.js)
-  -> Go API (auth, REST, WebSocket, domain boundary)
+  -> Go API (edge: auth/RBAC, quota, REST, WebSocket, realtime market normalize)
       -> PostgreSQL (source of truth, queue, read views, provenance)
-      -> Go Worker (same image, /worker entrypoint, async backtest)
-      -> Python AI (sentiment inference only)
+      -> research (Python platform: strategy runtime, backtest, search, ranking,
+                   news extraction/tagging, sentiment/AI orchestration) :8001
+           -> ai (Python inference adapter) :8000
+      -> worker (same research image, async backtest, 1 -> N replicas)
 ```
+
+**Transitional note (as-built vs target).** Today the Go `server/` implements the
+strategy domain (candles, strategies, backtest, evaluation, ranking, news
+collection) and the Go worker consumes `backtest_jobs`; the `research` service
+(`app/` at repo root, port `8001`) is the canonical Python target platform and is
+currently an all-stubs skeleton; `ai` serves sentiment inference. The browser
+only ever talks to the Go API in both the current state and the target — `ai`
+and `research` are internal.
 
 Implemented blueprint boundaries:
 
@@ -159,4 +169,4 @@ Read order:
 3. [`blueprint/design.md`](blueprint/design.md)
 4. [`blueprint/specs/`](blueprint/specs/)
 
-The implementation intentionally keeps the blueprint's core rule: Go is the product/domain boundary, Python is only the sentiment model adapter, and Next.js is presentation.
+The implementation intentionally keeps the blueprint's core rule: the browser only talks to the Go edge; the Python platform (`research`) is the canonical strategy/backtest/news domain target; `ai` is the sentiment model adapter; and Next.js is presentation.

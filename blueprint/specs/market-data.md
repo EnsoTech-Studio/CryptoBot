@@ -296,3 +296,12 @@ Khi tạo experiment hoặc search run:
 - [ ] AC-11: Test static: raw field `json:"k"`, `json:"x"`, `json:"t"` chỉ xuất hiện trong `server/internal/infrastructure/market/binance_kline_event.go`; `server/internal/domain/strategy` không import `application` hay `transport`.
 - [ ] AC-11b: Đưa `KlineUpdate{Final:false}` vào MarketService → nhận đúng một `ChartKline` frame, tạo **0** `market.Candle`, gọi `Strategy.Analyze` **0** lần và ghi DB **0** row. Đưa cùng update với `Final:true` → tạo đúng một `market.Candle`, gọi overlay/strategy đúng một lần.
 - [ ] AC-12: Độ trễ tick → WS Hub đo trên 20 mẫu: p95 < 500 ms.
+
+## Target additions (unified blueprint)
+
+Các điểm dưới đây là yêu cầu đích của bộ sơ đồ thống nhất (`assets/diagrams/` 05, 20; `design.md` §12.4):
+
+- **MarketProviderRegistry**: provider được resolve qua registry, không qua `switch`. Thêm Binance/OKX = thêm adapter đăng ký cùng port `MarketDataProvider`; frontend và domain không đổi (sơ đồ 20).
+- **DTO chuẩn hoá Candle/BBO**: mọi adapter trả cùng canonical Candle (closed, keyed `(provider,symbol,timeframe,open_time)`) và BBO event (bid/ask/updateID/`sourceSequence`); provider envelope thô không lọt qua port.
+- **WSS reconnect/backfill như contract bắt buộc**: combined stream, desired-subscription restore, control ACK, capped exponential backoff, checkpoint (`stream_checkpoints`) và REST backfill khoảng thiếu — de-dup theo unique key, zero missing/duplicate closed candles (sơ đồ 05; AC hiện có của spec này).
+- **Internal market stream Go → Python**: Go chuẩn hoá realtime Candle/BBO và fan-out nội bộ tới Python platform; Python không tự kết nối sàn (`specs/python-research.md` R4).

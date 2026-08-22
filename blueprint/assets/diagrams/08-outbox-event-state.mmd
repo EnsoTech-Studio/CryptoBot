@@ -1,16 +1,23 @@
 stateDiagram-v2
-    [*] --> pending : INSERT cùng transaction với domain state
-    pending --> claimed : dispatcher claim (attempt += 1)
-    claimed --> delivered : mọi handler đã ghi event_consumptions
-    claimed --> pending : handler fail, còn attempt → backoff qua next_attempt_at
-    claimed --> pending : claim_expires_at < now() (dispatcher chết)
-    claimed --> dead : cạn max_attempts
-    dead --> pending : can thiệp thủ công sau khi sửa nguyên nhân
+    [*] --> pending : INSERT cùng domain transaction
+    pending --> claimed : dispatcher claim + lease token
+    claimed --> delivered : consumer idempotent ACK
+    claimed --> pending : transient fail / sequence gap + backoff
+    claimed --> pending : claim lease expired
+    claimed --> dead : permanent fail hoặc max_attempts
+    dead --> pending : operator replay sau khi sửa nguyên nhân
     delivered --> [*]
 
-    note right of dead
-        dead KHÔNG bị xoá.
-        Payload + last_error giữ lại.
-        Metric outbox_dead_events > 0
-        là một alert (§8.4).
+    note right of pending
+        Có event_id duy nhất,
+        aggregate_id + aggregate_seq,
+        next_attempt_at và attempt.
     end note
+
+    note right of dead
+        Không xóa payload.
+        Giữ correlation_id, schema/model versions,
+        last_error và audit người replay.
+        outbox_dead_total > 0 phải alert.
+    end note
+

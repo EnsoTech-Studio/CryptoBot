@@ -1,97 +1,102 @@
 [
   {
     "slug": "01-c4-l1-system-context",
-    "source": "design.md",
-    "block_index": 0
+    "origin": "target"
   },
   {
     "slug": "02-c4-l2-container",
-    "source": "design.md",
-    "block_index": 1
+    "origin": "target"
   },
   {
-    "slug": "03-c4-l3-component-strategy-lab",
-    "source": "design.md",
-    "block_index": 2
+    "slug": "03-c4-l3-python-strategy-platform",
+    "origin": "target"
   },
   {
     "slug": "04-high-level-architecture",
-    "source": "design.md",
-    "block_index": 3
+    "origin": "target"
   },
   {
-    "slug": "05-candle-path-binance-to-pixel",
-    "source": "design.md",
-    "block_index": 4
+    "slug": "05-market-realtime-candle-bbo",
+    "origin": "target"
   },
   {
     "slug": "06-erd",
-    "source": "design.md",
-    "block_index": 5
+    "origin": "target"
   },
   {
-    "slug": "07-outbox-scenarios",
-    "source": "design.md",
-    "block_index": 6
+    "slug": "07-outbox-retry-order",
+    "origin": "target"
   },
   {
     "slug": "08-outbox-event-state",
-    "source": "design.md",
-    "block_index": 7
+    "origin": "target"
   },
   {
     "slug": "09-realtime-reconnect-backfill-flow",
+    "origin": "doc",
     "source": "design.md",
     "block_index": 8
   },
   {
     "slug": "10-strategy-flow",
+    "origin": "doc",
     "source": "design.md",
     "block_index": 9
   },
   {
-    "slug": "11-search-backtest-flow",
-    "source": "design.md",
-    "block_index": 10
+    "slug": "11-search-backtest-pipeline",
+    "origin": "target"
   },
   {
     "slug": "12-search-run-state",
-    "source": "design.md",
-    "block_index": 11
+    "origin": "target"
   },
   {
-    "slug": "13-news-sentiment-flow",
-    "source": "design.md",
-    "block_index": 12
+    "slug": "13-news-html-llm-pipeline",
+    "origin": "target"
   },
   {
     "slug": "14-defense-in-depth",
-    "source": "design.md",
-    "block_index": 13
+    "origin": "target"
   },
   {
     "slug": "15-job-queue-scale",
-    "source": "design.md",
-    "block_index": 14
+    "origin": "target"
   },
   {
     "slug": "16-experiment-create-transaction",
-    "source": "specs/experiment.md",
-    "block_index": 0
+    "origin": "target"
   },
   {
-    "slug": "17-experiment-worker-execution",
-    "source": "specs/experiment.md",
-    "block_index": 1
+    "slug": "17-python-worker-execution",
+    "origin": "target"
   },
   {
-    "slug": "18-experiment-lease-takeover",
-    "source": "specs/experiment.md",
-    "block_index": 2
+    "slug": "18-worker-lease-takeover",
+    "origin": "target"
   },
   {
     "slug": "19-backtest-run-state",
-    "source": "specs/experiment.md",
-    "block_index": 3
+    "origin": "target"
+  },
+  {
+    "slug": "20-market-provider-replaceability",
+    "origin": "target"
+  },
+  {
+    "slug": "21-ai-strategy-authoring",
+    "origin": "target"
+  },
+  {
+    "slug": "22-strategy-runtime-parity",
+    "origin": "target"
+  },
+  {
+    "slug": "23-bbo-long-short-execution",
+    "origin": "target"
+  },
+  {
+    "slug": "24-trade-result-provenance",
+    "origin": "target"
   }
 ]

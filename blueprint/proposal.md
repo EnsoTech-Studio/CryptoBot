@@ -229,7 +229,7 @@ Bảng này để không ai — kể cả nhóm — nhầm điều nhóm tự qu
 | **Transactional outbox cho event cross-process** | **[PD]** | §34 yêu cầu event-driven nhưng không nói cơ chế delivery. Outbox là lựa chọn của nhóm để event không mất (§5.7) |
 | **`code_fingerprint` fail-fast** | **[PD]** | §36 yêu cầu version; fingerprint là cơ chế nhóm chọn để version không chỉ là quy ước (ADR-009) |
 | **Không fake dữ liệu khi dependency down** | **[PD]** | ADR-013. Đề bài không nói; nhóm chọn vì nhãn giả đi vào kết quả Leaderboard mà không có triệu chứng |
-| **Python Strategy/Backtest Backend (canonical, float64)** | **[PD]** | Strategy, backtest, evaluation, search, ranking/leaderboard và visualization chuyển sang backend FastAPI riêng (`py_backend/`), dùng `float64`; Go giữ market/news/sentiment/auth. Đảo ngược ADR-011 — không phải yêu cầu đề bài. Chi tiết `specs/python-research.md` |
+| **Python Strategy Platform (canonical, float64)** | **[PD]** | Strategy, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging và sentiment/AI orchestration thuộc backend FastAPI riêng (service `research`, codebase `app/` ở repo root), dùng `float64`; Go giữ realtime market/edge/auth/quota. Đảo ngược ADR-011 — không phải yêu cầu đề bài. Chi tiết `specs/python-research.md` |
 | Ngưỡng **p95 < 1.5 s** cho candle → UI | **[NFR]** | §32.3 chỉ nói "độ trễ thấp". Con số là của nhóm |
 | Ngưỡng **p95 < 300 ms** cho `GET /candles` | **[NFR]** | Không có căn cứ trong đề bài |
 | Ngưỡng **p95 < 500 ms** cho `POST /experiments` | **[NFR]** | Suy ra từ ADR-006 (phải trả nhanh vì async), con số là của nhóm |

@@ -1,47 +1,51 @@
 flowchart TB
-    Researcher["👤 Researcher / Operator"]
+    User["👤 Researcher / Author / Operator"]
 
-    subgraph Sys["🔷 Crypto Strategy Lab"]
-        direction TB
+    subgraph Sys["🔷 Crypto Strategy Lab — TARGET"]
+        Web["<b>Web Dashboard</b><br/>[Next.js + React]<br/><br/>4 panel độc lập, strategy authoring,<br/>search, backtest, trade detail, news.<br/><i>Render DTO; không tính domain.</i>"]
 
-        Web["<b>Web Dashboard</b><br/>[Container: Next.js 16 + React 19]<br/><br/>4 chart panel độc lập, strategy picker,<br/>search control, leaderboard, trades, news.<br/><i>Chỉ render — không tính toán domain</i>"]
+        Go["<b>Go Edge & Market Gateway</b><br/>[Go workload]<br/><br/>Public REST/WSS, AuthN/AuthZ, quota,<br/>provider WSS/REST, normalize Candle/BBO,<br/>subscription fan-out và internal event ingress."]
 
-        API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
+        PyAPI["<b>Python Strategy API</b><br/>[Python/FastAPI workload]<br/><br/>StrategySpec authoring + registry,<br/>realtime analysis, experiment/search orchestration,<br/>news/AI orchestration, result queries."]
 
-        Lab["<b>Strategy Service</b><br/>[Container: Go 1.23]<br/><br/>Market normalization + realtime candles,<br/>news orchestration, auth/RBAC, observability."]
+        PyWorker["<b>Python Backtest Worker × N</b><br/>[Cùng Python image/package]<br/><br/>Claim lease, load immutable Candle+BBO,<br/>Strategy Runtime, LONG/SHORT execution,<br/>persist facts + transactional outbox."]
 
-        Py["<b>Strategy/Backtest Backend</b><br/>[Container: Python FastAPI, float64]<br/><br/>Strategy registry, composite, indicator,<br/>backtest, evaluation, search, ranking/leaderboard,<br/>visualization-of-results."]
+        DB[("<b>PostgreSQL</b><br/>[Source of truth]<br/><br/>market events/snapshots, strategies,<br/>experiments/jobs, trades/evaluations,<br/>news/tags/sentiment, outbox/consumptions")]
 
-        Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
-
-        DB[("<b>PostgreSQL 16</b><br/>[Container]<br/><br/>candles, dataset snapshots,<br/>strategy_versions, experiments,<br/>backtest_jobs, trades, evaluations,<br/>leaderboard_entries, news_items, sentiment_results")]
-
-        Cache[("<b>Redis 7</b><br/>[Container — tuỳ chọn, có điều kiện §12.0]<br/><br/>Cache overlay đã tính,<br/>outbound rate-limit dùng chung")]
+        Blob[("<b>Object Storage</b><br/>[Optional]<br/><br/>Raw HTML lớn theo content hash")]
+        Broker{{"<b>Broker/Redis Stream</b><br/>[Optional khi benchmark cần]<br/><br/>Thay adapter queue/stream,<br/>không đổi domain contract"}}
     end
 
-    Binance["🌐 Binance<br/>REST + WSS"]
-    NewsSrc["🌐 News Sources<br/>RSS / API"]
+    Exchanges["🌐 Binance / OKX<br/>REST + WSS kline/BBO"]
+    News["🌐 RSS / Article HTML"]
+    AI["🤖 LLM + Sentiment Model<br/>local hoặc remote adapter"]
 
-    Researcher -->|"HTTPS"| Web
-    Web -->|"REST JSON + WebSocket<br/><code>/api/v1/*</code>"| API
-    Lab -->|"SQL"| DB
-    Py -->|"SQL: ghi trades/evaluations/leaderboard"| DB
-    Worker -->|"SQL: FOR UPDATE SKIP LOCKED<br/>+ ghi trades/evaluations"| DB
-    Py -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB
-    Py -.->|"cache overlay"| Cache
-    Worker -.->|"outbound rate-limit chung"| Cache
+    User -->|"HTTPS"| Web
+    Web <-->|"REST JSON + WebSocket"| Go
+    Go <-->|"Internal HTTP + normalized<br/>MarketEvent WebSocket"| PyAPI
+    Go <-->|"REST/WSS"| Exchanges
 
-    Lab -->|"HTTPS REST: klines"| Binance
-    Lab <-->|"WSS: kline stream"| Binance
-    Lab -->|"HTTPS: fetch (allowlist)"| NewsSrc
+    Go -->|"market schema writer"| DB
+    PyAPI -->|"strategy/app schema writer"| DB
+    PyWorker -->|"jobs/results/outbox writer"| DB
+    PyAPI -->|"allowlisted fetch"| News
+    PyAPI <-->|"structured/versioned inference"| AI
+    PyAPI -.->|"raw HTML by hash"| Blob
+    PyWorker -.->|"JobQueue/EventStream ports"| Broker
+
+    Note1["Ownership: Go ghi market/edge;<br/>Python ghi strategy/experiment/news/result.<br/>DB role/schema cưỡng chế boundary."]
+    DB --- Note1
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef container fill:#438dd5,stroke:#2e6295,color:#fff
-    classDef db fill:#438dd5,stroke:#2e6295,color:#fff
-    classDef optional fill:#7aa9d6,stroke:#2e6295,color:#fff,stroke-dasharray: 5 5
-    classDef external fill:#999,stroke:#6b6b6b,color:#fff
-    class Researcher person
-    class Web,API,Lab,Py,Worker container
+    classDef python fill:#fbbf24,stroke:#b45309,color:#111
+    classDef db fill:#22c55e,stroke:#15803d,color:#111
+    classDef optional fill:#d1d5db,stroke:#6b7280,color:#111,stroke-dasharray:5 5
+    classDef external fill:#6b7280,stroke:#374151,color:#fff
+    class User person
+    class Web,Go container
+    class PyAPI,PyWorker python
     class DB db
-    class Cache optional
-    class Binance,NewsSrc external
+    class Blob,Broker optional
+    class Exchanges,News,AI external
+

@@ -22,27 +22,41 @@ Giữ cả ba định dạng có lý do: `.mmd` là **nguồn** (sửa ở đây
 
 ## Danh mục sơ đồ
 
-| # | Slug | Nội dung | Nguồn trong tài liệu | Góc nhìn kiến trúc bắt buộc |
-| - | ---- | -------- | -------------------- | --------------------------- |
-| 01 | `01-c4-l1-system-context` | C4 Level 1 — actor + hệ thống ngoài | `design.md` §2.1 | **System Context** |
-| 02 | `02-c4-l2-container` | C4 Level 2 — container + công nghệ + giao thức | `design.md` §2.2 | **Container/Module decomposition** |
-| 03 | `03-c4-l3-component-strategy-lab` | C4 Level 3 — component của Strategy Lab, 4 lớp | `design.md` §2.3 | **Component responsibilities** |
-| 04 | `04-high-level-architecture` | HLA — cấu trúc + 6 luồng dữ liệu trong một hình | `design.md` §3 | **Container/HLA**, **Data Flow** |
-| 05 | `05-candle-path-binance-to-pixel` | Đường đi của một nến từ Binance tới pixel | `design.md` §3.2 | **Data Flow**, **Realtime Flow** |
-| 06 | `06-erd` | ERD — quan hệ giữa 25 bảng | `design.md` §4.3 | **ERD** |
-| 07 | `07-outbox-scenarios` | Outbox: 4 kịch bản (thành công, handler fail, dispatcher chết, duplicate) | `design.md` §5.7.5 | **Data Flow** |
-| 08 | `08-outbox-event-state` | State machine của một event trong outbox | `design.md` §5.7.6 | **Data Flow** |
-| 09 | `09-realtime-reconnect-backfill-flow` | Realtime Flow — disconnect → reconnect → backfill | `design.md` §6.1 | **Realtime/Reconnect Flow** |
-| 10 | `10-strategy-flow` | Strategy Flow — từ nến tới tín hiệu composite | `design.md` §6.2 | **Strategy Flow** |
-| 11 | `11-search-backtest-flow` | Search/Backtest Flow — vòng lặp có kiểm soát, 2 worker song song | `design.md` §6.3 | **Search/Backtest Flow** |
-| 12 | `12-search-run-state` | State machine của `search_runs` (pause/resume/cancel) | `design.md` §6.3 | **Search/Backtest Flow** |
-| 13 | `13-news-sentiment-flow` | News → Sentiment Flow, cô lập hoàn toàn | `design.md` §6.4 | **Data Flow** |
-| 14 | `14-defense-in-depth` | 4 lớp kiểm soát truy cập | `design.md` §7.4 | Access control |
-| 15 | `15-job-queue-scale` | Job queue: 1 worker → N worker → broker, cùng contract | `design.md` §8.3 | **Search/Backtest Flow**, scalability |
-| 16 | `16-experiment-create-transaction` | Tạo experiment: snapshot + job trong một transaction | `specs/experiment.md` §A | **Search/Backtest Flow** |
-| 17 | `17-experiment-worker-execution` | Worker: claim → heartbeat → ghi kết quả, guard bằng `lease_token` | `specs/experiment.md` §D | **Search/Backtest Flow** |
-| 18 | `18-experiment-lease-takeover` | Worker chết → lease hết hạn → take-over | `specs/experiment.md` §E | **Search/Backtest Flow** |
-| 19 | `19-backtest-run-state` | State machine của `backtest_runs` | `specs/experiment.md` §F | **Search/Backtest Flow** |
+24 sơ đồ đánh số thống nhất. Cột "Gốc" cho biết nguồn của file `.mmd`: **doc** = trích
+từ mermaid nhúng trong tài liệu (Markdown là nguồn sự thật); **target** = sơ đồ kiến trúc
+đích của bộ thống nhất (`.mmd` chính là nguồn sự thật cho tới khi mermaid tương ứng được
+nhúng vào tài liệu narrative).
+
+| # | Slug | Nội dung | Gốc | Nguồn trong tài liệu | Góc nhìn kiến trúc bắt buộc |
+| - | ---- | -------- | --- | -------------------- | --------------------------- |
+| 01 | `01-c4-l1-system-context` | C4 Level 1 — actor + hệ thống ngoài | target | `design.md` §2.1 | **System Context** |
+| 02 | `02-c4-l2-container` | C4 Level 2 — Go edge, Python platform, worker, `ai` | target | `design.md` §2.2 | **Container/Module decomposition** |
+| 03 | `03-c4-l3-python-strategy-platform` | C4 Level 3 — Python platform theo ports/adapters | target | `design.md` §2.3 | **Component responsibilities** |
+| 04 | `04-high-level-architecture` | HLA — pipeline toàn hệ thống | target | `design.md` §3 | **Container/HLA**, **Data Flow** |
+| 05 | `05-market-realtime-candle-bbo` | Candle + BBO từ exchange tới UI/Python; WSS reconnect/backfill | target | `design.md` §3.2, §6.1 | **Data Flow**, **Realtime Flow** |
+| 06 | `06-erd` | ERD — quan hệ dữ liệu đích | target | `design.md` §4.3 | **ERD** |
+| 07 | `07-outbox-retry-order` | Outbox: retry, duplicate, ordering | target | `design.md` §5.7.5 | **Data Flow** |
+| 08 | `08-outbox-event-state` | State machine của một event trong outbox | target | `design.md` §5.7.6 | **Data Flow** |
+| 09 | `09-realtime-reconnect-backfill-flow` | Realtime Flow — disconnect → reconnect → backfill | doc | `design.md` §6.1 | **Realtime/Reconnect Flow** |
+| 10 | `10-strategy-flow` | Strategy Flow — từ nến tới tín hiệu composite | doc | `design.md` §6.2 | **Strategy Flow** |
+| 11 | `11-search-backtest-pipeline` | Generator registry → worker → rank; bounded loop | target | `design.md` §6.3 | **Search/Backtest Flow** |
+| 12 | `12-search-run-state` | State machine của `search_runs` (pause/resume/cancel/stop) | target | `design.md` §6.3 | **Search/Backtest Flow** |
+| 13 | `13-news-html-llm-pipeline` | RSS/HTML → extract → LLM tag → sentiment (owner Python platform) | target | `design.md` §6.4 · `specs/news.md` | **Data Flow** |
+| 14 | `14-defense-in-depth` | Security + AI/plugin guardrails (SSRF, sandbox, human approval) | target | `design.md` §7.4 | Access control |
+| 15 | `15-job-queue-scale` | Job queue: 1 worker → N worker → broker, cùng contract | target | `design.md` §8.3 | **Search/Backtest Flow**, scalability |
+| 16 | `16-experiment-create-transaction` | Tạo experiment: snapshot + job trong một transaction | target | `specs/experiment.md` | **Search/Backtest Flow** |
+| 17 | `17-python-worker-execution` | Worker: claim → heartbeat → execute → commit (lease, BBO snapshot) | target | `specs/experiment.md` | **Search/Backtest Flow** |
+| 18 | `18-worker-lease-takeover` | Worker chết → lease hết hạn → take-over | target | `specs/experiment.md` | **Search/Backtest Flow** |
+| 19 | `19-backtest-run-state` | State machine của `backtest_runs` | target | `specs/experiment.md` | **Search/Backtest Flow** |
+| 20 | `20-market-provider-replaceability` | Thêm Binance/OKX qua registry; frontend không đổi | target | `design.md` §11.3 | Modifiability |
+| 21 | `21-ai-strategy-authoring` | Text/URL → StrategySpec an toàn (AI, version, approval) | target | `specs/strategy-authoring.md` | **Strategy Flow** |
+| 22 | `22-strategy-runtime-parity` | Một runtime cho realtime/backtest — không hai nguồn chân lý | target | `design.md` §6.2 | **Strategy Flow** |
+| 23 | `23-bbo-long-short-execution` | Mô phỏng LONG/SHORT bằng BBO (fee, spread, slippage, SL/TP) | target | `specs/backtest.md` | **Search/Backtest Flow** |
+| 24 | `24-trade-result-provenance` | Trade detail và provenance chain đầy đủ | target | `specs/leaderboard.md` | **Search/Backtest Flow** |
+
+Ghi chú parity: 09 và 10 là sơ đồ gốc của tài liệu narrative (mermaid nhúng); target
+tương ứng của chúng nằm ở 05 (candle+BBO realtime) và 22 (runtime parity) — đọc kèm nhau.
+Mapping yêu cầu → sơ đồ → verification gate: `blueprint/traceability.md`.
 
 Bảy góc nhìn bắt buộc ở `requirements.html` (System Context, Container/HLA, ERD, Data Flow, Realtime/Reconnect Flow, Strategy Flow, Search/Backtest Flow) đều có ít nhất một sơ đồ render sẵn — xem cột cuối.
 
@@ -81,12 +95,15 @@ done
 
 ## Nguồn sự thật
 
-**Mermaid trong `design.md` và `specs/*.md` là nguồn sự thật.** File `.mmd` ở đây được **trích ra** từ đó, không phải bản gốc song song. Quy trình khi sửa một sơ đồ:
+Bộ sơ đồ có **hai loại nguồn gốc** (ghi trong `diagrams/index.json`, cột `origin`):
 
-1. Sửa mermaid trong `design.md` (hoặc spec tương ứng).
-2. Trích lại `.mmd`.
-3. Render lại `.svg` + `.png`.
+- **`origin: doc`** (09, 10): mermaid trong `design.md` / `specs/*.md` là nguồn sự thật. File `.mmd` ở đây được **trích ra** từ đó. Quy trình khi sửa: (1) sửa mermaid trong `design.md`, (2) chạy `py scripts/extract_diagrams.py`, (3) render lại `.svg` + `.png`.
+- **`origin: target`** (còn lại): sơ đồ kiến trúc **đích** của bộ thống nhất — mô tả contract, ownership và pipeline cần đạt, không phải bằng chứng code hiện tại. File `.mmd` là nguồn sự thật cho tới khi tài liệu narrative nhúng mermaid tương ứng; script extract **không** ghi đè lên chúng. SVG/PNG render từ `.mmd` tại thời điểm gộp bộ — sau khi sửa `.mmd`, render lại theo lệnh bên dưới.
 
-Làm ngược lại — sửa `.mmd` rồi quên đồng bộ Markdown — sẽ tạo hai phiên bản của cùng một sơ đồ và không có cách nào biết cái nào đúng. `diagrams/index.json` ghi lại `(file nguồn, block index)` của từng slug để việc trích lại xác định được.
+Làm ngược lại — sửa `.mmd` rồi quên đồng bộ Markdown (với sơ đồ doc) — sẽ tạo hai phiên bản của cùng một sơ đồ và không có cách nào biết cái nào đúng. `diagrams/index.json` ghi lại origin của từng slug để việc trích lại xác định được.
+
+Bằng chứng hoàn thành của các sơ đồ target phải đến từ test, benchmark, demo và
+provenance record thật — sơ đồ không tự chứng minh implementation
+(`blueprint/traceability.md`).
 
 Lưu ý: `-b white` là cố ý. Không có nền, SVG nhúng vào PDF hoặc slide nền tối sẽ mất chữ đen.

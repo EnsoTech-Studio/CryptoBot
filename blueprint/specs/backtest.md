@@ -344,3 +344,9 @@ close thay quote âm thầm. DB giữ đủ equity points; API decimate xuống 
 - [ ] AC-12: Worker lease race không cho worker cũ commit sau takeover.
 - [ ] AC-13: Decimal/canonical serialization không dùng float hoặc unordered iteration.
 - [ ] AC-14: Fixture `sol/2026-03-04` structural expectation: 29 strict MA20/MA50 signals, 15 BUY, 14 SELL, 15 settled trades after final-BBO settlement. Đây là acceptance structure, chưa phải PnL verification.
+
+## Target additions (unified blueprint)
+
+- **Frozen BBO snapshot**: BBO replay được lưu và **đóng băng cùng dataset** (cùng `content_hash`/revision) để mô phỏng fill; backtest chỉ đọc immutable Candle/BBO snapshot, không đọc operational cache (`design.md` §12.4 invariant 4; sơ đồ 23).
+- **Fallback provenance**: khi BBO thiếu cho một thời điểm fill/mark, engine được phép fallback 5 bps **chỉ khi** flag provenance ghi rõ fallback đã dùng; kết quả không có cờ này không được vào leaderboard (sơ đồ 24).
+- **LONG/SHORT một net position**: execution state FLAT/LONG/SHORT là contract của `PositionSimulator` (sơ đồ 23).

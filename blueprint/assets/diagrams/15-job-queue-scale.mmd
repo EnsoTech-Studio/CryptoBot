@@ -1,26 +1,39 @@
-flowchart LR
-    subgraph Now["Phase 3 — 1 worker (bắt buộc)"]
-        E1["ExperimentService"] -->|"INSERT backtest_jobs"| Q1[("PostgreSQL<br/>backtest_jobs")]
-        Q1 -->|"FOR UPDATE<br/>SKIP LOCKED"| W1["Worker"]
-        W1 -->|"trades, evaluations"| Q1
+flowchart TB
+    Load["Benchmark workload<br/>same immutable datasets/candidates<br/>1 vs 4 vs N workers"]
+    Submit["Experiment/Search Service<br/>bounded admission · priority · backpressure"]
+
+    subgraph Default["DEFAULT — PostgreSQL durable queue"]
+        direction TB
+        Q[("backtest_jobs<br/>partition/index by status + priority")]
+        W1["Python Worker 1"]
+        W2["Python Worker 2"]
+        WN["Python Worker N"]
+        Q -->|"SKIP LOCKED + lease"| W1
+        Q -->|"SKIP LOCKED + lease"| W2
+        Q -->|"SKIP LOCKED + lease"| WN
     end
 
-    subgraph ScaleOut["Scale out — N worker, CÙNG contract"]
-        E2["ExperimentService<br/><i>0 dòng thay đổi</i>"] -->|"INSERT backtest_jobs"| Q2[("PostgreSQL<br/>backtest_jobs")]
-        Q2 --> WA["Worker 1"]
-        Q2 --> WB["Worker 2"]
-        Q2 --> WC["Worker 3"]
-        Q2 --> WD["Worker 4"]
-        WA --> Q2
-        WB --> Q2
-        WC --> Q2
-        WD --> Q2
-    end
+    Metrics["Scale evidence<br/>queue_depth · oldest_job_age · jobs/s · p95<br/>DB lock/IO · CPU/memory · retry/DLQ<br/>duplicate prevented · result consistency"]
+    Gate{"Measured gate<br/>target speedup đạt?<br/>DB lock/IO chấp nhận được?"}
+    Keep["Giữ PostgreSQL queue<br/>ít hạ tầng, source of truth rõ ràng"]
 
-    subgraph Later["Nếu PostgreSQL thành bottleneck (có số đo)"]
-        E3["ExperimentService<br/><i>vẫn 0 dòng thay đổi</i>"] -->|"JobDispatcher port"| BR{{"Redis Stream /<br/>RabbitMQ"}}
-        BR --> WW["Worker × N"]
-    end
+    Broker{{"BrokerJobQueue adapter<br/>Redis Streams / RabbitMQ"}}
+    BW["Python Worker × N<br/>same JobEnvelope + lease/idempotency contract"]
 
-    Now -.->|"docker compose --scale worker=4"| ScaleOut
-    ScaleOut -.->|"đổi 1 adapter:<br/>PostgresJobDispatcher →<br/>BrokerJobDispatcher"| Later
+    Load --> Submit -->|"JobQueue port"| Q
+    W1 --> Metrics
+    W2 --> Metrics
+    WN --> Metrics
+    Metrics --> Gate
+    Gate -->|"yes"| Keep
+    Gate -. "no — DB bottleneck proven" .-> Broker --> BW
+
+    ScaleNote["100.000 candidates cần:<br/>bounded stop + dedup + quota + backpressure<br/>horizontal workers + partition/retention.<br/>Không claim scale nếu chưa có benchmark artifact."]
+    ScaleNote --- Metrics
+
+    classDef normal fill:#dcfce7,stroke:#16a34a,color:#111
+    classDef measure fill:#dbeafe,stroke:#2563eb,color:#111
+    classDef conditional fill:#e5e7eb,stroke:#6b7280,color:#111,stroke-dasharray:5 5
+    class Q,W1,W2,WN,Submit,Keep normal
+    class Metrics,Load,Gate measure
+    class Broker,BW,ScaleNote conditional

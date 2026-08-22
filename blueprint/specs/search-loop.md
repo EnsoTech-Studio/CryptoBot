@@ -323,3 +323,8 @@ func (DomainGuidedGenerator) Generate(ctx context.Context, space SearchSpace,
 
 Đổi generator = một dòng config `SEARCH_GENERATOR=domain_guided`.
 `BacktestEngine`, `Evaluator`, `RankingService` và UI: **0 dòng** (demo S4).
+
+## Target additions (unified blueprint)
+
+- **GeneratorRegistry**: generator được resolve qua registry theo config/param, không qua branching — cùng cơ chế `StrategyRegistry` (sơ đồ 11). Đổi generator = đổi config resolve, execution pipeline không đổi dòng nào.
+- Candidate sinh ra luôn mang `generator_id` + `generation_meta` vào provenance chain (sơ đồ 24).

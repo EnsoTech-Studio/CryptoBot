@@ -10,7 +10,7 @@ The active implementation contracts are the Go domain contracts in
 - Marketdata: canonical `Candle` is closed and keyed by `(provider,symbol,timeframe,open_time)`; `KlineUpdate` stays provisional; BBO uses optional live `updateID` and fixture `sourceSequence`.
 - Strategy: `StrategyRegistry` resolves `(strategy_id,version)`; `AnalysisContext` has causal candles/indicators and no DB/network; plugin code is trusted compiled Go.
 - Backtest: merge BBO before `CandleClosed`; LIMIT BUY crosses ask, LIMIT SELL crosses bid; one net LONG/SHORT; fixed `10 USDT`, initial `100 USDT`, leverage `1x`.
-- Persistence: Go owns migrations, repositories, `api_reader`/`read.*` projections, dataset snapshots and transactional outbox; Python is sentiment inference only.
+- Persistence: Go owns migrations, repositories, `api_reader`/`read.*` projections, market dataset snapshots and transactional outbox; the Python platform (`research`) owns strategy/backtest/news domain tables; `ai` is sentiment inference only.
 - Fixture: verify the shape/evidence recorded in the `blueprint/` specs against
   `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; never commit guessed PnL
   or result hashes.

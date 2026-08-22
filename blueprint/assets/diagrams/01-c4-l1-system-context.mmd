@@ -1,28 +1,30 @@
 flowchart TB
-    Researcher["👤 Researcher<br/><i>Phân tích, chạy backtest,<br/>đọc leaderboard</i>"]
-    Operator["👤 Operator<br/><i>Theo dõi & điều khiển<br/>search loop</i>"]
-    Developer["👤 Strategy Developer<br/><i>Viết strategy plugin mới</i>"]
+    Researcher["👤 Researcher<br/><i>Xem realtime, tạo experiment,<br/>search, leaderboard, provenance</i>"]
+    Author["👤 Strategy Author<br/><i>Nhập StrategySpec,<br/>mô tả tự nhiên hoặc URL</i>"]
+    Operator["👤 Operator<br/><i>Theo dõi queue, retry, DLQ,<br/>scale và incident</i>"]
+    Developer["👤 Plugin Developer<br/><i>Phát triển trusted Python plugin<br/>qua review + deploy</i>"]
 
-    subgraph SystemBoundary["🔷 Crypto Strategy Lab (hệ thống đang thiết kế)"]
-        System["<b>Crypto Strategy Lab</b><br/>Nền tảng phân tích, kết hợp và<br/>đánh giá chiến lược giao dịch crypto.<br/><br/><i>SIMULATION ONLY —<br/>không đặt lệnh, không giữ API key sàn<br/>(ranh giới nhóm chọn, proposal §4.3)</i>"]
+    subgraph SystemBoundary["🔷 Crypto Strategy Lab — TARGET"]
+        System["<b>Crypto Strategy Lab</b><br/>Nền tảng realtime và thử nghiệm strategy.<br/><br/><i>SIMULATION ONLY — không đặt lệnh thật,<br/>không giữ exchange credential.</i>"]
     end
 
-    Binance["🌐 Binance<br/><i>Sàn giao dịch</i><br/>REST klines + WebSocket stream<br/><b>read-only, public endpoint</b>"]
-    NewsSrc["🌐 News Sources<br/><i>RSS feeds, News API</i><br/><b>allowlist cấu hình server-side</b>"]
-    MLModel["Sentiment Model / ML Runtime<br/><i>Python module ở MVP;<br/>remote GPU adapter khi cần</i>"]
+    Exchanges["🌐 Market Providers<br/><i>Binance · OKX · provider tương lai</i><br/>REST historical/backfill + WSS kline/BBO"]
+    NewsWeb["🌐 News Sources / Article Web<br/><i>RSS + trang HTML từ allowlist</i>"]
+    Models["🤖 AI/ML Runtime<br/><i>LLM StrategySpec/Tagger<br/>+ Sentiment Model</i>"]
 
-    Researcher -->|"HTTPS: xem chart, tạo experiment,<br/>đọc leaderboard/trades/news"| System
-    Operator -->|"HTTPS: pause/resume/cancel run,<br/>đọc metrics & progress"| System
-    Developer -.->|"Thêm file strategy plugin<br/>+ deploy (không qua UI)"| System
+    Researcher -->|"HTTPS/WSS: chart, run, result"| System
+    Author -->|"HTTPS: JSON DSL / text / URL<br/>preview rồi approve"| System
+    Operator -->|"HTTPS: metrics, pause/resume,<br/>retry/dead-letter controls"| System
+    Developer -.->|"Trusted plugin artifact<br/>review + signed deploy"| System
 
-    System -->|"HTTPS REST<br/>lấy nến lịch sử"| Binance
-    System <-->|"WSS<br/>nhận kline realtime"| Binance
-    System -->|"HTTPS<br/>thu thập tin tức"| NewsSrc
-    System -.->|"SentimentAnalyzer port<br/>in-process hoặc adapter remote"| MLModel
+    System <-->|"REST + WSS public market data<br/>read-only"| Exchanges
+    System -->|"HTTPS allowlisted fetch"| NewsWeb
+    System <-->|"Versioned structured inference"| Models
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef system fill:#1168bd,stroke:#0b4884,color:#fff
-    classDef external fill:#999,stroke:#6b6b6b,color:#fff
-    class Researcher,Operator,Developer person
+    classDef external fill:#6b7280,stroke:#374151,color:#fff
+    class Researcher,Author,Operator,Developer person
     class System system
-    class Binance,NewsSrc,MLModel external
+    class Exchanges,NewsWeb,Models external
+

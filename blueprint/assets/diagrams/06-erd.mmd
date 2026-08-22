@@ -1,31 +1,48 @@
 erDiagram
+    USERS ||--|| USER_QUOTAS : limited_by
+    USERS ||--o{ STRATEGY_DRAFTS : authors
     USERS ||--o{ SEARCH_RUNS : owns
     USERS ||--o{ EXPERIMENTS : owns
-    USERS ||--|| USER_QUOTAS : limited_by
 
-    MARKET_PAIRS ||--o{ CANDLES : has
-    MARKET_PAIRS ||--o{ STREAM_CHECKPOINTS : tracked_by
-    MARKET_DATASETS ||--o{ MARKET_DATASET_CANDLES : "immutable snapshot"
-
+    STRATEGY_DRAFTS ||--o| STRATEGY_VERSIONS : approved_as
     STRATEGY_DEFINITIONS ||--o{ STRATEGY_VERSIONS : versions
-    STRATEGY_VERSIONS ||--o{ EXPERIMENTS : "selected by"
+    STRATEGY_VERSIONS ||--o{ STRATEGY_COMPONENTS : contains
+    AI_MODEL_VERSIONS ||--o{ STRATEGY_DRAFTS : generated_with
+
+    MARKET_PROVIDERS ||--o{ MARKET_PAIRS : provides
+    MARKET_PAIRS ||--o{ CANDLES : has
+    MARKET_PAIRS ||--o{ BBO_EVENTS : has
+    MARKET_PAIRS ||--o{ STREAM_CHECKPOINTS : tracked_by
+
+    MARKET_DATASETS ||--o{ MARKET_DATASET_CANDLES : freezes
+    MARKET_DATASETS ||--o{ MARKET_DATASET_BBO : freezes
+    CANDLES ||--o{ MARKET_DATASET_CANDLES : referenced_by
+    BBO_EVENTS ||--o{ MARKET_DATASET_BBO : referenced_by
 
     SEARCH_RUNS ||--o{ SEARCH_CANDIDATES : generates
-    SEARCH_RUNS ||--o{ SEARCH_ACTIONS : "controlled by"
+    SEARCH_RUNS ||--o{ SEARCH_ACTIONS : controlled_by
     SEARCH_CANDIDATES ||--o| EXPERIMENTS : becomes
 
-    MARKET_DATASETS ||--o{ EXPERIMENTS : "runs on"
-    EXPERIMENTS ||--|| BACKTEST_JOBS : "queued as"
+    STRATEGY_VERSIONS ||--o{ EXPERIMENTS : selected_by
+    MARKET_DATASETS ||--o{ EXPERIMENTS : runs_on
+    EXECUTION_POLICIES ||--o{ EXPERIMENTS : executes_with
+    SENTIMENT_SNAPSHOTS ||--o{ EXPERIMENTS : optional_input
+
+    EXPERIMENTS ||--|| BACKTEST_JOBS : queued_as
     EXPERIMENTS ||--|| BACKTEST_RUNS : executes
+    BACKTEST_RUNS ||--o{ SIGNAL_RECORDS : records
     BACKTEST_RUNS ||--o{ TRADES : produces
-    BACKTEST_RUNS ||--o{ RUN_SIGNALS : records
     BACKTEST_RUNS ||--o{ EQUITY_POINTS : records
-    BACKTEST_RUNS ||--|| EVALUATIONS : "measured by"
+    BACKTEST_RUNS ||--|| EVALUATIONS : measured_by
+    EVALUATIONS ||--o{ LEADERBOARD_ENTRIES : ranked_as
+    SCORE_POLICIES ||--o{ LEADERBOARD_ENTRIES : scored_by
 
-    EVALUATIONS ||--o{ LEADERBOARD_ENTRIES : "ranked as"
-    SCORE_POLICIES ||--o{ LEADERBOARD_ENTRIES : "scored by"
-    MARKET_DATASETS ||--o{ LEADERBOARD_ENTRIES : "scoped to"
+    NEWS_SOURCES ||--o{ NEWS_DOCUMENTS : provides
+    NEWS_DOCUMENTS ||--o{ NEWS_TAGS : tagged_as
+    AI_MODEL_VERSIONS ||--o{ NEWS_TAGS : generated_with
+    NEWS_DOCUMENTS ||--o{ SENTIMENT_RESULTS : classified_as
+    AI_MODEL_VERSIONS ||--o{ SENTIMENT_RESULTS : generated_with
+    SENTIMENT_RESULTS ||--o{ SENTIMENT_SNAPSHOTS : frozen_into
 
-    NEWS_SOURCES ||--o{ NEWS_ITEMS : provides
-    NEWS_SOURCES ||--o{ NEWS_COLLECTION_JOBS : "collected by"
-    NEWS_ITEMS ||--o{ SENTIMENT_RESULTS : "classified by"
+    DOMAIN_EVENTS ||--o{ EVENT_CONSUMPTIONS : consumed_by
+    DOMAIN_EVENTS ||--o| DEAD_LETTER_EVENTS : may_become

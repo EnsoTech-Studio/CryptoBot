@@ -1,124 +1,69 @@
-flowchart LR
-    subgraph Ext["NGUỒN NGOÀI"]
-        direction TB
-        BN_R["Binance USDⓈ-M REST<br/>/fapi/v1/klines"]
-        BN_W["Binance combined WSS<br/>/market/stream<br/><i>bookTicker + kline</i>"]
-        NEWS["RSS / News API<br/><i>allowlist</i>"]
+flowchart TB
+    U["Researcher / Author / Operator"]
+
+    subgraph Client["CLIENT — render only"]
+        Web["Next.js Dashboard<br/>charts · authoring · search · results · news"]
     end
 
-    subgraph Client["CLIENT — chỉ render"]
-        direction TB
-        P1["Chart Panel 1<br/>ETHUSDT 5m"]
-        P2["Chart Panel 2<br/>ETHUSDT 15m"]
-        P3["Chart Panel 3<br/>1h"]
-        P4["Chart Panel 4<br/>4h"]
-        LB_UI["Leaderboard<br/>+ Trade Table"]
-        SR_UI["Search Control<br/>+ Progress"]
-        NW_UI["News + Sentiment"]
+    subgraph Go["GO EDGE & MARKET GATEWAY"]
+        Edge["Public REST/WSS<br/>Auth · RBAC · quota · validation"]
+        Market["MarketProviderRegistry<br/>Binance/OKX adapters · reconnect · backfill"]
+        Normalize["Candle/BBO Normalizer<br/>checkpoint · de-dup · fan-out"]
+        Ingress["Signed Internal Event Ingress"]
     end
 
-    subgraph GoAPI["PUBLIC API — Go"]
-        direction TB
-        MW["Middleware chain<br/>requestID → CORS → ratelimit<br/>→ auth → RBAC → validate"]
-        REST["REST handlers"]
-        WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(provider,symbol,timeframe,strategy,config_hash)</i>"]
+    subgraph Python["PYTHON STRATEGY PLATFORM"]
+        Strategy["Strategy API + shared StrategyRuntime<br/>StrategyRegistry · GeneratorRegistry<br/>AI authoring · realtime · search orchestration"]
+        News["News/HTML Extract<br/>LLM tags · sentiment"]
+        Evaluate["Evaluator · Ranking<br/>Provenance queries"]
     end
 
-    subgraph LabBox["STRATEGY SERVICE — Go"]
-        direction TB
-
-        subgraph MD["① Market Data Module"]
-            MDA["BinanceAdapter<br/>normalize → Candle"]
-            MDS["MarketService<br/>reconnect · backfill · de-dup"]
-            OVL["OverlayCalculator<br/><i>indicator + signal</i>"]
-        end
-
-        subgraph SE["② Strategy Engine"]
-            REG["StrategyRegistry"]
-            STR["Strategy plugins"]
-            CMB["SignalCombiner"]
-        end
-
-        subgraph EX["③ Experiment Module"]
-            EXS["ExperimentService<br/><i>tạo snapshot bất biến</i>"]
-            BTE["BacktestEngine"]
-            EVA["Evaluator"]
-        end
-
-        subgraph SS["④ Search Module"]
-            GEN["CandidateGenerator<br/><i>Random | DomainGuided</i>"]
-            SRS["SearchRunService<br/><i>stop condition · pause/resume</i>"]
-        end
-
-        subgraph RK["⑤ Ranking Module"]
-            RNK["RankingService<br/><i>score policy v1</i>"]
-            TOPK["Leaderboard Top-K"]
-        end
-
-        subgraph NS["⑥ News Module"]
-            NWC["NewsCollector<br/><i>chỉ collect</i>"]
-            SNT["SentimentAnalyzer<br/><i>chỉ classify</i>"]
-        end
-
-        BUS{{"In-process Event Dispatcher<br/><i>CandleClosed · StrategyGenerated<br/>BacktestQueued/Started/Completed/Failed<br/>StrategyEvaluated · LeaderboardUpdated<br/>NewsCollected · SentimentAnalyzed</i>"}}
+    subgraph Workers["PYTHON WORKER × N"]
+        Worker["Lease-based Backtest Worker<br/>immutable Candle+BBO · LONG/SHORT<br/>TradeFacts + transactional outbox"]
     end
 
-    subgraph WK["BACKTEST WORKER × N"]
-        W1["Worker<br/>poll → run → publish"]
+    DB[("PostgreSQL — source of truth<br/>market · immutable datasets · strategy versions<br/>jobs/results · news/tags · outbox")]
+    Broker{{"Optional Broker / Redis Stream<br/>chỉ thêm khi benchmark chứng minh cần"}}
+
+    subgraph External["EXTERNAL"]
+        Exchange["Binance / OKX<br/>REST + WSS kline/BBO"]
+        Sources["RSS / allowlisted Article HTML"]
+        Models["LLM + Sentiment Model<br/>local hoặc remote adapter"]
     end
 
-    DB[("PostgreSQL<br/>candles · dataset snapshots<br/>strategy_versions · experiments<br/>backtest_jobs · trades · equity_points<br/>evaluations · leaderboard_entries<br/>news_items · sentiment_results")]
+    U -->|HTTPS| Web
+    Web <-->|"REST JSON + WebSocket"| Edge
+    Exchange <-->|REST/WSS| Market --> Normalize
+    Normalize -->|"market writer"| DB
+    Normalize -->|"normalized market stream"| Strategy
+    Normalize -->|"market delta"| Edge
 
-    BN_W -->|"kline tick"| MDA
-    BN_R -->|"backfill nến thiếu"| MDA
-    MDA --> MDS
-    MDS -->|"closed Candle → bounded ingress → DB writer"| DB
-    MDS -->|"CandleClosed after ingress"| BUS
-    BUS -->|"CandleClosed"| OVL
-    OVL -->|"ChartOverlayUpdated<br/>+ provider + config_hash"| WSHUB
-    MDS -->|"candle delta"| WSHUB
-    WSHUB -->|"chỉ panel khớp<br/>subscription"| P1
-    WSHUB --> P2
-    WSHUB --> P3
-    WSHUB --> P4
+    Edge -->|"signed internal commands"| Strategy
+    Strategy -->|"persisted signal/progress events"| DB
+    Strategy -->|"signed notification"| Ingress --> Edge
 
-    SR_UI -->|"POST /search-runs"| MW --> REST
-    REST --> SRS
-    SRS --> GEN
-    GEN -->|"CandidateStrategy<br/><i>bất biến</i>"| SRS
-    SRS -->|"dedup theo candidate_hash"| EXS
-    P1 -->|"POST /experiments"| MW
-    REST --> EXS
-    EXS -->|"snapshot + INSERT backtest_jobs"| DB
-    EXS --> REG --> STR
-    STR --> CMB
-    DB -->|"FOR UPDATE SKIP LOCKED"| W1
-    W1 -->|"cùng BacktestEngine"| BTE
-    BTE -->|"trades · equity_points"| DB
-    BTE --> EVA
-    EVA -->|"StrategyEvaluated"| BUS
-    BUS --> RNK --> TOPK
-    TOPK -->|"leaderboard_entries"| DB
-    TOPK -->|"LeaderboardUpdated"| WSHUB --> LB_UI
-    SRS -->|"progress snapshot"| WSHUB --> SR_UI
+    Sources --> News
+    News <--> Models
+    Strategy <--> Models
+    News --> DB
+    Strategy -->|"atomic snapshot + job"| DB
+    DB -->|"lease + immutable dataset"| Worker
+    Worker -->|"facts + outbox atomically"| DB
+    DB --> Evaluate --> DB
+    Evaluate -->|"signed leaderboard event"| Ingress
 
-    NEWS --> NWC
-    NWC -->|"Item chuẩn hoá"| DB
-    NWC -->|"NewsCollected"| BUS
-    BUS --> SNT
-    SNT -->|"sentiment + model_version"| DB
-    DB --> NW_UI
-    DB -->|"aggregate theo giờ"| STR
+    Strategy -. "JobQueue/EventStream port" .-> Broker
+    DB -. "optional transport adapter" .-> Broker
 
-    classDef ext fill:#e8e8e8,stroke:#999,color:#000
-    classDef client fill:#dbeafe,stroke:#3b82f6,color:#000
-    classDef go fill:#cffafe,stroke:#06b6d4,color:#000
-    classDef domain fill:#fef3c7,stroke:#f59e0b,color:#000
-    classDef wk fill:#fce7f3,stroke:#ec4899,color:#000
-    classDef db fill:#dcfce7,stroke:#22c55e,color:#000
-    class BN_R,BN_W,NEWS ext
-    class P1,P2,P3,P4,LB_UI,SR_UI,NW_UI client
-    class MW,REST,WSHUB go
-    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS domain
-    class W1 wk
+    classDef external fill:#6b7280,stroke:#374151,color:#fff
+    classDef client fill:#dbeafe,stroke:#2563eb,color:#111
+    classDef go fill:#cffafe,stroke:#0891b2,color:#111
+    classDef py fill:#fef3c7,stroke:#d97706,color:#111
+    classDef worker fill:#fce7f3,stroke:#db2777,color:#111
+    classDef db fill:#dcfce7,stroke:#16a34a,color:#111
+    class Exchange,Sources,Models external
+    class Web client
+    class Edge,Market,Normalize,Ingress go
+    class Strategy,News,Evaluate py
+    class Worker worker
     class DB db

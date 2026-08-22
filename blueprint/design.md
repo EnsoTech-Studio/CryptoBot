@@ -33,12 +33,12 @@ Hệ thống **không** có một style duy nhất. Nó là một **polyglot mul
 | Thành phần                | Style của chính nó                                      | Trách nhiệm                                            |
 | ------------------------- | ------------------------------------------------------- | ------------------------------------------------------- |
 | **Web Dashboard** (Next.js) | **Presentation layer** — client-side rendering + SSR   | Render, không tính toán domain                          |
-| **Strategy Service** (Go) | **Modular Monolith + Hexagonal** (Ports & Adapters)      | Public boundary, auth/RBAC, market normalization + realtime, news orchestration, observability |
-| **Backtest Worker** (Python) | Cùng codebase với Python backend, khác entrypoint        | Consume job queue, chạy `BacktestEngine`                |
-| **Strategy/Backtest Backend** (Python, FastAPI) | **Modular Monolith + Hexagonal** (domain core) | Strategy, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization |
-| **AI Inference** (Python) | Adapter service | Chỉ phân loại sentiment; không sở hữu strategy/backtest |
+| **Go API** (Go edge & market gateway) | **Modular Monolith + Hexagonal** (Ports & Adapters)      | Public edge/API, auth/RBAC/quota, realtime market (chuẩn hoá Candle/BBO, WSS reconnect/backfill, internal stream tới Python), observability |
+| **Backtest Worker** (Python) | Cùng codebase với Python platform, khác entrypoint        | Consume job queue, chạy `BacktestEngine`                |
+| **Python Strategy Platform** (Python, FastAPI — service `research`) | **Modular Monolith + Hexagonal** (domain core) | Strategy runtime, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging, sentiment/AI orchestration |
+| **AI Inference** (Python, service `ai`) | Adapter service | Chỉ phân loại sentiment; không sở hữu strategy/backtest |
 
-Cách gọi đúng: **"Python Strategy/Backtest Backend là Modular Monolith / Hexagonal domain core của chuỗi strategy→backtest→ranking"**, còn **"Go Strategy Service là Modular Monolith / Hexagonal edge của market/news/auth"** — không phải "toàn hệ thống là một modular monolith". Toàn hệ thống là nhiều deployable; mỗi domain core là modular monolith.
+Cách gọi đúng: **"Python Strategy Platform là Modular Monolith / Hexagonal domain core của chuỗi strategy→backtest→ranking + news/sentiment orchestration"**, còn **"Go API là Modular Monolith / Hexagonal edge của realtime market + auth/quota"** — không phải "toàn hệ thống là một modular monolith". Toàn hệ thống là nhiều deployable; mỗi domain core là modular monolith.
 
 Trên nền topology đó có hai quyết định style áp riêng cho phần domain:
 
@@ -49,7 +49,7 @@ Trên nền topology đó có hai quyết định style áp riêng cho phần do
 
 **Vì sao domain core là Modular Monolith, không phải microservice-per-module**
 
-Đây là chỗ dễ bị hiểu nhầm nhất, nên nói thẳng: hệ thống **có** nhiều process, nhưng ranh giới process **không** trùng ranh giới module domain một-một. Domain được tách theo **chuỗi giá trị**: Market Data + News + Auth nằm trong process Go, còn Strategy Engine + Experiment + Search + Ranking nằm trong process Python backend — mỗi nhóm giao tiếp qua port in-process bên trong process của nó, và giữa hai process qua contract nội bộ, **không** phân rã mỗi module thành một service riêng.
+Đây là chỗ dễ bị hiểu nhầm nhất, nên nói thẳng: hệ thống **có** nhiều process, nhưng ranh giới process **không** trùng ranh giới module domain một-một. Domain được tách theo **chuỗi giá trị**: Market Data + Auth/Quota nằm trong process Go, còn Strategy Engine + Experiment + Search + Ranking + News extraction/tagging + Sentiment orchestration nằm trong process Python platform — mỗi nhóm giao tiếp qua port in-process bên trong process của nó, và giữa hai process qua contract nội bộ, **không** phân rã mỗi module thành một service riêng.
 
 - Đề bài nói rõ: *"Không có cộng điểm chỉ vì sử dụng công nghệ phức tạp. Nhóm phải chứng minh: công nghệ đó giải quyết vấn đề kiến trúc nào?"* (§38). Tách 6 module thành 6 service HTTP chỉ thêm service discovery, distributed tracing, eventual consistency — không giải quyết vấn đề nào trong §32.
 - Cả 7 architectural driver của đề bài (§32) đạt được bằng **ranh giới module trong process** + **ports/adapters**, không cần ranh giới network cho từng module.
@@ -78,13 +78,13 @@ Nhưng "event-driven" ở đây **không** có nghĩa "in-process dispatcher là
 
 #### 1.2.1 Ranh giới trách nhiệm
 
-| | **Go Strategy Service** | **Python AI Inference** | **Python Strategy/Backtest Backend (FastAPI)** |
+| | **Go API (edge & market gateway)** | **Python AI Inference (`ai`)** | **Python Strategy Platform (FastAPI, `research`)** |
 | --- | --- | --- | --- |
-| Vai trò | Public edge + market/news orchestration + auth + observability | Internal sentiment inference adapter | Strategy/backtest/evaluation/search/leaderboard domain backend |
-| Ai gọi tới | Browser (internet công khai); worker dùng cùng codebase | **Chỉ** Go Strategy Service (internal network) | Go Strategy Service (nội bộ) cho experiment/search/leaderboard |
-| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, request validation, error mapping, request/correlation ID, WS fan-out; market normalization + realtime candles, news orchestration, quota transaction | Model loading và inference `POSITIVE | NEUTRAL | NEGATIVE` + score/model version | Strategy registry, composite, indicators, backtest engine, evaluation, search, ranking/leaderboard, experiment snapshot + result (trades/equity/overlays) |
-| **Không** được sở hữu | Không tính strategy/backtest/evaluation/ranking math — đó là Python backend | Không trình bày HTTP cho browser, không sở hữu strategy/backtest, experiment, DB writes hay token/session | Không sở hữu realtime market stream, news crawl, sentiment inference, auth/RBAC, quota |
-| Ngôn ngữ được chọn vì | Goroutine + channel cho WebSocket và worker; type-safe deterministic edge | Hệ sinh thái ML cho sentiment | NumPy/pandas + FastAPI prototype nhanh; `float64`; backend riêng `py_backend/` (`specs/python-research.md`) |
+| Vai trò | Public edge + realtime market + auth/quota + observability | Internal sentiment inference adapter | Strategy/backtest/evaluation/search/leaderboard domain platform + news extraction/tagging + sentiment/AI orchestration |
+| Ai gọi tới | Browser (internet công khai) | **Chỉ** Python platform (internal network) | Go API (nội bộ) cho experiment/search/leaderboard/news/sentiment reads |
+| Sở hữu | HTTP/WebSocket transport, auth, session, RBAC, ownership check, rate limit, request validation, error mapping, request/correlation ID, WS fan-out; chuẩn hoá Candle/BBO realtime (WSS reconnect/backfill), internal market stream tới Python, quota transaction | Model loading và inference `POSITIVE | NEUTRAL | NEGATIVE` + score/model version | Strategy registry + runtime, composite, indicators, backtest engine, evaluation, search, ranking/leaderboard, experiment snapshot + result (trades/equity/overlays), news extraction/tagging + sentiment/AI orchestration (gọi `ai` adapter), realtime analysis parity với backtest |
+| **Không** được sở hữu | Không tính strategy/backtest/evaluation/ranking math, không crawl/extract news, không gọi LLM tagging — những đó thuộc Python platform | Không trình bày HTTP cho browser, không sở hữu strategy/backtest, experiment, DB writes hay token/session | Không sở hữu realtime market stream (nhận internal stream chuẩn hoá từ Go), auth/RBAC, quota, edge transport |
+| Ngôn ngữ được chọn vì | Goroutine + channel cho WebSocket và worker; type-safe deterministic edge | Hệ sinh thái ML cho sentiment | NumPy/pandas + FastAPI prototype nhanh; `float64`; codebase `app/` ở repo root (`specs/python-research.md`) |
 
 #### 1.2.2 Vì sao strategy và backtest ở Python (FastAPI backend)
 
@@ -93,7 +93,7 @@ Không phải vì "Python nhanh hơn". Bốn lý do kiến trúc (đảo ngượ
 1. **Cùng dữ liệu, cùng vòng đời.** Indicator/overlay, backtest, evaluation và ranking là **một chuỗi biến đổi trên cùng một dataset snapshot**. Chuỗi này chuyển nguyên khối sang Python backend để mỗi bước không phải serialize hàng chục nghìn nến qua Go↔Python boundary.
 2. **Reproducibility vẫn đòi hỏi một implementation canonical duy nhất.** Indicator dùng cho overlay và backtest cùng nằm trong Python domain core, nên không có hai nguồn chân lý canonical. Go **không** tính strategy/backtest/evaluation/ranking math — mọi con số PnL kiểm chứng đều do Python backend tính (dùng `float64`).
 3. **CPU-bound nên tách theo workload.** Backtest chiếm CPU 2–40 s, nên Python backend chạy worker process riêng, tách khỏi Go API/WS edge. Scale worker không đổi domain code.
-4. **Sentiment vẫn là Go→Python seam riêng.** Crawler Go collect và gọi `ai` inference qua `SentimentAnalyzer` port; sentiment **không** nằm trong strategy/backtest backend này.
+4. **Sentiment là seam Python→`ai` riêng.** News extraction/tagging và sentiment orchestration thuộc Python platform; platform gọi `ai` inference qua `SentimentAnalyzer` port. `ai` chỉ là inference adapter — không crawl, không orchestration. Go **không** tham gia pipeline news/sentiment.
 
 #### 1.2.3 Vì sao browser chỉ nói chuyện với Go
 
@@ -104,7 +104,7 @@ Không phải vì "Python nhanh hơn". Bốn lý do kiến trúc (đảo ngượ
 | Browser biết cấu trúc nội bộ | Đổi phân rã domain thành breaking change với frontend |
 | Fan-out WebSocket ở Python | AI adapter lộ ra public surface không cần thiết |
 
-Vì thế: **Python AI service không publish port ra host trong profile production**. Browser **chỉ** biết Go Strategy Service tồn tại — không biết PostgreSQL, không biết Binance, không biết Python service. Đây là cái làm câu hỏi §40.3 (*"thêm OKX có phải sửa frontend không?"*) có câu trả lời "không".
+Vì thế: **Python AI service không publish port ra host trong profile production**. Browser **chỉ** biết Go API tồn tại — không biết PostgreSQL, không biết Binance, không biết Python service. Đây là cái làm câu hỏi §40.3 (*"thêm OKX có phải sửa frontend không?"*) có câu trả lời "không".
 
 #### 1.2.4 Ownership của database
 
@@ -112,10 +112,10 @@ Ranh giới này được chốt để không có ownership chồng chéo ngầm
 
 | Nhóm bảng | Owner (write + migration) | Bên còn lại |
 | --- | --- | --- |
-| **Domain + Edge**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs`, `domain_events`, `event_consumptions`, `users`, `refresh_tokens`, `user_quotas` | **Go Strategy Service** (+ Worker, cùng codebase) | Python AI chỉ nhận inference input và không có quyền DB. |
-| **Strategy/Backtest/Eval/Ranking**: `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries` | **Python Strategy/Backtest Backend** (`py_backend/`) | Go không INSERT/UPDATE/DELETE trên các bảng này; đọc qua contract nội bộ. |
+| **Domain + Edge**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `domain_events`, `event_consumptions`, `users`, `refresh_tokens`, `user_quotas` | **Go API** (+ Worker Go, cùng codebase) | Python đọc metadata dataset qua contract nội bộ; Python AI không có quyền DB. |
+| **Strategy/Backtest/Eval/Ranking + News**: `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs` | **Python Strategy Platform** (`app/` ở repo root, service `research`) | Go không INSERT/UPDATE/DELETE trên các bảng này; đọc qua contract nội bộ và read views. |
 
-Migration của bảng market/news/auth nằm trong repo Go; migration của bảng strategy/backtest/eval/ranking nằm trong `py_backend/`. Python AI **không** có migration và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
+Migration của bảng market/auth nằm trong repo Go; migration của bảng strategy/backtest/eval/ranking/news nằm trong Python platform (`app/`). Python AI **không** có migration và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
 
 #### 1.2.5 Read projection — CQRS read path của Go
 
@@ -128,13 +128,13 @@ phải ownership chồng chéo mà là một **read path riêng biệt, có tên
 | Tên gọi | **Read projection** — CQRS read path. Go domain writes và reads dùng contract versioned. |
 | Schema được phép đọc | **Chỉ** các view trong schema `read`: `read.candles_v1`, `read.market_datasets_v1`, `read.dataset_candles_v1`, `read.experiment_summary_v1`, `read.trades_v1`, `read.run_signals_v1`, `read.equity_v1`, `read.leaderboard_v1`, `read.news_v1`, `read.search_run_v1`, `read.search_run_quota_v1`. Không đọc bảng gốc. |
 | Quyền DB | **Go API read pool** dùng role `api_reader` có `SELECT` trên schema `read` và **không** có quyền gì trên bảng gốc. **Go domain command/Worker** dùng write role riêng (`domain_writer`); migration runner dùng schema-owner role. Không process nào dùng chung read/write grants; ownership được cưỡng chế bằng `GRANT`, không bằng quy ước. |
-| View là contract | Go Strategy Service sở hữu định nghĩa view. Đổi bảng gốc mà giữ nguyên view → handler không phải sửa. Đổi view = breaking change, phải version (`_v1` → `_v2`, giữ song song một phase). |
+| View là contract | Go API sở hữu định nghĩa view. Đổi bảng gốc mà giữ nguyên view → handler không phải sửa. Đổi view = breaking change, phải version (`_v1` → `_v2`, giữ song song một phase). |
 | Consistency model | Cùng một PostgreSQL nên **không có replication lag**. Nhưng "vừa `202 Accepted` mà `status` vẫn `queued`" là **đúng**, không phải stale — job chưa chạy. UI biết khi nào refetch qua WS event (`BacktestCompleted`, `LeaderboardUpdated`), không poll cho tới khi thấy dữ liệu. |
 | Không được làm gì trong read path | Không JOIN để tính toán domain (score, metric, PnL). Nếu handler cần một con số phái sinh, nó phải đã được Go domain tính và ghi vào cột. Handler chỉ `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`. |
-| Vì sao không route mọi read qua Python | Python chỉ làm sentiment inference. `GET /markets/candles` trả tới 1000 nến và Go đọc projection trực tiếp, không thêm network hop vô ích. |
-| Khi nào gọi Python | Chỉ khi `SentimentAnalyzer` cần model inference. Overlay, provenance resolution và aggregate sentiment là Go domain logic. |
+| Vì sao không route mọi read qua Python | Python platform sở hữu domain strategy/backtest/news nhưng browser không biết nó tồn tại; Go là edge duy nhất. `GET /markets/candles` trả tới 1000 nến và Go đọc projection trực tiếp (market là bảng Go sở hữu), không thêm network hop vô ích. |
+| Khi nào gọi Python | Khi handler cần domain do Python sở hữu: experiment/search/leaderboard facts, news/sentiment aggregate. Overlay, provenance resolution là logic đọc do Go thực hiện trên read views; sentiment inference do Python platform gọi `ai`. |
 
-Quy tắc một dòng để nhớ: **Go sở hữu domain facts và views; Python chỉ trả inference versioned.**
+Quy tắc một dòng để nhớ: **Go sở hữu edge, realtime market facts và views phục vụ browser; Python platform sở hữu domain facts strategy/backtest/news và trả kết quả qua contract nội bộ; `ai` chỉ trả inference versioned.**
 
 Các route public không có view trong danh sách trên (`/markets/pairs`,
 `/markets/status`, `/strategies`, `/markets/chart-overlays`, `/news/aggregate`) là
@@ -433,10 +433,10 @@ INSERT `search_runs` cùng một function call.
 | Thành phần                | Vai trò                                                                                              | Công nghệ                             | Không được sở hữu                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------- |
 | **Web Dashboard**         | 4 chart panel độc lập, strategy picker, search control panel, leaderboard, trade table, news view      | Next.js 16 App Router + React 19 + TypeScript | Logic trading, tính indicator, tính profit/ranking, parse payload Binance |
-| **Go Strategy Service**       | REST + WebSocket boundary, validation, auth/RBAC, request ID, market/realtime/news domain | Go 1.23 | Strategy/backtest/evaluation/ranking math (thuộc Python backend) |
-| **Python Strategy/Backtest Backend** | Strategy, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization | Python 3.12 + FastAPI, `float64` | Realtime market stream, news crawl, sentiment inference, auth/RBAC |
+| **Go API**       | REST + WebSocket boundary, validation, auth/RBAC, request ID, realtime market (Candle/BBO chuẩn hoá, WSS reconnect/backfill, internal stream tới Python) | Go 1.23 | Strategy/backtest/evaluation/ranking math, news extraction/tagging, sentiment orchestration (thuộc Python platform) |
+| **Python Strategy Platform** | Strategy runtime, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging, sentiment/AI orchestration | Python 3.12 + FastAPI, `float64` | Realtime market stream (nhận từ Go), sentiment inference (thuộc `ai`), auth/RBAC |
 | **Backtest Worker**       | Consume `backtest_jobs`, chạy backtest, publish `BacktestCompleted`                                  | **Cùng image Python**, entrypoint khác | Nhận request HTTP từ browser                             |
-| **Sentiment Model**       | Phân loại `POSITIVE/NEUTRAL/NEGATIVE` + score + `model_version`                                      | Module trong Python service (Phase 5 tách nếu cần GPU) | Crawl news, biết về strategy               |
+| **Sentiment Model (`ai`)**       | Phân loại `POSITIVE/NEUTRAL/NEGATIVE` + score + `model_version`                                      | Service Python riêng (adapter) | Crawl news, orchestration, biết về strategy               |
 | **PostgreSQL**            | Nguồn sự thật: candles, strategy versions, experiments, trades, evaluations, leaderboard, news, sentiment, jobs | PostgreSQL 16                | Logic quyết định của strategy                            |
 | **Redis** *(tuỳ chọn, có điều kiện — §12.0)* | Cache overlay đã tính, outbound rate-limit token bucket dùng chung khi có > 1 worker         | Redis 7                               | Nguồn sự thật cho bất kỳ dữ liệu nào                     |
 | **Binance**               | Nguồn market data (REST klines + WebSocket kline stream)                                             | Public API, read-only                 | —                                                        |
@@ -454,7 +454,7 @@ Lưu ý về **Backtest Worker**: đây là *cùng một image Python, cùng m�
 | - | -------- | -------- | ------------- |
 | 1 | `web` image | `web/Dockerfile` (Next.js) | 1 process |
 | 2 | `api` image | `server/Dockerfile` (Go) | 1 process |
-| 3 | `py_backend` image | `py_backend/Dockerfile` (Python) | Strategy/backtest API + worker |
+| 3 | `research` image | `Dockerfile` ở repo root (Python) | Strategy/backtest/news API + worker |
 | 4 | `ai` image | `ai/Dockerfile` (Python) | AI inference service |
 
 **Runtime workloads / processes — 4 loại (5 container ở MVP, 4+N khi scale)**
@@ -463,26 +463,27 @@ Lưu ý về **Backtest Worker**: đây là *cùng một image Python, cùng m�
 | -------- | ----- | ---------- | ------------ | ------------------ |
 | `web` | `web` | `next start` | 1 | 1 |
 | `api` | `api` | `/app/api` | 1 | 1 |
-| `py_backend` | `py_backend` | `uvicorn app.main:app` | 1 | 1 |
-| `worker` | `py_backend` | worker entrypoint | **1** | **N** (`--scale worker=N`) |
+| `research` | `research` | `uvicorn app.main:app` | 1 | 1 |
+| `worker` | `research` | worker entrypoint | **1** | **N** (`--scale worker=N`) |
 | `ai` | `ai` | `uvicorn app.main:app` | 1 | 1 |
 | `postgres` | `postgres:16` | — | 1 | 1 |
 | `redis` *(có điều kiện)* | `redis:7` | — | **0** | 0 hoặc 1, xem §12.1 |
 
-Vì thế cách nói chính xác là: **4 image, 5 loại workload, 6 container ở MVP**. `worker` không phải image riêng — nó dùng lại image Python của `py_backend`. Đây chính là điều làm demo S10 (`--scale worker=4`) không cần build lại gì.
+Vì thế cách nói chính xác là: **4 image, 5 loại workload, 6 container ở MVP**. `worker` không phải image riêng — nó dùng lại image Python của `research`. Đây chính là điều làm demo S10 (`--scale worker=4`) không cần build lại gì.
 
 ### 1.4 Cách các thành phần giao tiếp
 
 | Cặp                          | Giao thức                                            | Chi tiết                                                                                                                            |
 | ---------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Browser ↔ Go API             | HTTPS REST + **WebSocket** (`/api/v1/markets/stream`) | JSON. WebSocket vì cần client→server message (`subscribe`/`unsubscribe` từng panel), SSE một chiều không đủ. Xem ADR-001.            |
-| Go Service ↔ PostgreSQL      | TCP, connection pool                                | Owner của domain: write + migration, chạy **trước** khi readiness báo healthy. Parameterized query. |
-| Go Service ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
-| Go Service ↔ Binance WS      | WSS, persistent                                      | Binance combined stream `/market/stream?streams=...`; lowercase logical streams, one internal reader + serialized writer, reconnect capped exponential backoff + REST backfill (§6.1). `github.com/coder/websocket` chỉ ở infrastructure. |
-| Go Service ↔ Worker          | **Qua PostgreSQL** (`backtest_jobs` + `FOR UPDATE SKIP LOCKED`) | Không gọi trực tiếp. Job record là contract. Đổi sang broker = đổi adapter.                                                |
-| Go Service → Python AI       | HTTP/1.1 JSON, internal network                     | Chỉ gọi `SentimentAnalyzer` inference; propagate correlation ID and deadline. |
+| Go API ↔ PostgreSQL      | TCP, connection pool                                | Owner của domain: write + migration, chạy **trước** khi readiness báo healthy. Parameterized query. |
+| Go API ↔ Binance REST    | HTTPS                                                | Timeout 10 s, retry 3 lần backoff cho lỗi tạm thời, outbound token bucket theo weight.                                              |
+| Go API ↔ Binance WS      | WSS, persistent                                      | Binance combined stream `/market/stream?streams=...`; lowercase logical streams, one internal reader + serialized writer, reconnect capped exponential backoff + REST backfill (§6.1). `github.com/coder/websocket` chỉ ở infrastructure. |
+| Go API ↔ Worker          | **Qua PostgreSQL** (`backtest_jobs` + `FOR UPDATE SKIP LOCKED`) | Không gọi trực tiếp. Job record là contract. Đổi sang broker = đổi adapter.                                                |
+| Go API ↔ research platform | HTTP/1.1 JSON, internal network (`:8001`)            | Go gọi internal contract cho experiment/search/leaderboard/news facts; Python đẩy event qua `POST /internal/events` (ADR-016, §5.8). Correlation ID propagate hai chiều. |
+| Python platform → AI (`ai` service) | HTTP/1.1 JSON, internal network                     | Chỉ gọi `SentimentAnalyzer` inference (sentiment orchestration thuộc Python platform); propagate correlation ID and deadline. |
 | Worker → Evaluator / Ranking | **Transactional outbox** trên `domain_events` (§5.7) | **Cross-process**: worker và consumer là process khác nhau nên không dùng in-process dispatcher. Publisher ghi state + event cùng transaction; dispatcher claim/retry; consumer idempotent theo `event_id`. |
-| Module ↔ Module **trong cùng process** | **In-process event dispatcher** + port interface | Chỉ dùng khi publisher và consumer chắc chắn cùng process (ví dụ `CandleClosed` → `OverlayCalculator` trong Go Service). `MarketService` không import `LeaderboardRepository`. Event payload có `schema_version` giữ nguyên khi tách process. |
+| Module ↔ Module **trong cùng process** | **In-process event dispatcher** + port interface | Chỉ dùng khi publisher và consumer chắc chắn cùng process (ví dụ `CandleClosed` → `OverlayCalculator` trong Go API). `MarketService` không import `LeaderboardRepository`. Event payload có `schema_version` giữ nguyên khi tách process. |
 
 **Ranh giới quan trọng**: browser **chỉ** nói chuyện với Go API. Nó không biết PostgreSQL tồn tại, không biết Binance tồn tại, không biết Python service tồn tại. Đây là cái làm câu hỏi kiến trúc §40.3 ("thêm OKX có phải sửa frontend không?") có câu trả lời "không".
 
@@ -492,7 +493,7 @@ Vì thế cách nói chính xác là: **4 image, 5 loại workload, 6 container 
 | -------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Binance WebSocket**      | Không có nến mới                            | Chart hiển thị badge `STALE` + `last_update`. Nến lịch sử vẫn render từ DB. Adapter reconnect backoff; sau khi nối lại **backfill REST** khoảng thiếu, de-dup theo unique key → 0 nến mất. |
 | **Binance REST**           | Không load được lịch sử mới                 | Request bị ảnh hưởng trả `502` với `error.code = market_provider_unavailable`. Nến đã cache trong PostgreSQL vẫn phục vụ. Backtest trên dataset đã có **vẫn chạy**. |
-| **Go Strategy Service**    | Không phục vụ domain API hoặc overlay | `/health` của Go vẫn `200` (liveness ≠ readiness); worker tiếp tục xử lý job đã claim. |
+| **Go API**    | Không phục vụ domain API hoặc overlay | `/health` của Go vẫn `200` (liveness ≠ readiness); worker tiếp tục xử lý job đã claim. |
 | **Backtest Worker (tất cả)** | Job không được xử lý                      | Job giữ trạng thái `queued`, **không mất**. UI hiển thị `queued: N, running: 0` + cảnh báo "no worker available". Khi worker lên, tiếp tục từ chỗ dừng.        |
 | **PostgreSQL**             | Không đọc/ghi được gì                       | Readiness fail → API `503`. **Không** trả kết quả partial như completed. Job đang chạy fail và **không** commit evaluation nửa vời.                            |
 | **News Provider**          | Không thu được tin mới                      | Job news đó fail, ghi `failure_reason`, retry theo schedule. Chart, backtest technical, leaderboard **không bị ảnh hưởng**. Trang News hiển thị dữ liệu cũ + `last_collected_at`. |
@@ -541,7 +542,7 @@ flowchart TB
 
 **Đọc gì từ Level 1**
 
-- Có **2 network dependency ở MVP** (sàn giao dịch và nguồn tin) cùng một **ML integration seam**. Model hiện chạy trong Python AI process; node ML ở context diagram biểu diễn khả năng thay bằng runtime/GPU endpoint bên ngoài mà không đổi Go `NewsCollector`, `SentimentAnalyzer` port hay strategy contract. Binance/news đều **một chiều đọc**.
+- Có **2 network dependency ở MVP** (sàn giao dịch và nguồn tin) cùng một **ML integration seam**. Model hiện chạy trong service `ai`; node ML ở context diagram biểu diễn khả năng thay bằng runtime/GPU endpoint bên ngoài mà không đổi `NewsCollector`, `SentimentAnalyzer` port (thuộc Python platform) hay strategy contract. Binance/news đều **một chiều đọc**.
 - Không có mũi tên nào từ hệ thống đi ra để **ghi** vào Binance. Đây là biểu diễn của ranh giới simulation-only — một **product decision của nhóm** (`proposal.md` §4.3), không phải yêu cầu trích từ đề bài.
 - `Strategy Developer` nối bằng đường nét đứt và **không đi qua UI**: strategy được thêm bằng code + deploy, không bằng form. Đây là chủ ý — cho phép upload code strategy qua UI là một lỗ RCE.
 
@@ -558,9 +559,9 @@ flowchart TB
 
         API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
 
-        Lab["<b>Strategy Service</b><br/>[Container: Go 1.23]<br/><br/>Market normalization + realtime candles,<br/>news orchestration, auth/RBAC, observability."]
+        Lab["<b>Go API — edge & market gateway</b><br/>[Container: Go 1.23]<br/><br/>Market normalization + realtime candles/BBO,<br/>auth/RBAC, quota, observability."]
 
-        Py["<b>Strategy/Backtest Backend</b><br/>[Container: Python FastAPI, float64]<br/><br/>Strategy registry, composite, indicator,<br/>backtest, evaluation, search, ranking/leaderboard,<br/>visualization-of-results."]
+        Py["<b>Python Strategy Platform</b><br/>[Container: Python FastAPI, float64]<br/><br/>Strategy registry + runtime, composite, indicator,<br/>backtest, evaluation, search, ranking/leaderboard,<br/>visualization-of-results, news extraction/tagging,<br/>sentiment/AI orchestration (gọi `ai`)."]
 
         Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
@@ -603,9 +604,9 @@ flowchart TB
 2. **API và Worker không nói chuyện trực tiếp.** Chúng giao tiếp qua bảng `backtest_jobs`. Nghĩa là: worker chết giữa job → job quay về `queued` sau lease timeout; thêm worker → chỉ cần `docker compose up --scale worker=4`.
 3. **Redis vẽ nét đứt vì nó là tuỳ chọn, không phải "chưa tới phase".** Nó không tồn tại ở MVP và có thể **không bao giờ** được thêm — điều kiện thêm nằm ở §12.0 và phải đo mới biết. Đưa vào diagram để thấy chỗ nó *sẽ* nằm nếu cần, không phải để trông cho "đủ enterprise". Ngược lại, `Worker` vẽ nét liền: nó là workload bắt buộc từ Phase 3 (§1.3.1, §12.0).
 
-### 2.3 Level 3 — Component (Go Strategy Service)
+### 2.3 Level 3 — Component
 
-Level 3 chỉ vẽ cho container quan trọng nhất — Go Strategy Service — vì đây là nơi chứa toàn bộ architectural driver của đề bài.
+Bản render canonical của component view theo ownership thống nhất (§1.2) là **`03-c4-l3-python-strategy-platform`** — Python Strategy Platform theo ports/adapters, nơi chứa chuỗi driver strategy→backtest→ranking. Sơ đồ nhúng dưới đây là component view của **Go API** (edge & market gateway); hai view dùng cùng quy tắc phụ thuộc Application → Domain → Port → Infrastructure.
 
 ```mermaid
 flowchart TB
@@ -915,7 +916,7 @@ sequenceDiagram
 MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,open_time) DO UPDATE
     Note over DB: candles là operational cache<br/>backtest đọc immutable dataset snapshot
     MS->>MS: cập nhật last_closed_at (dùng cho backfill)
-    MS->>EV: publish CandleClosed (in-process, Go service)
+    MS->>EV: publish CandleClosed (in-process, Go API)
     EV->>OC: CandleClosed
     OC->>OC: tính overlay cho các config_hash đang được subscribe
     OC->>HUB: ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
@@ -2131,10 +2132,10 @@ Quy tắc **không thương lượng** ở boundary:
 | Event                   | Publisher            | Consumer                          | Delivery | Payload chính                                                    |
 | ----------------------- | -------------------- | --------------------------------- | -------- | ---------------------------------------------------------------- |
 | `KlineUpdated`          | BinanceAdapter       | WS Hub (Go)                       | In-process                              | provider, symbol, timeframe, `ChartKline`, final |
-| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | In-process (Go Service)                 | provider, symbol, timeframe, close_time, closed OHLCV |
+| `CandleClosed`          | MarketService        | OverlayCalculator, CandleStore    | In-process (Go API)                 | provider, symbol, timeframe, close_time, closed OHLCV |
 | `ChartOverlayUpdated`   | OverlayCalculator    | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, strategy@ver, `config_hash`, delta series |
 | `StreamStale`           | MarketService        | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | provider, symbol, timeframe, last_closed_at, reconnect_count |
-| `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | In-process (Go Service)                 | search_run_id, candidate_hash, definition, generation_meta |
+| `StrategyGenerated`     | CandidateGenerator   | SearchRunService                  | In-process (Go API)                 | search_run_id, candidate_hash, definition, generation_meta |
 | `BacktestQueued`        | ExperimentService    | metrics, WS Hub                   | **Outbox** → metrics; HTTP → WS Hub     | experiment_id, job_id, priority |
 | `BacktestStarted`       | Worker               | metrics, WS Hub                   | **Outbox** (worker → dispatcher)        | experiment_id, worker_id, candle_count |
 | `BacktestCompleted`     | Worker               | Evaluator                         | **Outbox** (worker → dispatcher)        | backtest_run_id, settled_trade_count, open_trade_count, duration_ms |
@@ -2143,8 +2144,8 @@ Quy tắc **không thương lượng** ở boundary:
 | `LeaderboardUpdated`    | RankingService       | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | entry_id, rank, score, dataset_version |
 | `SearchProgressUpdated` | SearchRunService     | WS Hub (Go)                       | **Cross-proc**: HTTP `/internal/events` | tested, queued, failed, best_score, current_candidate, elapsed |
 | `SearchRunFinished`     | SearchRunService     | WS Hub (Go), metrics              | **Cross-proc**: HTTP `/internal/events` | search_run_id, stop_reason, totals |
-| `NewsCollected`         | NewsCollector        | SentimentAnalyzer                 | **In-proc** (`lab`)                     | news_item_id, source_key, title_hash |
-| `SentimentAnalyzed`     | SentimentAnalyzer    | (chỉ persist)                     | **In-proc** (`lab`)                     | news_item_id, label, score, model_version |
+| `NewsCollected`         | NewsCollector (Python platform) | SentimentAnalyzer (Python platform) | **In-proc** (Python platform)           | news_item_id, source_key, title_hash |
+| `SentimentAnalyzed`     | SentimentAnalyzer (Python platform) | (chỉ persist)                     | **In-proc** (Python platform)           | news_item_id, label, score, model_version |
 
 Bảng trên là **domain/outbox vocabulary**, không phải wire schema của browser.
 Public normalized WS DTOs dùng một lớp mapping duy nhất:
@@ -3521,12 +3522,12 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Vì sao Redis không bao giờ là nguồn sự thật**: khác với hệ thống đăng ký chỗ ngồi (nơi Redis `DECR` là cơ chế chống race), ở đây không có counter nào cần atomic cross-process. Mọi thứ cần tính đúng đều là dữ liệu bất biến trong PostgreSQL. Redis chỉ cache thứ tính lại được.
 - **Đánh đổi**: khi scale ngang API, rate limit per-instance sẽ cho phép tổng thông lượng cao hơn ngưỡng cấu hình (N instance × ngưỡng). Chấp nhận khi chạy 1 instance API; nếu scale ngang thì chuyển sang Redis + Lua (điều kiện ở §12.0).
 
-### ADR-011: Python FastAPI backend sở hữu Strategy/Backtest; Go giữ market/news/sentiment/auth
+### ADR-011: Python Strategy Platform sở hữu Strategy/Backtest + News/Sentiment orchestration; Go giữ realtime market/edge/auth/quota
 
-- **Quyết định**: strategy, backtest, evaluation, search, ranking/leaderboard và visualization-of-results chuyển sang một **Python FastAPI backend riêng** (`py_backend/`), tách khỏi Go backend. Go giữ HTTP/WebSocket edge, market normalization + realtime candles, news orchestration, sentiment (qua `ai`), auth, RBAC, rate limit, observability. Ranh giới và ownership chi tiết ở §1.2. Đây là quyết định **[PD]** — xem `proposal.md` §4.4.
-- **Vì sao Python cho strategy/backtest**: prototype/backtest nhanh trên dataset snapshot bằng NumPy/pandas; dùng `float64` (không `Decimal`). Chuỗi strategy→backtest→evaluation→ranking nằm trong một process để tránh serialize nến qua boundary.
-- **Vì sao Go vẫn giữ market/news/sentiment/auth**: Goroutine + channel cho WebSocket/worker; edge hardening, RBAC và observability ở Go.
-- **Đánh đổi**: một network hop Go→Python cho experiment/search/leaderboard. Giảm nhẹ bằng contract test ở boundary này chạy trong CI.
+- **Quyết định**: strategy, backtest, evaluation, search, ranking/leaderboard, visualization-of-results, news extraction/tagging và sentiment/AI orchestration thuộc một **Python FastAPI platform riêng** (service `research`, codebase `app/` ở repo root), tách khỏi Go backend. Go giữ HTTP/WebSocket edge, chuẩn hoá realtime Candle/BBO (WSS reconnect/backfill) và internal market stream tới Python, auth/RBAC, quota, rate limit, observability — Go **không** giữ news/sentiment. Ranh giới và ownership chi tiết ở §1.2. Đây là quyết định **[PD]** — xem `proposal.md` §4.4.
+- **Vì sao Python cho strategy/backtest/news**: prototype/backtest nhanh trên dataset snapshot bằng NumPy/pandas; dùng `float64` (không `Decimal`). Chuỗi strategy→backtest→evaluation→ranking và pipeline news→tag→sentiment nằm trong một process để tránh serialize nến qua boundary.
+- **Vì sao Go vẫn giữ realtime market/edge/auth**: Goroutine + channel cho WebSocket; edge hardening, RBAC và observability ở Go. `ai` là inference adapter thuần, gọi bởi Python platform.
+- **Đánh đổi**: một network hop Go↔Python cho experiment/search/leaderboard/news. Giảm nhẹ bằng contract test ở boundary này chạy trong CI.
 - **Xem thêm**: ADR-015 giải thích vì sao topology này **không** phải microservice-per-module và cách gọi tên đúng từng lớp.
 
 ### ADR-012: Leaderboard append-only tham chiếu evaluation
@@ -3551,12 +3552,12 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 ### ADR-015: Polyglot multi-process topology, không phải một monolith duy nhất và cũng không microservice-per-module
 
-- **Bối cảnh**: hệ thống có 3 code artifact và 4 loại runtime workload (§1.3.1). Cách gọi "Layered Modular Monolith" cho *toàn hệ thống* là sai vì có nhiều deployable; nhưng gọi nó là "microservices" cũng sai vì 6 module domain nằm cùng một process.
-- **Quyết định**: gọi đúng từng lớp — **Next.js là presentation layer**, **Go Strategy Service là Modular Monolith / Hexagonal domain core và public boundary**, **Worker là workload thứ hai của cùng Go codebase**, **Python AI là inference adapter**.
-- **Vì sao ranh giới process không trùng ranh giới module domain**: Go/Python là ranh giới **kỹ thuật** — domain execution tách khỏi ML inference. Nếu ranh giới process trùng ranh giới domain thì Market Data, Strategy, Experiment, Search, Ranking, News phải là 6 service — và §32 không có driver nào đòi hỏi điều đó.
+- **Bối cảnh**: hệ thống có **4 image** — `web` (Next.js), `api` (Go edge & market gateway), `research` (Python platform: strategy/backtest/news, API + worker cùng image), `ai` (inference adapter) — và các loại runtime workload tương ứng (§1.3.1). Cách gọi "Layered Modular Monolith" cho *toàn hệ thống* là sai vì có nhiều deployable; nhưng gọi nó là "microservices" cũng sai vì các module domain nằm cùng process theo chuỗi giá trị.
+- **Quyết định**: gọi đúng từng lớp — **Next.js là presentation layer**, **Go API (`api`) là Modular Monolith / Hexagonal edge: public boundary + realtime market gateway + auth/quota**, **Python platform (`research`) là Modular Monolith / Hexagonal domain core của strategy/backtest/search/ranking/news**, **Worker là workload thứ hai của cùng image `research`**, **`ai` là inference adapter**.
+- **Vì sao ranh giới process không trùng ranh giới module domain**: Go/Python là ranh giới **kỹ thuật** — domain execution (Python platform) tách khỏi edge/realtime market (Go) và inference (`ai`). Nếu ranh giới process trùng ranh giới domain thì Market Data, Strategy, Experiment, Search, Ranking, News phải là 6 service — và §32 không có driver nào đòi hỏi điều đó.
 - **Vì sao không microservice-per-module**: xem §1.1. Ngắn gọn: thêm service discovery + distributed tracing + eventual consistency giữa 6 module mà không giải quyết driver nào; đề bài §38 nói rõ không cộng điểm cho việc đó.
 - **Vì sao không gộp tất cả thành 1 process**: worker là process riêng để backtest 40 s không làm đói WebSocket; AI inference cũng giữ internal-only surface.
-- **Đánh đổi**: một network hop nội bộ Go→Python chỉ cho sentiment. Giảm nhẹ: contract test ở boundary này chạy trong CI.
+- **Đánh đổi**: một network hop nội bộ Go↔Python cho experiment/search/leaderboard/news và Python→`ai` cho sentiment inference. Giảm nhẹ: contract test ở các boundary này chạy trong CI.
 
 ### ADR-016: `POST /internal/events` là protocol duy nhất cho Python → Go, không WebSocket nội bộ
 
@@ -3784,7 +3785,7 @@ Nói cách khác: **Worker không phải "tính năng Phase 6", và Redis không
 
 ### 12.1 Bảy phase
 
-Điểm khởi đầu thực tế: repo hiện có `web (Next.js) → api (Go) → ai (FastAPI)` với một endpoint `POST /api/v1/ai/predict` proxy tới một stub trả `{label:"neutral", score:0.5, model:"stub-v0"}`. **Chưa có** database, chưa có WebSocket, chưa có bất kỳ code domain nào (candle, indicator, strategy, backtest, news). FastAPI chỉ là implementation hiện tại của AI sentiment adapter; mọi domain contract và migration mới thuộc Go. Roadmap bắt đầu từ đúng chỗ đó.
+Điểm khởi đầu thực tế: repo hiện có `web (Next.js) → api (Go) → ai (FastAPI)` với một endpoint `POST /api/v1/ai/predict` proxy tới một stub trả `{label:"neutral", score:0.5, model:"stub-v0"}`, cùng service `research` (Python platform, :8001) ở dạng skeleton toàn stub. **Chưa có** database, chưa có WebSocket, chưa có code domain nào chạy được (candle, indicator, strategy, backtest, news). FastAPI `ai` chỉ là AI sentiment adapter; domain strategy/backtest/news theo ownership đích (§1.2) thuộc Python platform `research`; domain realtime market/auth thuộc Go. Roadmap bắt đầu từ đúng chỗ đó.
 
 | Phase | Kết quả                                                                                            | Bằng chứng hoàn thành                                                            |
 | ----- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -3862,6 +3863,39 @@ Bước 16–18 là phần quan trọng nhất của demo. Bước 1–15 chứn
 | §44 Anti-pattern (5 cái)                      | **§9 (đầy đủ + test kiểm chứng)**                          | CI test               |
 | §45 Deliverables                              | §13 (cấu trúc repo), `README.md`                           | —                     |
 | §46 Demo scenario                             | §12.2                                                      | —                     |
+
+### 12.4 Target requirements — mười gap phải đóng và bất biến xuyên sơ đồ
+
+Bộ sơ đồ thống nhất ở `assets/diagrams/` (24 hình) mô tả **kiến trúc đích**; các gap
+dưới đây là yêu cầu đích mà runtime hiện tại **chưa** đáp ứng đầy đủ. Sơ đồ chỉ là
+design evidence — bằng chứng hoàn thành phải đến từ test, benchmark, demo và
+provenance record thật (cột "verification gate" ở `traceability.md`).
+
+**Mười gap phải đóng**
+
+1. Strategy mới đi qua Registry/`StrategySpec`, không thêm `switch`/`if` trong core (§8.1, ADR-002).
+2. Text hoặc URL được AI chuyển thành declarative `StrategySpec` có validation, preview và human approval; **không** chạy code LLM sinh trực tiếp (`specs/strategy-authoring.md`).
+3. Search algorithm được resolve qua `GeneratorRegistry`/`CandidateGenerator` port (§11.2).
+4. Market provider được resolve qua `MarketProviderRegistry` với DTO Candle/BBO chuẩn hoá (§11.3).
+5. Realtime dùng exchange WSS với reconnect/backoff, checkpoint và REST backfill (§6.1, sơ đồ 05/20).
+6. Execution state hỗ trợ FLAT/LONG/SHORT (sơ đồ 23).
+7. `TradeFact` ghi đủ pair, thời gian, side, notional, giá, SL/TP, fee, spread, slippage, gross/net PnL (sơ đồ 24).
+8. BBO được lưu và **đóng băng cùng dataset** để mô phỏng fill; fallback 5 bps phải được đánh dấu trong provenance nếu BBO thiếu (`specs/backtest.md`).
+9. News hỗ trợ RSS và article HTML; LLM tagging có model/prompt version và lưu DB theo content-hash cache (`specs/news.md`).
+10. Queue có lease, retry, dedup, ordering, dead-letter; leaderboard truy tới immutable strategy/dataset/execution/model versions và có benchmark scale (§8.3, `specs/observability.md`).
+
+**Bất biến xuyên sơ đồ (cross-diagram invariants)**
+
+1. Browser chỉ giao tiếp với Go API; Python không mở public browser API.
+2. Go không thực thi strategy; `StrategyRuntime` (Python platform) là nguồn semantics duy nhất.
+3. Realtime và backtest resolve cùng exact `StrategySpec`/version/`code_fingerprint`.
+4. Backtest chỉ đọc immutable Candle/BBO snapshot, không đọc operational cache.
+5. Mọi fill BUY dùng ask, SELL dùng bid; candle fallback phải có cờ provenance.
+6. Candidate, experiment snapshot, job và outbox event được tạo atomically.
+7. Job/event delivery là at-least-once; logical side effect phải idempotent.
+8. Event ordering chỉ được hứa theo aggregate sequence, không hứa global order.
+9. LLM output không phải executable code; chỉ declarative DSL đã validate/approve.
+10. Target scale chỉ được công bố khi benchmark/metric chứng minh.
 
 ---
 
@@ -4061,6 +4095,18 @@ CryptoBot/
 │   ├── requirements.txt
 │   └── requirements-dev.txt
 │
+├── app/                          # Python 3.12 — STRATEGY PLATFORM (service `research`)
+│   ├── main.py                   # FastAPI internal API (:8001)
+│   ├── worker.py                 # worker entrypoint (cùng image)
+│   ├── domain/                   # strategy · backtest · evaluation · search · ranking · news · sentiment (skeleton)
+│   ├── ports/                    # persistence · job · search · backtest
+│   ├── services/                 # backtest_engine · evaluator · ranking (stub)
+│   ├── infrastructure/postgres/
+│   └── tests/
+│
+├── Dockerfile                    # image `research` (app/ + requirements*.txt ở root)
+├── pyproject.toml                # cryptobot-research
+│
 └── scripts/
     ├── demo/                     # script cho 18 bước ở §12.2
     ├── loadtest/                 # k6: bounded input, rate limit, WS fan-out
@@ -4071,7 +4117,7 @@ CryptoBot/
 
 **1. `domain/` không import `infrastructure/`.** Đây là quy tắc quan trọng nhất và là quy tắc duy nhất được kiểm tra bằng test tự động (`server/tests/architecture/module_boundaries_test.go`). Mọi ranh giới khác có thể tranh luận; ranh giới này thì không.
 
-**2. `strategy/plugins` tự đăng ký.** Mỗi module trong `plugins` tự đăng ký qua `register_all` (Python `py_backend/`, mirror `server/internal/domain/strategy/plugins`). Thêm `MACDStrategy` là một file mới, không sửa registry hay danh sách trung tâm.
+**2. `strategy/plugins` tự đăng ký.** Mỗi module trong `plugins` tự đăng ký qua `register_all` (Python `app/`, mirror `server/internal/domain/strategy/plugins`). Thêm `MACDStrategy` là một file mới, không sửa registry hay danh sách trung tâm.
 
 **3. Worker nằm cùng codebase Python với backend.** Không phải một service hay repo riêng. Cùng image, cùng dependency, cùng `BacktestEngine`. Đây là điều làm §11.4 (scale 100 → 100.000) thành một thay đổi deployment thay vì một dự án.
 
@@ -4086,7 +4132,8 @@ migration là công việc deferred, không phải hành vi target đã resolved
 | `withCORS` trong legacy `server/internal/httpapi/handler.go` **echo lại Origin** của request | Mọi website gọi được API. Thành lỗ CSRF ngay khi thêm session cookie | Deferred: target migration dùng allowlist tường minh từ `CORS_ALLOWED_ORIGINS`, so sánh chính xác |
 | `docker-compose.yml` publish `${AI_PORT:-8000}:8000` ra host                     | Python service (không có auth) truy cập được từ ngoài            | Scaffold compatibility cho dev; production hardening deferred, `docker-compose.prod.yml` bỏ mapping này |
 
-Scaffold vẫn dùng `CORS_ORIGIN`; đây là tên cấu hình compatibility hiện tại.
-Target dùng `CORS_ALLOWED_ORIGINS` sau khi transport migration hoàn tất.
+Scaffold đọc `CORS_ALLOWED_ORIGINS` (allowlist, comma-separated); biến legacy
+chỉ còn là fallback trong `config.go` và không được set bởi compose/`.env`.
+Target so sánh chính xác từng origin và bỏ hẳn fallback sau transport migration.
 
 Ngoài ra `NEXT_PUBLIC_API_URL` hiện được truyền như build ARG nên bị bake vào client bundle — đổi giá trị lúc runtime không có tác dụng lên browser. Nếu cần cấu hình theo môi trường mà không rebuild, phải chuyển sang runtime config (ví dụ một endpoint `/config` hoặc inject qua `window.__ENV__`). Không phải blocker cho MVP, nhưng cần biết trước khi ai đó mất một buổi debug vì nó.

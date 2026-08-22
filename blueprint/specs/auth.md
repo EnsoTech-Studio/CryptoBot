@@ -214,14 +214,15 @@ Mọi hành động vượt ownership của `OPERATOR`/`ADMIN` để lại vết
 ### F. CORS allowlist, CSRF và hai lỗ hổng trong scaffold hiện tại
 
 Phần này là target contract cho endpoint migration. Trong skeleton phase, legacy
-HTTP code và `CORS_ORIGIN` vẫn được giữ nguyên để không mở rộng scope runtime;
-verification document ghi rõ đây là migration exception, không phải trạng thái
-đã resolved.
+HTTP code vẫn được giữ nguyên để không mở rộng scope runtime; cấu hình đọc biến
+`CORS_ALLOWED_ORIGINS` (comma-separated) với một biến legacy làm fallback trong
+`config.go`; verification document ghi rõ echo-Origin là migration exception,
+không phải trạng thái đã resolved.
 
 Code hiện tại (`server/internal/httpapi/handler.go`, dòng ~100) đặt thẳng giá trị cấu hình vào header và **phản chiếu Origin**:
 
 ```go
-// TRƯỚC — sai: mọi origin đều được chấp nhận nếu CORS_ORIGIN được set lỏng,
+// TRƯỚC — sai: mọi origin đều được chấp nhận nếu cấu hình được set lỏng,
 // và không có bước đối chiếu Origin của request với danh sách cho phép.
 func withCORS(origin string, next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

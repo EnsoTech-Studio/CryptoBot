@@ -323,3 +323,8 @@ RETURNING event_id;   -- 0 row = đã xử lý, dừng lại
 - [ ] AC-16: Search run kết thúc, chờ 16 phút → series `search_run_status{run_id}` **không còn** trong `/metrics`.
 - [ ] AC-17: Log 10.000 dòng cùng `event` trong 1 phút → số dòng thực ghi **≤ 200**, có dòng mang `sampled: true`; đường request không bị chậm quá 1 ms p95.
 - [ ] AC-18: `grep -riE "password|token_hash|authorization: " logs/` → **0** dòng chứa giá trị thật; chỉ thấy `"[redacted]"`.
+
+## Target additions (unified blueprint)
+
+- **Event delivery dedup/order/dead-letter**: consumer idempotent theo `event_id`; ordering chỉ hứa theo aggregate sequence; event retry hết lượt vào dead-letter có quan sát được, không âm thầm drop (sơ đồ 07, 08; `design.md` §12.4 invariants 7–8).
+- **Scale gate**: tuyên bố "100.000 backtest" chỉ được công bố khi có benchmark/metric chứng minh (design §12.4 invariant 10; sơ đồ 15); gate gồm throughput worker, queue depth, age-of-oldest-job.

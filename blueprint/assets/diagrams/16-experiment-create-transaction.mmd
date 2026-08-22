@@ -1,34 +1,40 @@
 sequenceDiagram
     autonumber
     actor U as Researcher
-    participant GO as Go API
-    participant EXS as ExperimentService
-    participant MS as MarketService
+    participant GO as Go Edge API
+    participant PY as Python ExperimentService
+    participant REG as StrategyRegistry
+    participant DS as DatasetSnapshotService
     participant DB as PostgreSQL
-    participant HUB as WS Hub
+    participant OUT as Transactional Outbox
 
-    U->>GO: POST /api/v1/experiments
-    GO->>GO: L1-L4 auth, RBAC, rate limit, validate schema
-    GO->>EXS: create_experiment payload kèm X-Correlation-ID
-    EXS->>EXS: validate LẠI, không tin caller nội bộ
-    EXS->>DB: resolve root strategy_version_id = composite@1.0.0
-    EXS->>EXS: resolve + validate từng child (id, version, fingerprint)
-    Note over EXS,DB: Root or child validation failure returns 422 before insert. FK keeps root version stable
-    EXS->>MS: ensure_dataset provider, symbol, timeframe, from, to
-    MS->>MS: ước lượng số nến, so với max_candles_per_experiment
-    Note over MS: Vượt 20.000 → 422 dataset_too_large,<br/>KHÔNG nạp nến rồi mới báo lỗi
-    MS-->>EXS: market_dataset_id, candle_count, content_hash
-    EXS->>EXS: candidate_hash = sha256 canonical_json của definition
-    EXS->>DB: tìm experiment đã completed cùng hash, dataset, execution, evaluator
-    alt trùng và force = false
-        DB-->>EXS: experiment cũ đã completed
-        EXS-->>GO: 200 run_id cũ kèm reused = true
-    else mới hoặc force = true
-        EXS->>DB: BEGIN
-        EXS->>DB: INSERT experiments snapshot bất biến
-        EXS->>DB: INSERT backtest_jobs status queued, priority 100
-        EXS->>DB: COMMIT
-        EXS->>HUB: BacktestQueued experiment_id, job_id, priority
-        EXS-->>GO: 202 run_id, status queued
+    U->>GO: POST /experiments {strategy, market, execution}
+    GO->>GO: auth/RBAC + quota + bounded schema validation
+    GO->>PY: command + principal + idempotency/correlation ID
+    PY->>REG: resolve exact root/child strategy versions
+    REG-->>PY: immutable StrategySpec + fingerprints
+    PY->>DS: ensure snapshot(provider,symbol,timeframe,range)
+    DS->>DB: freeze Candle IDs + BBO event range<br/>compute candle_hash + bbo_hash + content_hash
+    DS-->>PY: dataset_id, coverage, hashes, revision
+
+    PY->>PY: validate execution policy<br/>LONG/SHORT, notional, fee, SL/TP,<br/>BBO fill and documented 5bps fallback
+    PY->>PY: candidate_hash = canonical definition hash
+    PY->>DB: find reusable completed run by<br/>strategy+dataset+execution+evaluator hashes
+
+    alt reusable and force=false
+        DB-->>PY: existing immutable result
+        PY-->>GO: 200 reused=true + run_id
+        GO-->>U: 200 reused=true + run_id
+    else create new
+        PY->>DB: BEGIN SERIALIZABLE
+        PY->>DB: atomic quota admission
+        PY->>DB: INSERT experiment snapshot<br/>strategy/dataset/execution/model refs
+        PY->>DB: INSERT backtest_run queued
+        PY->>DB: INSERT backtest_job queued
+        PY->>OUT: INSERT ExperimentCreated + BacktestQueued pending<br/>with aggregate sequence
+        PY->>DB: COMMIT
+        PY-->>GO: 202 run_id + status=queued
+        GO-->>U: 202 run_id + status=queued
     end
-    GO-->>U: 202 run_id
+
+    Note over DS,DB: Worker chỉ đọc MARKET_DATASET_CANDLES/BBO đã freeze.<br/>Không reload operational candles rồi gọi đó là cùng dataset.

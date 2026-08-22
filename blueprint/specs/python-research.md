@@ -1,12 +1,15 @@
-# Đặc tả: Python Strategy/Backtest Backend (canonical)
+# Đặc tả: Python Strategy Platform (canonical)
 
 ## Mô tả
 
-Python Strategy/Backtest Backend (`py_backend/`) là **implementation canonical** của
-chuỗi strategy → backtest → evaluation → search → ranking/leaderboard →
-visualization-of-results. Nó **thay thế** Go cho phần domain này (đảo ngược ADR-011;
-quyết định **[PD]** — xem `proposal.md` §4.4). Go giữ market data (realtime), news,
-sentiment inference, auth và observability (xem `design.md` §1.2).
+Python Strategy Platform (codebase `app/` ở repo root, service `research`) là
+**implementation canonical** của chuỗi strategy → backtest → evaluation → search →
+ranking/leaderboard → visualization-of-results, đồng thời sở hữu **news
+extraction/tagging và sentiment/AI orchestration** (gọi service `ai` để inference).
+Nó **thay thế** Go cho phần domain này (đảo ngược ADR-011; quyết định **[PD]** — xem
+`proposal.md` §4.4). Go giữ realtime market data (chuẩn hoá Candle/BBO, WSS
+reconnect/backfill, internal stream), edge/API, auth/RBAC, quota và observability
+(xem `design.md` §1.2).
 
 Backend này mirror cấu trúc `server/internal/domain/*` **1:1**, đổi `decimal.Decimal`
 thành Python `float` (IEEE 754 double / **float64**). Directory structure, file và
@@ -14,12 +17,12 @@ skeleton giữ nguyên theo Go skeleton; chỉ đổi ngôn ngữ và kiểu s�
 
 Ba đặc điểm cốt lõi:
 
-1. **Canonical, không phải research.** Signal/metric do backend này sinh ra **là**
+1. **Canonical, không phải research code.** Signal/metric do backend này sinh ra **là**
    nguồn chân lý cho `chart-overlays`, `leaderboard_entries`, `run_signals`. Không còn
    nhãn "non-canonical" hay "research-only".
-2. **Separate FastAPI backend.** Leaderboard và các endpoint liên quan
+2. **Separate FastAPI platform.** Leaderboard và các endpoint liên quan
    (strategies, experiments, search-runs, admin score-policies) phục vụ trên FastAPI
-   riêng, tách khỏi Go backend.
+   riêng (service `research`, `:8001`), tách khỏi Go backend.
 3. **`float64` là kiểu số canonical.** Không dùng `Decimal`/`NUMERIC(24,8)` trong
    backend này (xem R1).
 
@@ -48,12 +51,14 @@ candle-close-only — nó là engine canonical.
 
 ### R4 — Data/network: DB riêng + dataset snapshot; không kết nối sàn
 
-Backend được phép truy cập PostgreSQL cho các bảng domain của nó
+Platform được phép truy cập PostgreSQL cho các bảng domain của nó
 (`experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`,
 `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`,
-`strategy_definitions`, `strategy_versions`, `search_*`) và đọc dataset snapshot
-(`market_dataset_candles`/BBO replay). Backend **không** mở Binance WS/REST hay bất kỳ
-kết nối sàn nào — realtime market data vẫn thuộc Go.
+`strategy_definitions`, `strategy_versions`, `search_*`, `news_sources`,
+`news_items`, `sentiment_results`, `news_collection_jobs`) và đọc dataset snapshot
+(`market_dataset_candles`/BBO replay). Platform **không** mở Binance WS/REST hay
+bất kỳ kết nối sàn nào — realtime market data thuộc Go (nhận qua internal stream);
+sentiment inference thuộc `ai` (gọi qua HTTP nội bộ).
 
 ## Contract
 
@@ -77,12 +82,14 @@ Các domain package mirror Go skeleton: `domain/common`, `domain/market`,
 
 ```mermaid
 flowchart LR
-    GO[Go Strategy Service<br/>market/news/auth] -->|contract nội bộ| FB[Python FastAPI Backend]
+    GO[Go API<br/>realtime market/edge/auth] -->|contract nội bộ| FB[Python Strategy Platform<br/>service `research`]
     FB --> REG[StrategyRegistry]
     FB --> BE[BacktestEngine<br/>BBO-limit + event merge]
     BE --> EV[Evaluator<br/>float64]
     EV --> RK[RankingService]
     RK --> LB[Leaderboard<br/>leaderboard_entries]
+    FB --> NEWS[News extraction/tagging<br/>+ sentiment orchestration]
+    NEWS --> AI[ai service<br/>inference adapter]
     FB --> DB[(PostgreSQL<br/>domain tables)]
     FB -. "không" .-> X[Binance WS/REST]
 ```
@@ -137,7 +144,7 @@ FastAPI phục vụ, Go gọi tới qua contract nội bộ.
 - [ ] AC-06: Strategy future read bị reject; không đọc indicator ngoài causal context.
 - [ ] AC-07: Fixture `sol/2026-03-04`: 29 strict MA20/MA50 signals, 15 BUY, 14 SELL, 15 settled trades.
 - [ ] AC-08: Leaderboard endpoint (`GET /api/v1/leaderboard`) trên FastAPI trả đúng contract; Go không tính rank/score.
-- [ ] AC-09: Không có kết nối Binance WS/REST trong `py_backend/`; market data chỉ từ Go.
+- [ ] AC-09: Không có kết nối Binance WS/REST trong `app/`; market data chỉ từ Go.
 - [ ] AC-10: Directory structure mirror `server/internal/domain/*` 1:1; `float` thay cho `decimal.Decimal`.
 
 ---
