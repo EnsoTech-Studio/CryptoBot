@@ -1,0 +1,29 @@
+# VCS & local env
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Sibling services and docs — not part of the research image
+web/
+server/
+ai/
+blueprint/
+plans/
+data/
+node_modules
+*.log
+*.pdf
+*.html
+
+# Python caches & virtualenvs
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Tests are not shipped in the image
+tests/

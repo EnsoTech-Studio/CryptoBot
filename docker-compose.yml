@@ -32,13 +32,13 @@ services:
       timeout: 5s
       retries: 8
 
-  py_backend:
+  research:
     build:
-      context: ./py_backend
+      context: .
     environment:
       PYTHONUNBUFFERED: "1"
     ports:
-      - "${PY_BACKEND_PORT:-8001}:8001"
+      - "${RESEARCH_PORT:-8001}:8001"
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
@@ -62,7 +62,7 @@ services:
         condition: service_healthy
       ai:
         condition: service_healthy
-      py_backend:
+      research:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health >/dev/null"]

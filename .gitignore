@@ -13,9 +13,9 @@ ai/.venv/
 ai/__pycache__/
 ai/.pytest_cache/
 ai/pytest-cache-files-*/
-py_backend/.venv/
-py_backend/.pytest_cache/
-py_backend/.ruff_cache/
+.venv/
+.pytest_cache/
+.ruff_cache/
 **/__pycache__/
 *.py[cod]
 

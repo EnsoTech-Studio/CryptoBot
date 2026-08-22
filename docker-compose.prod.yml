@@ -14,7 +14,7 @@ services:
     expose:
       - "8000"
 
-  py_backend:
+  research:
     ports: !reset []
     expose:
       - "8001"

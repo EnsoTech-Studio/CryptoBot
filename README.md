@@ -24,6 +24,7 @@ Services:
 | `api`      | <http://localhost:8080/health>, <http://localhost:8080/ready> |
 | `worker`   | no public port; polls `backtest_jobs`                         |
 | `ai`       | <http://localhost:8000/health> in dev compose                 |
+| `research` | <http://localhost:8001/health> in dev compose (Python platform skeleton) |
 | `postgres` | port `5432` in dev compose                                    |
 
 Demo login:
@@ -119,12 +120,20 @@ npm run lint
 npx tsc --noEmit
 ```
 
-Python:
+Python (AI service):
 
 ```powershell
 cd ai
 pip install -r requirements-dev.txt
 python -m pytest
+```
+
+Python (research platform, canonical target skeleton):
+
+```powershell
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
+uvicorn app.main:app --reload --port 8001
 ```
 
 Full stack verification should be done with:
