@@ -5,7 +5,7 @@ Mirrors `server/internal/domain/job/contract.go`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
@@ -25,3 +25,8 @@ class BacktestJob:
     leased_by: str | None = None
     lease_token: UUID | None = None
     lease_expires_at: datetime | None = None
+    # claim-time run takeover bookkeeping (design.md §8.3.2): the run row this
+    # claim owns, and whether the run was already completed so the worker skips
+    # the engine entirely (AC-05c/AC-05d)
+    run_id: UUID | None = field(default=None)
+    run_already_completed: bool = field(default=False)

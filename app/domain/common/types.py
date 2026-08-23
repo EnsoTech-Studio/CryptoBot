@@ -101,3 +101,20 @@ ERR_OWNERSHIP = "ownership denied"
 ERR_QUOTA = "quota exceeded"
 ERR_NOT_IMPLEMENTED = "not implemented"
 ERR_LEASE_LOST = "lease lost"
+
+# --- backtest/evaluation error vocabulary (specs/backtest.md, specs/evaluation.md) ---
+ERR_INSUFFICIENT_CANDLES = "insufficient_candles"
+ERR_DATASET_TOO_LARGE = "dataset_too_large"
+ERR_INVALID_BBO_REPLAY = "invalid_bbo_replay"
+ERR_MISSING_PRIOR_BBO = "missing_prior_bbo"
+ERR_MISSING_FINAL_BBO = "missing_final_bbo"
+ERR_INVALID_SIGNAL = "invalid_signal"
+ERR_STRATEGY_EXCEPTION = "strategy_exception"
+ERR_INCONSISTENT_RESULT = "inconsistent_backtest_result"
+
+
+class LookAheadError(DomainError):
+    """A strategy/context read past the causal cursor (rule R2, specs/python-research.md)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(ERR_LOOK_AHEAD, message)

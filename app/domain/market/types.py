@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from ..common import Decimal, Timeframe
+from ..common import Decimal, LookAheadError, Timeframe
 
 
 @dataclass
@@ -82,17 +82,33 @@ StreamKey = MarketKey
 
 
 class CausalCandles:
-    """Causal candle window — strategy may only read up to the current index."""
+    """Causal candle window — strategy may only read up to the current index.
+
+    Rule R2 of `specs/python-research.md`: reading any candle past the cursor of
+    the just-closed candle raises `LookAheadError` immediately (no silent
+    look-ahead). The window length is `index + 1` — exactly the candles the
+    strategy is allowed to see.
+    """
 
     def __init__(self, candles: list[Candle], index: int) -> None:
-        raise NotImplementedError
+        if index < 0 or index >= len(candles):
+            raise ValueError(f"causal cursor {index} outside candles [0, {len(candles) - 1}]")
+        self._candles = candles
+        self._index = index
 
     def at(self, index: int) -> Candle:
-        raise NotImplementedError
+        if index < 0 or index > self._index:
+            raise LookAheadError(
+                f"candle index {index} is outside the causal window [0, {self._index}]"
+            )
+        return self._candles[index]
 
     def __len__(self) -> int:
-        raise NotImplementedError
+        return self._index + 1
+
+    def __getitem__(self, index: int) -> Candle:
+        return self.at(index)
 
     @property
     def index(self) -> int:
-        raise NotImplementedError
+        return self._index

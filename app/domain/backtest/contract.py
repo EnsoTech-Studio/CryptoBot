@@ -93,6 +93,10 @@ class TradeFact:
     pnl_absolute: Decimal | None = None
     pnl_percent: Decimal | None = None
     exit_reason: ExitReason | None = None
+    # SL/TP levels frozen at entry (design.md trades DDL CHECK: a stop_loss
+    # exit requires sl_price, a take_profit exit requires tp_price)
+    sl_price: Decimal | None = None
+    tp_price: Decimal | None = None
 
 
 @dataclass
