@@ -30,7 +30,7 @@ export function PageHeader({ navigationOpen, onOpenNavigation, menuButtonRef }: 
 
       <div className={styles.pageTitle}>
         <h1>{meta.title}</h1>
-        <p>{meta.subtitle}</p>
+        {meta.subtitle ? <p>{meta.subtitle}</p> : null}
       </div>
 
       <div className={styles.headerActions}>

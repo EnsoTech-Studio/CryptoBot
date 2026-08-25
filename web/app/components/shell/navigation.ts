@@ -25,8 +25,8 @@ export function isActiveRoute(pathname: string, item: NavigationItem) {
 export function pageMeta(pathname: string): { title: string; subtitle: string } {
   if (pathname === "/") {
     return {
-      title: "Realtime Chart - Đa khung thời gian",
-      subtitle: "Theo dõi cấu trúc thị trường và tín hiệu chiến lược theo thời gian thực",
+      title: "Realtime Chart – Đa khung thời gian",
+      subtitle: "",
     };
   }
   if (pathname.startsWith("/backtests")) {

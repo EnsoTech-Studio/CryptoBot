@@ -1,3 +1,15 @@
+import {
+  DEFAULT_MARKET,
+  MARKET_CONFIG_HASH,
+  marketRequestPath,
+  type Candle,
+  type MarketPair,
+  type MarketSelection,
+  type MarketStatus,
+} from "./market";
+
+export type { Candle, MarketPair, MarketSelection, MarketStatus } from "./market";
+
 export const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 export type User = {
@@ -5,20 +17,6 @@ export type User = {
   email: string;
   display_name: string;
   role: "RESEARCHER" | "OPERATOR" | "ADMIN";
-};
-
-export type Candle = {
-  provider: string;
-  symbol: string;
-  timeframe: string;
-  open_time: string;
-  close_time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  trade_count: number;
 };
 
 export type MarketDataset = {
@@ -265,9 +263,9 @@ function normalizeSearchRun(run: ResearchSearchRun): SearchRun {
   };
 }
 
-async function ensureDataset(timeframe: string): Promise<MarketDataset> {
-  const existing = await api.datasets(timeframe);
-  return existing.datasets[0] ?? api.createDataset(timeframe);
+async function ensureDataset(market: MarketSelection, timeframe: string): Promise<MarketDataset> {
+  const existing = await api.datasets(market, timeframe);
+  return existing.datasets[0] ?? api.createDataset(market, timeframe);
 }
 
 function csrfToken(): string {
@@ -284,11 +282,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("X-CSRF-Token", csrfToken());
 
-  const response = await fetch(`${apiUrl}${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}${path}`, {
+      ...init,
+      headers,
+      credentials: "include",
+      signal: init.signal ?? AbortSignal.timeout(8_000),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new Error("API request timed out");
+    }
+    throw error;
+  }
 
   const payload = (await response.json().catch(() => undefined)) as unknown;
   if (!response.ok) {
@@ -314,16 +321,21 @@ export const api = {
   strategies() {
     return request<{ strategies: Strategy[] }>("/api/v1/strategies");
   },
-  candles(timeframe: string, strategy = "composite@v1") {
-    void strategy;
+  marketPairs() {
+    return request<{ pairs: MarketPair[] }>("/api/v1/markets/pairs");
+  },
+  marketStatus(market: MarketSelection, timeframe: string) {
+    return request<MarketStatus>(marketRequestPath("/api/v1/markets/status", market, { timeframe }));
+  },
+  candles(market: MarketSelection, timeframe: string, limit = 180) {
     return request<{ candles: Candle[] }>(
-      `/api/v1/markets/candles?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&limit=180`,
+      marketRequestPath("/api/v1/markets/candles", market, { timeframe, limit }),
     ).then((payload) => ({
       ...payload,
       candles: payload.candles.map(normalizeCandle),
     }));
   },
-  overlays(timeframe: string, strategy = "composite@v1") {
+  overlays(market: MarketSelection, timeframe: string, strategy = "composite@v1", limit = 180) {
     return request<{
       series: OverlaySeries[];
       markers: OverlayMarker[];
@@ -331,33 +343,42 @@ export const api = {
       last_closed_at: string;
       is_stale: boolean;
     }>(
-      `/api/v1/markets/chart-overlays?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&strategy=${strategy}&config_hash=sha256:${"4".repeat(64)}&limit=180`,
+      marketRequestPath("/api/v1/markets/chart-overlays", market, {
+        timeframe,
+        strategy,
+        config_hash: MARKET_CONFIG_HASH,
+        limit,
+      }),
     );
   },
-  datasets(timeframe = "5m") {
+  datasets(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<{ datasets: MarketDataset[] }>(
-      `/api/v1/markets/datasets?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&limit=20`,
+      marketRequestPath("/api/v1/markets/datasets", market, { timeframe, limit: 20 }),
     );
   },
-  createDataset(timeframe = "5m") {
+  createDataset(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<MarketDataset>("/api/v1/markets/datasets", {
       method: "POST",
       body: JSON.stringify({
-        provider: "binance_usdm",
-        symbol: "ETHUSDT",
+        provider: market.provider,
+        symbol: market.symbol,
         timeframe,
         revision_no: 1,
       }),
     });
   },
-  async createExperiment(children: Array<{ strategy_id: string; weight: number }>) {
-    const dataset = await ensureDataset("5m");
+  async createExperiment(
+    children: Array<{ strategy_id: string; weight: number }>,
+    market: MarketSelection = DEFAULT_MARKET,
+    timeframe = "5m",
+  ) {
+    const dataset = await ensureDataset(market, timeframe);
     return request<{ run_id: string; experiment_id: string; status: string }>("/api/v1/experiments", {
       method: "POST",
       body: JSON.stringify({
-        provider: "binance_usdm",
-        symbol: "ETHUSDT",
-        timeframe: "5m",
+        provider: market.provider,
+        symbol: market.symbol,
+        timeframe,
         strategy_id: "composite",
         strategy_version: "v1",
         dataset_version: dataset.dataset_version,
@@ -383,15 +404,15 @@ export const api = {
   experiment(id: string) {
     return request<ExperimentSummary>(`/api/v1/experiments/${id}`);
   },
-  experimentCandles(id: string) {
+  experimentCandles(id: string, market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<{ candles: Omit<Candle, "provider" | "symbol" | "timeframe">[] }>(
       `/api/v1/experiments/${id}/candles`,
     ).then((payload) => ({
       candles: payload.candles.map((candle) => normalizeCandle({
         ...candle,
-        provider: "binance_usdm",
-        symbol: "ETHUSDT",
-        timeframe: "5m",
+        provider: market.provider,
+        symbol: market.symbol,
+        timeframe,
       })),
     }));
   },
@@ -441,8 +462,8 @@ export const api = {
       execution_markers: [] as ExecutionMarker[],
     }));
   },
-  async startSearch() {
-    const dataset = await ensureDataset("5m");
+  async startSearch(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
+    const dataset = await ensureDataset(market, timeframe);
     return request<ResearchSearchRun>("/api/v1/search-runs", {
       method: "POST",
       body: JSON.stringify({
@@ -455,9 +476,9 @@ export const api = {
         },
         stop_conditions: { max_candidates: 6, max_duration_sec: 900, max_non_improving: 4 },
         market: {
-          provider: "binance_usdm",
-          symbol: "ETHUSDT",
-          timeframe: "5m",
+          provider: market.provider,
+          symbol: market.symbol,
+          timeframe,
           dataset_version: dataset.dataset_version,
           range_from: "2026-01-01T00:00:00Z",
           range_to: "2026-03-01T00:00:00Z",

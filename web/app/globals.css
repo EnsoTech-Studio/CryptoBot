@@ -968,6 +968,20 @@ td span {
   opacity: 0.6;
 }
 
+.current-price-line {
+  stroke: var(--data-series-1);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.65;
+}
+
+.current-price-label {
+  fill: var(--data-series-1);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: var(--weight-semibold);
+}
+
 .wick {
   stroke-width: 1.2;
 }

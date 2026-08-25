@@ -290,7 +290,7 @@
   overflow: hidden;
   margin: 0;
   color: var(--ink-1);
-  font-size: 18px;
+  font-size: 26px;
   font-weight: var(--weight-bold);
   letter-spacing: var(--tracking-tight);
   text-overflow: ellipsis;
@@ -339,6 +339,13 @@
   border-color: color-mix(in srgb, var(--status-stale) 20%, var(--line-1));
   background: var(--status-stale-bg);
   color: var(--status-stale);
+}
+
+.sourcePaused,
+.sourceUnavailable {
+  border-color: var(--line-1);
+  background: var(--surface-3);
+  color: var(--ink-3);
 }
 
 .headerIcon,

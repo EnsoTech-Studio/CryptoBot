@@ -1,16 +1,5 @@
-"use client";
-
-import { BacktestPanel, SearchPanel } from "./components/Operations";
-import { ChartWorkspace } from "./components/ChartWorkspace";
+import { RealtimeScreen } from "./components/realtime/RealtimeScreen";
 
 export default function DashboardPage() {
-  return (
-    <>
-      <ChartWorkspace />
-      <section className="operation-grid">
-        <BacktestPanel />
-        <SearchPanel />
-      </section>
-    </>
-  );
+  return <RealtimeScreen />;
 }

@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { compactDate, compactTime } from "../../../lib/format";
 import type { Candle, ExecutionMarker, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
 
-export type ChartSize = "primary" | "context" | "result";
+export type ChartSize = "primary" | "context" | "result" | "realtime";
 
 /* One frame per role. The old single frame drew the same 900x280 geometry into
    a ~340px box, so axis text and the sub pane were rendered at roughly a third
@@ -44,6 +44,17 @@ const CHART_FRAMES: Record<ChartSize, {
     gridTicks: [0, 0.25, 0.5, 0.75, 1],
     showAxis: true,
   },
+  realtime: {
+    width: 640,
+    height: 230,
+    pad: { left: 38, right: 58, top: 12, bottom: 20 },
+    gap: 6,
+    volumeH: 38,
+    subH: 0,
+    visible: 80,
+    gridTicks: [0, 0.25, 0.5, 0.75, 1],
+    showAxis: true,
+  },
   context: {
     width: 460,
     height: 112,
@@ -63,12 +74,14 @@ export function ChartCanvas({
   markers,
   executionMarkers = [],
   size = "primary",
+  ariaLabel = "Candlestick chart with volume and strategy overlays",
 }: {
   candles: Candle[];
   series: OverlaySeries[];
   markers: OverlayMarker[];
   executionMarkers?: ExecutionMarker[];
   size?: ChartSize;
+  ariaLabel?: string;
 }) {
   const frame = CHART_FRAMES[size];
   const { width, height, pad, gap, volumeH } = frame;
@@ -107,8 +120,9 @@ export function ChartCanvas({
       className="chart-svg"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label="Candlestick chart with volume and strategy overlays"
+      aria-label={ariaLabel}
     >
+      <title>{ariaLabel}</title>
       <rect x="0" y="0" width={width} height={height} className="chart-bg" />
       <rect x={pad.left} y={pad.top} width={plotW} height={plotH} className="pane-bg main-pane" />
       <rect x={pad.left} y={volumeTop} width={plotW} height={volumeH} className="pane-bg volume-pane" />
@@ -139,6 +153,12 @@ export function ChartCanvas({
           </g>
         );
       })}
+      {size === "realtime" && view.at(-1) ? (
+        <>
+          <line x1={pad.left} x2={width - pad.right} y1={y(view.at(-1)!.close)} y2={y(view.at(-1)!.close)} className="current-price-line" />
+          <text x={width - pad.right + 5} y={y(view.at(-1)!.close) + 3} className="current-price-label">{view.at(-1)!.close.toFixed(2)}</text>
+        </>
+      ) : null}
       {series.filter((item) => item.pane === "main").flatMap((item, index) => renderMainSeries(item, view, index, x, y))}
       {renderSignalMarkers(markers, view, x, y, size === "context" ? 0.5 : 1)}
       {renderExecutionMarkers(executionMarkers, view, x, y, width - pad.right)}

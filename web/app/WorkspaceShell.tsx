@@ -7,7 +7,7 @@ import { Inspector } from "./components/Inspector";
 import { AppSidebar } from "./components/shell/AppSidebar";
 import { PageHeader } from "./components/shell/PageHeader";
 import styles from "./components/shell/shell.module.css";
-import { StatusMessage, type StatusTone } from "./components/ui/Foundation";
+import { StatusMessage } from "./components/ui/Foundation";
 
 /* One shell for every route. The provider sits above it, so navigating between
    pages keeps the market sockets, polls and inspector state alive. */
@@ -20,12 +20,11 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  const { inspectorOpen, notice, streamLabel } = useWorkspace();
+  const { inspectorOpen, notice } = useWorkspace();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const navigationWasOpen = useRef(false);
-  const noticeTone: StatusTone = notice.tone === "error" ? "error" : notice.tone === "warn" ? "syncing" : streamLabel === "Live" ? "live" : "neutral";
 
   useEffect(() => {
     if (!navigationOpen) {
@@ -71,7 +70,7 @@ function Shell({ children }: { children: ReactNode }) {
       {navigationOpen ? <button type="button" className={styles.drawerBackdrop} onClick={() => setNavigationOpen(false)} aria-label="Đóng menu" /> : null}
       <section className={styles.main} id="workspace-main" tabIndex={-1} inert={navigationOpen ? true : undefined}>
         <PageHeader navigationOpen={navigationOpen} onOpenNavigation={() => setNavigationOpen(true)} menuButtonRef={menuButtonRef} />
-        <div className={styles.noticeSlot}><StatusMessage tone={noticeTone}>{notice.text}</StatusMessage></div>
+        {notice.tone === "error" ? <div className={styles.noticeSlot}><StatusMessage tone="error">{notice.text}</StatusMessage></div> : null}
         <div className={styles.content}>{children}</div>
       </section>
       <Inspector />

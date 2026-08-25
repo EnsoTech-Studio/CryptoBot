@@ -7,11 +7,14 @@ export type IconName =
   | "chevron-down"
   | "close"
   | "discovery"
+  | "download"
   | "document"
   | "flask"
   | "graduation"
   | "help"
+  | "info"
   | "menu"
+  | "refresh"
   | "settings"
   | "strategy"
   | "user";
@@ -54,6 +57,8 @@ function IconPaths({ name }: { name: IconName }) {
       return <><path d="m6 6 12 12" /><path d="m18 6-12 12" /></>;
     case "discovery":
       return <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /><path d="m9 13 2-5 2 5-2-1Z" /></>;
+    case "download":
+      return <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>;
     case "document":
       return <><path d="M6 2h8l4 4v16H6Z" /><path d="M14 2v5h5M9 12h6M9 16h6" /></>;
     case "flask":
@@ -62,8 +67,12 @@ function IconPaths({ name }: { name: IconName }) {
       return <><path d="m2 9 10-5 10 5-10 5Z" /><path d="M6 11.2V16c2.8 2.1 9.2 2.1 12 0v-4.8M22 9v6" /></>;
     case "help":
       return <><circle cx="12" cy="12" r="9" /><path d="M9.8 9a2.4 2.4 0 1 1 3.5 2.1c-.9.5-1.3 1-1.3 2" /><path d="M12 17h.01" /></>;
+    case "info":
+      return <><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><path d="M12 7h.01" /></>;
     case "menu":
       return <><path d="M4 7h16M4 12h16M4 17h16" /></>;
+    case "refresh":
+      return <><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.6L20 9M4 15l2.5 2.6A7 7 0 0 0 17.9 15" /></>;
     case "settings":
       return <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>;
     case "strategy":
