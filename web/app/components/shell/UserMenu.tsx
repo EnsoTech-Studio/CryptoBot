@@ -16,7 +16,7 @@ function initials(name: string) {
 }
 
 export function UserMenu() {
-  const { user, login, logout } = useWorkspace();
+  const { user, login, logout, dataMode } = useWorkspace();
   const [email, setEmail] = useState("researcher@example.com");
   const [password, setPassword] = useState("Research#2026");
   const [submitting, setSubmitting] = useState(false);
@@ -28,8 +28,8 @@ export function UserMenu() {
           {user ? initials(user.display_name) : <Icon name="user" />}
         </span>
         <span className={styles.userIdentity}>
-          <strong>{user?.display_name ?? "Đăng nhập"}</strong>
-          <small>{user?.role.toLocaleLowerCase("vi") ?? "Research account"}</small>
+          <strong>{user?.display_name ?? "Nguyễn Minh"}</strong>
+          <small>{user?.email ?? "student@example.com"}</small>
         </span>
         <Icon className={styles.chevron} name="chevron-down" aria-hidden="true" />
       </summary>
@@ -49,6 +49,7 @@ export function UserMenu() {
             setSubmitting(false);
           }}
         >
+          <p className={styles.mockDisclosure}>{dataMode === "mock" ? "Tài khoản mẫu cho chế độ Mock. Đăng nhập để dùng tài khoản thật." : "Đăng nhập để thay tài khoản hiển thị mẫu."}</p>
           <label>
             <span>Email</span>
             <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required />

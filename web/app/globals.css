@@ -975,8 +975,14 @@ td span {
   opacity: 0.65;
 }
 
+.current-price-line.up { stroke: var(--data-up); }
+.current-price-line.down { stroke: var(--data-down); }
+
+.current-price-box.up { fill: var(--data-up); }
+.current-price-box.down { fill: var(--data-down); }
+
 .current-price-label {
-  fill: var(--data-series-1);
+  fill: #ffffff;
   font-family: var(--font-mono);
   font-size: 8px;
   font-weight: var(--weight-semibold);
@@ -1018,8 +1024,14 @@ td span {
 }
 
 .overlay-line.moving_average,
+.overlay-line.ma,
 .overlay-line.macd_line {
   stroke: var(--data-series-1);
+}
+
+.volume-value {
+  fill: var(--data-up);
+  font-weight: var(--weight-semibold);
 }
 
 .overlay-line.bollinger {

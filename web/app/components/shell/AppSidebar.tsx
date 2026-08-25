@@ -17,7 +17,7 @@ export function AppSidebar({ open, onClose, closeButtonRef }: { open: boolean; o
       <div className={styles.sidebarHead}>
         <Link href="/" className={styles.brand} onClick={onClose} aria-label="Crypto Strategy Lab - Realtime">
           <span className={styles.brandMark}><Icon name="flask" /></span>
-          <span><strong>Crypto Strategy Lab</strong><small>Research Workspace</small></span>
+          <span><strong>Crypto<br />Strategy Lab</strong></span>
         </Link>
         <button ref={closeButtonRef} type="button" className={styles.drawerClose} onClick={onClose} aria-label="Đóng menu">
           <Icon name="close" />
@@ -39,7 +39,7 @@ export function AppSidebar({ open, onClose, closeButtonRef }: { open: boolean; o
       <div className={styles.sidebarFooter}>
         <div className={styles.planCard}>
           <span className={styles.planIcon}><Icon name="graduation" /></span>
-          <div><strong>Research workspace</strong><p>Simulation mode · dữ liệu có nguồn gốc rõ ràng</p></div>
+          <div><strong>Pro Student</strong><p>Gói đang dùng</p><small>Hết hạn: 20/06/2025</small></div>
         </div>
         <UserMenu />
       </div>

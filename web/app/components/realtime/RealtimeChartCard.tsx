@@ -8,16 +8,18 @@ import { Icon } from "../ui/Icon";
 import styles from "./realtime.module.css";
 
 export function RealtimeChartCard({ panel, index }: { panel: Panel; index: number }) {
-  const { selectedMarket, focusIndex, setFocusIndex, loadHistory, realtimeEnabled } = useWorkspace();
+  const { selectedMarket, focusIndex, setFocusIndex, loadHistory, realtimeEnabled, dataMode } = useWorkspace();
   const lastCandle = panel.candles.at(-1);
-  const priceChange = lastCandle && lastCandle.open !== 0
-    ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100
-    : null;
+  const priceChange = dataMode === "mock"
+    ? panel.timeframe === "1h" ? -0.15 : 0.28
+    : lastCandle && lastCandle.open !== 0
+      ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100
+      : null;
   const signal = latestSignal(panel.markers);
   const overlay = latestMainOverlay(panel.series);
   const signalLabel = signal?.side === "buy" ? "BUY" : signal?.side === "sell" ? "SELL" : "No signal";
   const chartSummary = lastCandle
-    ? `${selectedMarket.symbol} ${panel.timeframe}, giá đóng cửa ${formatPrice(lastCandle.close)}, ${signalLabel}`
+    ? `${selectedMarket.symbol} ${panel.timeframe}, giá đóng cửa ${formatPrice(lastCandle.close)}, ${signalLabel}${dataMode === "mock" ? ", dữ liệu mô phỏng" : ""}`
     : `${selectedMarket.symbol} ${panel.timeframe}, chưa có dữ liệu thị trường`;
 
   return (
@@ -31,21 +33,23 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
           aria-pressed={focusIndex === index}
         >
           <span className={styles.symbol}>{selectedMarket.symbol}</span>
-          <span className={styles.timeframePill}>{panel.timeframe}</span>
+          <span className={styles.chartSeparator}>·</span>
+          <span className={styles.timeframeText}>{panel.timeframe}</span>
           <span className={styles.liveState} data-state={panel.liveState}>
-            <i aria-hidden="true" /> {panel.liveState === "live" ? "Live" : panel.liveState === "connecting" ? "Syncing" : panel.liveState === "paused" ? "Paused" : "Stale"}
+            <i aria-hidden="true" />
+            <span className={styles.srStatus}>{panel.liveState === "live" ? "Live" : panel.liveState === "connecting" ? "Syncing" : panel.liveState === "paused" ? "Paused" : "Stale"}</span>
           </span>
         </button>
         <div className={styles.quote}>
-          <strong>{lastCandle ? `$${formatPrice(lastCandle.close)}` : "—"}</strong>
+          <strong>{lastCandle ? formatPrice(lastCandle.close) : "—"}</strong>
           <span className={priceChange == null || priceChange >= 0 ? styles.positive : styles.negative}>
             {priceChange == null ? "Đang chờ dữ liệu" : `${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(2)}%`}
           </span>
         </div>
+        <span className={`${styles.signalBadge} ${signal?.side ? styles[signal.side] : styles.noSignal}`}>{signalLabel}</span>
       </header>
 
       <div className={styles.chartMeta}>
-        <span className={`${styles.signalBadge} ${signal?.side ? styles[signal.side] : styles.noSignal}`}>{signalLabel}</span>
         <span className={styles.overlayValue}>
           {overlay ? `${overlay.name} ${formatPrice(overlay.value)}` : "Overlay chưa có dữ liệu"}
         </span>
@@ -75,11 +79,12 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
           disabled={panel.historyLoading}
         >
           <Icon name="download" />
-          {panel.historyLoading ? "Đang tải…" : panel.historyLimit >= 1_000 ? `${panel.candles.length} nến` : "Load 1000"}
+          {panel.historyLoading ? "Đang tải…" : panel.historyLimit >= 1_000 ? "1000 nến lịch sử" : "Load 1000 nến lịch sử"}
         </button>
         <span className={styles.footerStatus}>
+          <Icon name="refresh" aria-hidden="true" />
+          {!realtimeEnabled ? "Realtime đang tạm dừng" : "Cập nhật realtime"}
           <i data-state={panel.liveState} aria-hidden="true" />
-          {!realtimeEnabled ? "Realtime đang tạm dừng" : panel.liveState === "live" ? "Đang nhận dữ liệu realtime" : panel.liveState === "connecting" ? "Đang đồng bộ stream" : "Kết nối bị gián đoạn"}
         </span>
       </footer>
     </article>

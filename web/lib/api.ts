@@ -276,7 +276,7 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match.split("=")[1]) : "";
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_000): Promise<T> {
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   const method = (init.method ?? "GET").toUpperCase();
@@ -288,7 +288,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init,
       headers,
       credentials: "include",
-      signal: init.signal ?? AbortSignal.timeout(8_000),
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
@@ -322,7 +322,7 @@ export const api = {
     return request<{ strategies: Strategy[] }>("/api/v1/strategies");
   },
   marketPairs() {
-    return request<{ pairs: MarketPair[] }>("/api/v1/markets/pairs");
+    return request<{ pairs: MarketPair[] }>("/api/v1/markets/pairs", {}, 2_500);
   },
   marketStatus(market: MarketSelection, timeframe: string) {
     return request<MarketStatus>(marketRequestPath("/api/v1/markets/status", market, { timeframe }));

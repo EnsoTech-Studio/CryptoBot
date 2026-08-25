@@ -40,9 +40,18 @@ import {
   upsertCandle,
   type RecentMarketEvent,
 } from "../../lib/market";
+import {
+  MOCK_MARKET_PAIRS,
+  createMockPanelData,
+  createMockTicks,
+  displayTickFromBbo,
+  updateMockCandle,
+  type DisplayTick,
+} from "../../lib/realtime-mock";
 
 export type LiveState = "connecting" | "live" | "stale" | "paused";
-export type ConnectionLabel = "Live" | "Syncing" | "Degraded" | "Paused" | "Unavailable";
+export type ConnectionLabel = "Live" | "Syncing" | "Degraded" | "Paused" | "Unavailable" | "Mock";
+export type DataMode = "live" | "mock";
 
 export type Panel = {
   id: string;
@@ -102,6 +111,7 @@ type WorkspaceValue = {
   signalCount: number;
   activeStrategyCount: number;
   streamLabel: ConnectionLabel;
+  dataMode: DataMode;
   marketPairs: MarketPair[];
   marketPairsState: LoadState;
   selectedMarket: MarketSelection;
@@ -112,6 +122,7 @@ type WorkspaceValue = {
   realtimeEnabled: boolean;
   setRealtimeEnabled: (enabled: boolean) => void;
   recentMarketEvents: RecentMarketEvent[];
+  recentTicks: DisplayTick[];
   lastFrameAt?: string;
   latencyMs: number | null;
   reconnectCount: number;
@@ -178,9 +189,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [focusIndex, setFocusIndex] = useState(0);
   const [marketPairs, setMarketPairs] = useState<MarketPair[]>([]);
   const [marketPairsState, setMarketPairsState] = useState<LoadState>("loading");
+  const [dataMode, setDataMode] = useState<DataMode>("live");
   const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(DEFAULT_MARKET);
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
+  const [recentTicks, setRecentTicks] = useState<DisplayTick[]>([]);
   const [lastFrameAt, setLastFrameAt] = useState<string>();
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [socketReconnectCount, setSocketReconnectCount] = useState(0);
@@ -208,6 +221,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const panelsRef = useRef(panels);
   const selectedMarketRef = useRef(selectedMarket);
   const realtimeEnabledRef = useRef(realtimeEnabled);
+  const dataModeRef = useRef<DataMode>(dataMode);
+  const mockTickRef = useRef(0);
   useEffect(() => {
     panelsRef.current = panels;
   }, [panels]);
@@ -217,6 +232,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     realtimeEnabledRef.current = realtimeEnabled;
   }, [realtimeEnabled]);
+  useEffect(() => {
+    dataModeRef.current = dataMode;
+  }, [dataMode]);
 
   const selectedPair = useMemo(
     () => marketPairs.find((pair) => marketKey(pair) === marketKey(selectedMarket)),
@@ -243,7 +261,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const activeStrategyCount = new Set(panels.map((panel) => panel.strategy)).size;
   const streamLabel: ConnectionLabel = !realtimeEnabled
     ? "Paused"
-    : marketPairsState === "unavailable" && readyPanelCount === 0
+    : dataMode === "mock"
+      ? "Mock"
+      : marketPairsState === "unavailable" && readyPanelCount === 0
       ? "Unavailable"
       : stalePanelCount > 0 || marketStatus?.stale
         ? "Degraded"
@@ -268,6 +288,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setPanels((current) => current.map((panel, panelIndex) => panelIndex === index ? { ...panel, ...patch } : panel));
   }
 
+  function activateMockMode(market: MarketSelection = selectedMarketRef.current) {
+    const catalogHasMarket = MOCK_MARKET_PAIRS.some((pair) => marketKey(pair) === marketKey(market));
+    const mockPairs = catalogHasMarket ? MOCK_MARKET_PAIRS : [{
+      provider: market.provider,
+      symbol: market.symbol.toUpperCase(),
+      base_asset: market.symbol.toUpperCase().replace(/USDT$/, ""),
+      quote_asset: "USDT",
+      timeframes: ["1m", "5m", "15m", "1h", "4h"],
+    }, ...MOCK_MARKET_PAIRS];
+    dataModeRef.current = "mock";
+    setDataMode("mock");
+    setMarketPairs(mockPairs);
+    setMarketPairsState("ready");
+    setRecentTicks(createMockTicks(market.symbol));
+    setLatencyMs(24);
+    setLastFrameAt("2025-04-29T10:45:23.000Z");
+    setMarketStatus({
+      provider: "deterministic_mock",
+      symbol: market.symbol.toUpperCase(),
+      timeframe: panelsRef.current[0]?.timeframe ?? "1m",
+      stale: false,
+      last_closed_at: "2025-04-29T10:45:23.000Z",
+      last_sequence: 1,
+      reconnect_count: 0,
+    });
+    setMarketStatusState("ready");
+    report("Backend market services unavailable. Showing clearly labeled deterministic mock data.", "warn");
+  }
+
   async function loadPanel(
     index: number,
     override: Partial<Pick<Panel, "timeframe" | "strategy">> = {},
@@ -280,6 +329,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const isHistoryRequest = limit > 180;
     if (isHistoryRequest) setPanel(index, { historyLoading: true, error: undefined });
 
+    if (dataModeRef.current === "mock") {
+      const mock = createMockPanelData(explicitMarket, panel.timeframe, limit);
+      setPanel(index, {
+        timeframe: panel.timeframe,
+        strategy: panel.strategy,
+        ...mock,
+        lastClosed: mock.candles.at(-1)?.close_time,
+        liveState: realtimeEnabledRef.current ? "live" : "paused",
+        loaded: true,
+        historyLoading: false,
+        historyLimit: limit,
+        error: undefined,
+      });
+      return;
+    }
+
     const [candlesResult, overlaysResult] = await Promise.allSettled([
       api.candles(explicitMarket, panel.timeframe, limit),
       api.overlays(explicitMarket, panel.timeframe, panel.strategy, limit),
@@ -287,20 +352,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (requestId !== panelRequestIds.current[index] || requestMarketKey !== marketKey(selectedMarketRef.current)) return;
 
     if (candlesResult.status === "rejected") {
-      const errorMessage = messageFromError(candlesResult.reason);
-      setPanels((current) => current.map((currentPanel, panelIndex) => panelIndex === index
-        ? {
-            ...currentPanel,
-            candles: isHistoryRequest ? currentPanel.candles : [],
-            series: isHistoryRequest ? currentPanel.series : [],
-            markers: isHistoryRequest ? currentPanel.markers : [],
-            liveState: realtimeEnabledRef.current ? "stale" : "paused",
-            loaded: true,
-            historyLoading: false,
-            error: errorMessage,
-          }
-        : currentPanel));
-      report(errorMessage, "error");
+      activateMockMode(explicitMarket);
+      const mock = createMockPanelData(explicitMarket, panel.timeframe, limit);
+      setPanel(index, {
+        timeframe: panel.timeframe,
+        strategy: panel.strategy,
+        ...mock,
+        lastClosed: mock.candles.at(-1)?.close_time,
+        liveState: realtimeEnabledRef.current ? "live" : "paused",
+        loaded: true,
+        historyLoading: false,
+        historyLimit: limit,
+        error: undefined,
+      });
       return;
     }
 
@@ -354,6 +418,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         symbol: pair.symbol.toUpperCase(),
         timeframes: pair.timeframes ?? [],
       }));
+      if (pairs.length === 0) throw new Error("Market pair catalog is empty");
+      dataModeRef.current = "live";
+      setDataMode("live");
       setMarketPairs(pairs);
       setMarketPairsState("ready");
 
@@ -363,7 +430,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         : pairs.find((pair) => marketKey(pair) === marketKey(selectedMarketRef.current)) ?? pairs[0];
       if (candidate) setSelectedMarket({ provider: candidate.provider, symbol: candidate.symbol });
     } catch {
-      setMarketPairsState("unavailable");
+      activateMockMode(DEFAULT_MARKET);
+      setSelectedMarket(DEFAULT_MARKET);
     }
   }
 
@@ -436,6 +504,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       void retryMarketPairs();
     }, 0);
     return () => window.clearTimeout(bootstrapTimer);
+    // Bootstrap once; retries are user-driven after the initial request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const marketSignature = marketKey(selectedMarket);
@@ -446,6 +516,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setPanels(nextPanels);
       setFocusIndex(0);
       setRecentMarketEvents([]);
+      setRecentTicks(dataModeRef.current === "mock" ? createMockTicks(selectedMarket.symbol) : []);
       setLastFrameAt(undefined);
       setLatencyMs(null);
       setSocketReconnectCount(0);
@@ -459,13 +530,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => window.cancelAnimationFrame(resetFrame);
     // Pair or supported timeframe changes require a clean, guarded reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marketSignature, timeframeSignature]);
+  }, [marketSignature, timeframeSignature, dataMode]);
 
   const currentPrimaryTimeframe = panels[0]?.timeframe;
   const primaryTimeframe = currentPrimaryTimeframe && availableTimeframes.includes(currentPrimaryTimeframe)
     ? currentPrimaryTimeframe
     : availableTimeframes[0] ?? preferredTimeframes[0];
   useEffect(() => {
+    if (dataMode === "mock") return;
     let stopped = false;
     let timer: number | undefined;
     const refresh = async () => {
@@ -488,11 +560,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       stopped = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [marketSignature, primaryTimeframe]);
+  }, [dataMode, marketSignature, primaryTimeframe]);
 
   const subscriptionSignature = panels.map((panel) => `${panel.timeframe}:${panel.strategy}`).join("|");
   useEffect(() => {
-    if (!realtimeEnabled) return;
+    if (!realtimeEnabled || dataMode === "mock" || marketPairsState !== "ready") return;
 
     let stopped = false;
     const sockets = new Set<WebSocket>();
@@ -583,6 +655,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
           if (frame.type === "bbo" && frame.bbo) {
             setRecentMarketEvents((current) => appendMarketEvent(current, frame.bbo!));
+            setRecentTicks((current) => [
+              displayTickFromBbo(
+                frame.bbo!.id,
+                frame.bbo!.occurredAt,
+                frame.bbo!.bid,
+                frame.bbo!.ask,
+                frame.bbo!.bidQty,
+                frame.bbo!.askQty,
+              ),
+              ...current.filter((item) => item.id !== frame.bbo!.id),
+            ].slice(0, 50));
             setPanel(index, { liveState: "live" });
           }
           if (frame.type === "stream_status") {
@@ -622,7 +705,42 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
     // Socket lifecycle is keyed by the exact market subscription signature.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marketSignature, realtimeEnabled, subscriptionSignature]);
+  }, [dataMode, marketPairsState, marketSignature, realtimeEnabled, subscriptionSignature]);
+
+  useEffect(() => {
+    if (dataMode !== "mock") return;
+    if (!realtimeEnabled) return;
+
+    const timer = window.setInterval(() => {
+      mockTickRef.current += 1;
+      const tick = mockTickRef.current;
+      const nextPanels = panelsRef.current.map((panel) => {
+        const last = panel.candles.at(-1);
+        if (!last) return panel;
+        const nextCandle = updateMockCandle(last, tick + timeframeOrder(panel.timeframe));
+        return {
+          ...panel,
+          candles: [...panel.candles.slice(0, -1), nextCandle],
+          liveState: "live" as const,
+        };
+      });
+      setPanels(nextPanels);
+      const price = nextPanels[0]?.candles.at(-1)?.close;
+      const now = new Date().toISOString();
+      if (price != null) {
+        setRecentTicks((current) => [{
+          id: `mock-live-${tick}`,
+          occurredAt: now,
+          price,
+          quantity: Number((0.008 + (tick % 13) * 0.003).toFixed(3)),
+          side: tick % 3 === 0 ? "sell" as const : "buy" as const,
+        }, ...current].slice(0, 50));
+      }
+      setLastFrameAt(now);
+      setLatencyMs(22 + (tick % 9));
+    }, 1_600);
+    return () => window.clearInterval(timer);
+  }, [dataMode, marketSignature, realtimeEnabled, selectedMarket.symbol]);
 
   useEffect(() => {
     if (!activeExperimentId) return;
@@ -670,6 +788,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     signalCount,
     activeStrategyCount,
     streamLabel,
+    dataMode,
     marketPairs,
     marketPairsState,
     selectedMarket,
@@ -685,11 +804,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setRealtimeEnabledState(enabled);
       setPanels((current) => current.map((panel) => ({
         ...panel,
-        liveState: enabled ? "connecting" : "paused",
+        liveState: enabled ? (dataModeRef.current === "mock" ? "live" : "connecting") : "paused",
       })));
       report(enabled ? "Realtime stream resumed." : "Realtime stream paused.");
     },
     recentMarketEvents,
+    recentTicks,
     lastFrameAt,
     latencyMs,
     reconnectCount,

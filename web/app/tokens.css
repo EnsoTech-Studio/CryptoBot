@@ -38,7 +38,7 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --page-gutter: clamp(16px, 2.3vw, 36px);
+  --page-gutter: clamp(16px, 1.8vw, 28px);
 
   /* Shape and layout */
   --radius-inner: 8px;
@@ -47,9 +47,9 @@
   --radius-pill: 999px;
   --control-h: 38px;
   --control-h-sm: 32px;
-  --rail-w: 236px;
+  --rail-w: 240px;
   --inspector-w: 376px;
-  --header-h: 82px;
+  --header-h: 73px;
 
   /* Motion */
   --dur-fast: 120ms;

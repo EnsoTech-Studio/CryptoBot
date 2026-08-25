@@ -1,9 +1,9 @@
 import { StatusDot, type StatusTone } from "../ui/Foundation";
-import type { ConnectionLabel } from "../../providers/workspace";
+import type { ConnectionLabel, DataMode } from "../../providers/workspace";
 import styles from "./shell.module.css";
 
-export function SourceStatus({ state }: { state: ConnectionLabel }) {
-  const tone: StatusTone = state === "Live" ? "live" : state === "Syncing" ? "syncing" : state === "Paused" ? "neutral" : "error";
+export function SourceStatus({ state, dataMode }: { state: ConnectionLabel; dataMode: DataMode }) {
+  const tone: StatusTone = state === "Live" || state === "Mock" ? "live" : state === "Syncing" ? "syncing" : state === "Paused" ? "neutral" : "error";
   const stateLabel = state === "Live"
     ? "đang trực tuyến"
     : state === "Syncing"
@@ -15,9 +15,10 @@ export function SourceStatus({ state }: { state: ConnectionLabel }) {
           : "kết nối gián đoạn";
 
   return (
-    <div className={`${styles.sourceStatus} ${styles[`source${state}`]}`} title={`Nguồn dữ liệu ${stateLabel}`}>
+    <div className={`${styles.sourceStatus} ${styles[`source${state}`]}`} title={dataMode === "mock" ? "Dữ liệu mô phỏng xác định; không phải giá thị trường thật" : `Nguồn dữ liệu ${stateLabel}`}>
       <StatusDot tone={tone} />
       <span>Nguồn dữ liệu: Binance API + WebSocket</span>
+      {dataMode === "mock" ? <em>Mock</em> : null}
     </div>
   );
 }

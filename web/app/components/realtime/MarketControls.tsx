@@ -21,6 +21,7 @@ export function MarketControls() {
     realtimeEnabled,
     setRealtimeEnabled,
     streamLabel,
+    dataMode,
   } = useWorkspace();
   const selectedKey = marketKey(selectedMarket);
   const activeTimeframe = panels[focusIndex]?.timeframe ?? availableTimeframes[0];
@@ -42,9 +43,10 @@ export function MarketControls() {
       <label className={styles.controlGroup}>
         <span className={styles.controlLabel}>Pair / Coin</span>
         <span className={styles.selectWrap}>
+          <span className={styles.coinBadge} aria-hidden="true">₿</span>
           <select
             value={selectedKey}
-            disabled={marketPairsState !== "ready" || marketPairs.length === 0}
+            disabled={marketPairs.length === 0}
             onChange={(event) => {
               const next = marketPairs.find((pair) => marketKey(pair) === event.target.value);
               if (next) selectMarket(next);
@@ -77,13 +79,20 @@ export function MarketControls() {
       </div>
 
       <div className={`${styles.controlGroup} ${styles.realtimeControl}`}>
-        <span className={styles.controlLabel}>Cập nhật thị trường</span>
+        <span className={styles.controlLabel}>Realtime</span>
         <div className={styles.realtimeRow}>
           <Toggle checked={realtimeEnabled} label="Realtime" onChange={setRealtimeEnabled} />
-          <span className={styles.connectionBadge} data-state={streamLabel.toLowerCase()}>
-            <StatusDot tone={streamLabel === "Live" ? "live" : streamLabel === "Syncing" ? "syncing" : streamLabel === "Paused" ? "neutral" : "error"} />
-            {streamLabel}
-          </span>
+          <button
+            type="button"
+            className={styles.connectionBadge}
+            data-state={streamLabel.toLowerCase()}
+            disabled={dataMode !== "mock" || marketPairsState === "loading"}
+            onClick={() => void retryMarketPairs()}
+            title={dataMode === "mock" ? "Thử kết nối lại market backend" : undefined}
+          >
+            <StatusDot tone={streamLabel === "Live" || streamLabel === "Mock" ? "live" : streamLabel === "Syncing" ? "syncing" : streamLabel === "Paused" ? "neutral" : "error"} />
+            {marketPairsState === "loading" ? "Đang thử kết nối" : !realtimeEnabled ? "Đã tạm dừng" : dataMode === "mock" ? "Dữ liệu mô phỏng" : streamLabel === "Live" ? "Đang nhận dữ liệu" : streamLabel}
+          </button>
         </div>
       </div>
 

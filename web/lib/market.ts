@@ -1,6 +1,6 @@
 export const DEFAULT_MARKET: MarketSelection = {
   provider: "binance_usdm",
-  symbol: "ETHUSDT",
+  symbol: "BTCUSDT",
 };
 
 export const MARKET_CONFIG_HASH = `sha256:${"4".repeat(64)}`;
