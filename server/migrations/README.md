@@ -1,5 +1,6 @@
-# Migration seam
+# Database migrations
 
-PostgreSQL schema ownership is reserved for this directory. No runtime
-migration or database connection is included in skeleton phase.
+Production migrations live in the repository-level `migrations/` directory and
+are applied by `python -m app.migrate` before the Go API starts. The Go runtime
+never creates or alters schema during normal startup.
 

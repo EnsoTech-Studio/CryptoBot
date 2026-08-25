@@ -25,6 +25,7 @@ class BacktestJob:
     leased_by: str | None = None
     lease_token: UUID | None = None
     lease_expires_at: datetime | None = None
+    correlation_id: str | None = None
     # claim-time run takeover bookkeeping (design.md §8.3.2): the run row this
     # claim owns, and whether the run was already completed so the worker skips
     # the engine entirely (AC-05c/AC-05d)

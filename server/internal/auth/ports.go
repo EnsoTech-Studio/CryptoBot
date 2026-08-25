@@ -16,10 +16,11 @@ const (
 )
 
 type Principal struct {
-	UserID uuid.UUID
-	Email  string
-	Role   Role
-	Active bool
+	UserID      uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	Role        Role      `json:"role"`
+	Active      bool      `json:"-"`
 }
 
 type Authenticator interface {

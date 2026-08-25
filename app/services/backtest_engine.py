@@ -93,6 +93,7 @@ from ..domain.common import (
 from ..domain.common.canonical import canonical_json
 from ..domain.indicator import DeterministicLibrary, IndicatorView, Library
 from ..domain.market import BBO, Candle, CausalCandles
+from ..domain.sentiment import NewsSentimentWindow
 from ..domain.strategy import (
     AnalysisContext,
     ChildDefinition,
@@ -534,10 +535,18 @@ class DeterministicEngine:
         self._registry = registry
         self._library = library if library is not None else DeterministicLibrary()
 
-    def run(self, snapshot: ExperimentSnapshot, candles: list[Candle], bbo: list[BBO]) -> Result:
+    def run(
+        self,
+        snapshot: ExperimentSnapshot,
+        candles: list[Candle],
+        bbo: list[BBO],
+        sentiment_windows: list[NewsSentimentWindow | None] | None = None,
+    ) -> Result:
         started = time.perf_counter()
         plan = self._resolve_plan(snapshot)
         self._validate(snapshot, candles, bbo, plan.warm_up)
+        if sentiment_windows is not None and len(sentiment_windows) != len(candles):
+            raise DomainError(ERR_VALIDATION, "sentiment window series must align with candles")
         series = self._library.precompute([c.close for c in candles], plan.requirements)
 
         sim = _PositionSimulator(snapshot)
@@ -551,7 +560,16 @@ class DeterministicEngine:
             else:
                 index, candle = payload
                 self._on_candle_closed(
-                    snapshot, plan, series, candles, index, candle, market, sim, signals
+                    snapshot,
+                    plan,
+                    series,
+                    candles,
+                    sentiment_windows,
+                    index,
+                    candle,
+                    market,
+                    sim,
+                    signals,
                 )
             if sim.mark_equity(event_time, equity_points):
                 break  # liquidated: facts so far stay valid, settle below
@@ -745,6 +763,7 @@ class DeterministicEngine:
         plan: _Plan,
         series: dict[str, list[Decimal]],
         candles: list[Candle],
+        sentiment_windows: list[NewsSentimentWindow | None] | None,
         index: int,
         candle: Candle,
         market: Any,
@@ -754,7 +773,9 @@ class DeterministicEngine:
         if index < plan.warm_up:
             return
         try:
-            signal, child_payload = self._analyze(plan, series, candles, index, candle, market)
+            signal, child_payload = self._analyze(
+                plan, series, candles, sentiment_windows, index, candle, market
+            )
         except DomainError:
             raise
         except Exception as exc:
@@ -788,6 +809,7 @@ class DeterministicEngine:
         plan: _Plan,
         series: dict[str, list[Decimal]],
         candles: list[Candle],
+        sentiment_windows: list[NewsSentimentWindow | None] | None,
         index: int,
         candle: Candle,
         market: Any,
@@ -799,6 +821,7 @@ class DeterministicEngine:
             candles=CausalCandles(candles, index),
             index=index,
             indicators=IndicatorView(series, index),
+            news_sentiment=None if sentiment_windows is None else sentiment_windows[index],
             params=plan.params,
         )
         if plan.is_composite():

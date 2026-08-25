@@ -1,3 +1,3 @@
-// Package auth defines authentication, session, RBAC, ownership, CSRF, and
-// rate-limit seams. Production token signing remains an adapter.
+// Package auth implements persistent authentication, session rotation, RBAC,
+// CSRF support, Argon2id password hashing, and RS256 token signing.
 package auth

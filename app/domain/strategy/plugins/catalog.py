@@ -25,6 +25,12 @@ from typing import Any
 from ...common import ACTION_BUY, ACTION_HOLD, ACTION_SELL
 from ..contract import AnalysisContext, Definition, Signal
 from ..registry import Registry
+from .bollinger import BollingerStrategy
+from .composite_root import CompositeRoot
+from .macd import MACDStrategy
+from .news_sentiment import NewsSentimentStrategy
+from .rsi import RSIStrategy
+from .support_resistance import SupportResistanceStrategy
 
 DEFAULT_FAST = 20
 DEFAULT_SLOW = 50
@@ -96,6 +102,12 @@ class MovingAverageCross:
 def register_all(registry: Registry) -> None:
     registry.register(lambda: MovingAverageCross("sma", "ma_cross", "MA Cross (SMA)"))
     registry.register(lambda: MovingAverageCross("ema", "ema_cross", "EMA Cross (EMA)"))
+    registry.register(RSIStrategy)
+    registry.register(BollingerStrategy)
+    registry.register(SupportResistanceStrategy)
+    registry.register(NewsSentimentStrategy)
+    registry.register(MACDStrategy)
+    registry.register(CompositeRoot)
 
 
 def default_registry() -> Registry:

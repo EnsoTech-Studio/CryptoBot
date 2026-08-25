@@ -75,7 +75,6 @@ var (
 	ErrProviderUnavailable = errors.New("provider unavailable")
 	ErrOwnership           = errors.New("ownership denied")
 	ErrQuota               = errors.New("quota exceeded")
-	ErrNotImplemented      = errors.New("not implemented")
 	ErrLeaseLost           = errors.New("lease lost")
 )
 

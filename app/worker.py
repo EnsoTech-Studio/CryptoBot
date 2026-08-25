@@ -1,13 +1,13 @@
 """Backtest worker entrypoint.
 
-Mirrors `server/cmd/worker/main.go`. The worker is the *same image* as the
-`research` service with a different entrypoint (design.md §1.3): claim jobs from
+The worker is the *same image* as the `research` service with a different
+entrypoint (design.md §1.3): claim jobs from
 `backtest_jobs` via `FOR UPDATE SKIP LOCKED` + lease, execute the immutable
 snapshot through the one and only `DeterministicEngine`, persist facts and the
 `BacktestCompleted` outbox event in the same transaction, and heart-beat the
 lease while a job runs. `EVENT_CONSUMERS=evaluator` (design.md §5.7.2 config B)
-lets this process also run the evaluator consumer; by default evaluation is
-left to the outbox dispatcher in the API process (config A).
+lets this process also run the evaluator consumer; production Compose uses the
+dedicated event-worker process.
 
 The `fixture` subcommand is the verification harness for
 `data/formatted/<symbol>/<date>/`: it builds the exact snapshot the queue path
@@ -54,6 +54,7 @@ from .domain.strategy import (
     CompositeDefinition,
     Reference,
 )
+from .config import Settings
 from .infrastructure.dataset import DatasetInfo, load_fixture_dataset
 from .services.backtest_engine import DeterministicEngine, canonical_result_hash
 from .services.evaluator import DeterministicEvaluator
@@ -100,10 +101,16 @@ def default_evaluation_policy(timeframe: str) -> EvaluationPolicy:
 
 
 def execute_job(
-    engine: DeterministicEngine, snapshot: ExperimentSnapshot, candles: list[Candle], bbo: list[BBO]
+    engine: DeterministicEngine,
+    snapshot: ExperimentSnapshot,
+    candles: list[Candle],
+    bbo: list[BBO],
+    sentiment_windows: list[Any] | None = None,
 ) -> Result:
     """The single execution path shared by queue mode and fixture mode."""
-    return engine.run(snapshot, candles, bbo)
+    if sentiment_windows is None:
+        return engine.run(snapshot, candles, bbo)
+    return engine.run(snapshot, candles, bbo, sentiment_windows)
 
 
 # ----------------------------------------------------------------------------
@@ -119,6 +126,38 @@ class WorkerConfig:
     lease_s: float = 120.0
     heartbeat_s: float = 30.0
     event_consumers: tuple[str, ...] = ()
+
+
+def _queue_log(
+    level: str,
+    event: str,
+    worker_id: str,
+    job: BacktestJob | None = None,
+    **fields: Any,
+) -> None:
+    payload: dict[str, Any] = {
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+        "level": level,
+        "service": "research-worker",
+        "operation": event,
+        "worker_id": worker_id,
+        **fields,
+    }
+    if job is not None:
+        payload.update(
+            {
+                "job_id": str(job.id),
+                "experiment_id": str(job.experiment_id),
+                "run_id": str(job.run_id) if job.run_id else None,
+                "correlation_id": job.correlation_id,
+                "attempt": job.attempt,
+            }
+        )
+    print(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        file=sys.stderr if level in {"warning", "error"} else sys.stdout,
+        flush=True,
+    )
 
 
 class _Heartbeat:
@@ -206,28 +245,33 @@ class BacktestWorker:
                 # mark the job completed without touching the engine or facts
                 completed, _ = self._dispatcher.complete(job.id, job.lease_token)
                 if not completed:
-                    print(
-                        f"[{self._config.worker_id}] lease guard rejected completion of {job.id}",
-                        file=sys.stderr,
+                    _queue_log(
+                        "warning", "lease_guard_rejected", self._config.worker_id, job
                     )
                 return
             with _Heartbeat(
                 self._dispatcher, job, self._config.heartbeat_s, self._config.lease_s
             ) as beat:
                 candles, quotes = self._dispatcher.load_dataset(job.snapshot)
-                result = execute_job(self._engine, job.snapshot, candles, quotes)
+                sentiment_windows = None
+                if hasattr(self._dispatcher, "load_sentiment_windows"):
+                    sentiment_windows = self._dispatcher.load_sentiment_windows(
+                        job.snapshot, candles
+                    )
+                result = execute_job(
+                    self._engine, job.snapshot, candles, quotes, sentiment_windows
+                )
                 lost = beat.lost
             if lost:
-                print(
-                    f"[{self._config.worker_id}] lost lease on job {job.id}; discarding result",
-                    file=sys.stderr,
+                _queue_log(
+                    "warning", "lease_lost", self._config.worker_id, job,
+                    result="discarded",
                 )
                 return
             completed, run_id = self._dispatcher.complete(job.id, job.lease_token, result)
             if not completed:
-                print(
-                    f"[{self._config.worker_id}] lease guard rejected completion of {job.id}",
-                    file=sys.stderr,
+                _queue_log(
+                    "warning", "lease_guard_rejected", self._config.worker_id, job
                 )
                 return
             if "evaluator" in self._config.event_consumers:
@@ -235,36 +279,34 @@ class BacktestWorker:
                     self._consume_evaluation(job, result, run_id or job.run_id)
                 except Exception as err:  # noqa: BLE001 — job is already completed; an
                     # evaluation failure must not fail() the completed job/run
-                    print(
-                        f"[{self._config.worker_id}] evaluation consumer failed for "
-                        f"job {job.id}: {err!r}",
-                        file=sys.stderr,
+                    _queue_log(
+                        "error", "evaluation_failed", self._config.worker_id, job,
+                        error_code=type(err).__name__,
                     )
-            print(
-                f"[{self._config.worker_id}] job {job.id} completed: "
-                f"{len(result.trades)} trades, {result.duration_ms} ms"
+            _queue_log(
+                "info", "backtest_completed", self._config.worker_id, job,
+                result="success", trade_count=len(result.trades),
+                duration_ms=result.duration_ms,
             )
         except DomainError as err:
             retryable = err.code not in _NON_RETRYABLE
             self._dispatcher.fail(job.id, err, retryable, job.lease_token)
-            print(
-                f"[{self._config.worker_id}] job {job.id} failed ({err.code}, "
-                f"retryable={retryable}): {err.message}",
-                file=sys.stderr,
+            _queue_log(
+                "error", "backtest_failed", self._config.worker_id, job,
+                result="failure", error_code=err.code, retryable=retryable,
             )
         except Exception as err:  # noqa: BLE001 — worker must survive anything
             self._dispatcher.fail(job.id, err, True, job.lease_token)
-            print(
-                f"[{self._config.worker_id}] job {job.id} crashed: {err!r}",
-                file=sys.stderr,
+            _queue_log(
+                "error", "backtest_crashed", self._config.worker_id, job,
+                result="failure", error_code=type(err).__name__, retryable=True,
             )
 
     def _consume_evaluation(self, job: BacktestJob, result: Result, run_id: Any) -> None:
         if run_id is None:
-            print(
-                f"[{self._config.worker_id}] no run id for {job.experiment_id}; "
-                "skipping evaluation",
-                file=sys.stderr,
+            _queue_log(
+                "warning", "evaluation_skipped", self._config.worker_id, job,
+                error_code="missing_run_id",
             )
             return
         policy = default_evaluation_policy(job.snapshot.market.timeframe)
@@ -299,15 +341,23 @@ def run_queue_mode() -> int:
         for c in os.environ.get("EVENT_CONSUMERS", "").split(",")
         if c.strip()
     )
+    settings = Settings.from_env()
     config = WorkerConfig(
         worker_id=os.environ.get("WORKER_ID", "worker-1"),
         poll_interval_s=float(os.environ.get("POLL_INTERVAL_S", "1.0")),
-        lease_s=float(os.environ.get("LEASE_SECONDS", "120")),
-        heartbeat_s=float(os.environ.get("HEARTBEAT_SECONDS", "30")),
+        lease_s=settings.worker_lease_s,
+        heartbeat_s=settings.worker_heartbeat_s,
         event_consumers=consumers,
     )
     worker = BacktestWorker(dispatcher, config=config)
-    print(f"[{config.worker_id}] polling backtest_jobs (consumers={consumers or 'none'})")
+    _queue_log(
+        "info",
+        "worker_started",
+        config.worker_id,
+        consumers=consumers or "none",
+        lease_seconds=config.lease_s,
+        heartbeat_seconds=config.heartbeat_s,
+    )
     try:
         worker.run_forever()
     finally:

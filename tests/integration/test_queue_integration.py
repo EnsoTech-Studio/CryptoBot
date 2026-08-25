@@ -2,7 +2,7 @@
 
 Run:
     docker compose -f docker-compose.test.yml up -d --wait
-    TEST_DATABASE_URL=postgres://cryptobot:cryptobot@localhost:55432/cryptobot?sslmode=disable \
+    TEST_DATABASE_URL=postgres://cryptobot:cryptobot@127.0.0.1:55433/cryptobot?sslmode=disable \
         uv run pytest tests/integration -q
 
 The schema is the design.md §8 DDL subset (tests/integration/schema.sql, loaded
@@ -24,7 +24,7 @@ psycopg = pytest.importorskip("psycopg")
 
 DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    "postgres://cryptobot:cryptobot@localhost:55432/cryptobot?sslmode=disable",
+    "postgres://cryptobot:cryptobot@127.0.0.1:55433/cryptobot?sslmode=disable",
 )
 
 try:
@@ -184,7 +184,7 @@ def _process_job(d, job_id):
 
 def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
     job_id, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
-    job = _process_job(dispatcher, job_id)
+    _process_job(dispatcher, job_id)
 
     # job + run lifecycle
     assert _rows(dispatcher, "SELECT status FROM backtest_jobs WHERE id = %s", (job_id,))[0][0] == "completed"
@@ -335,6 +335,62 @@ def test_heartbeat_extends_lease_by_configured_length(dispatcher) -> None:
     assert dispatcher.heartbeat(job.id, uuid4(), timedelta(seconds=300)) is False
 
 
+def test_claim_enforces_per_user_concurrency_quota(dispatcher) -> None:
+    first_job_id, first_experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    with dispatcher._conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO user_quotas(user_id,max_concurrent_runs)
+            SELECT owner_id,1 FROM experiments WHERE id=%s
+            """,
+            (first_experiment_id,),
+        )
+        cur.execute(
+            """
+            INSERT INTO experiments(
+                owner_id,strategy_version_id,candidate_definition,candidate_hash,
+                market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id
+            )
+            SELECT owner_id,strategy_version_id,candidate_definition,%s,
+                   market_dataset_id,bbo_dataset_hash,evaluator_version,%s
+            FROM experiments WHERE id=%s RETURNING id
+            """,
+            ("d" * 64, "quota-correlation", first_experiment_id),
+        )
+        second_experiment_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO backtest_jobs(experiment_id) VALUES (%s) RETURNING id",
+            (second_experiment_id,),
+        )
+        second_job_id = cur.fetchone()[0]
+    dispatcher._conn.commit()
+
+    first = dispatcher.claim("quota-worker-1", timedelta(seconds=120))
+    assert first is not None and first.id in {first_job_id, second_job_id}
+    assert dispatcher.claim("quota-worker-2", timedelta(seconds=120)) is None
+
+
+def test_database_rejects_invalid_search_stop_contract(dispatcher) -> None:
+    _, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_id = _rows(
+        dispatcher,
+        "SELECT owner_id,market_dataset_id FROM experiments WHERE id=%s",
+        (experiment_id,),
+    )[0]
+    with dispatcher._conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(
+                """
+                INSERT INTO search_runs(
+                    owner_id,generator_id,search_space,stop_conditions,
+                    market_dataset_id,seed
+                ) VALUES (%s,'grid','{}','{"max_candidates":1.5}',%s,0)
+                """,
+                (owner_id, dataset_id),
+            )
+    dispatcher._conn.rollback()
+
+
 def test_lost_lease_mid_persist_rolls_back_completely(dispatcher) -> None:
     job_id, _ = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
     job = dispatcher.claim("itest-worker", timedelta(seconds=120))
@@ -363,3 +419,182 @@ def test_lost_lease_mid_persist_rolls_back_completely(dispatcher) -> None:
     ) == [(0,)]
     # the connection is usable again (no aborted-transaction poisoning)
     assert dispatcher.complete(job.id, job.lease_token) == (True, None)
+
+
+def test_outbox_consumer_evaluates_once_and_delivers_idempotently(dispatcher) -> None:
+    from app.event_worker import EventWorker
+    from app.infrastructure.postgres.outbox import PostgresOutbox
+    from app.worker import BacktestWorker, WorkerConfig
+
+    job_id, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    job = dispatcher.claim("itest-worker", timedelta(seconds=120))
+    worker = BacktestWorker(
+        dispatcher,
+        config=WorkerConfig(worker_id="itest-worker", event_consumers=()),
+    )
+    worker._process(job)
+    run_id = _rows(
+        dispatcher,
+        "SELECT id FROM backtest_runs WHERE experiment_id=%s",
+        (experiment_id,),
+    )[0][0]
+    assert _rows(
+        dispatcher, "SELECT count(*) FROM evaluations WHERE backtest_run_id=%s", (run_id,)
+    ) == [(0,)]
+
+    event_worker = EventWorker(DATABASE_URL, "itest-events")
+    try:
+        completed_event = None
+        while event := event_worker._outbox.claim():
+            event_worker._handle(event)
+            event_worker._outbox.complete(event.event_id)
+            if event.event_type == "BacktestCompleted":
+                completed_event = event
+        assert completed_event is not None
+        assert _rows(
+            dispatcher, "SELECT count(*) FROM evaluations WHERE backtest_run_id=%s", (run_id,)
+        ) == [(1,)]
+
+        # Re-delivery is safe at both layers: evaluation has a unique immutable
+        # identity and outbox completion recognizes the prior consumption.
+        event_worker._handle(completed_event)
+        event_worker._outbox.complete(completed_event.event_id)
+        assert _rows(
+            dispatcher, "SELECT count(*) FROM evaluations WHERE backtest_run_id=%s", (run_id,)
+        ) == [(1,)]
+        assert _rows(
+            dispatcher,
+            "SELECT count(*) FROM event_consumptions WHERE event_id=%s AND consumer_id=%s",
+            (completed_event.event_id, "itest-events"),
+        ) == [(1,)]
+        assert _rows(
+            dispatcher, "SELECT dispatch_status FROM domain_events WHERE event_id=%s",
+            (completed_event.event_id,),
+        ) == [("delivered",)]
+    finally:
+        event_worker.close()
+
+    # A different consumer cannot falsely record delivery without owning a claim.
+    stale = PostgresOutbox(DATABASE_URL, "stale-consumer")
+    try:
+        with pytest.raises(RuntimeError, match="lease lost"):
+            stale.complete(completed_event.event_id)
+    finally:
+        stale.close()
+
+
+def test_database_roles_enforce_service_ownership(dispatcher) -> None:
+    connection = dispatcher._conn
+    try:
+        connection.execute("SET LOCAL ROLE api_runtime")
+        connection.execute(
+            """
+            INSERT INTO candles(provider,symbol,timeframe,open_time,close_time,
+                                open,high,low,close,volume)
+            VALUES ('binance_usdm','ETHUSDT','1m',%s,%s,100,101,99,100,1)
+            """,
+            (T0, T0 + timedelta(minutes=1)),
+        )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute(
+                "INSERT INTO strategy_definitions(strategy_id,display_name,family)"
+                " VALUES ('forbidden-api-write','forbidden','trend')"
+            )
+    finally:
+        connection.rollback()
+
+    try:
+        connection.execute("SET LOCAL ROLE research_runtime")
+        connection.execute(
+            "INSERT INTO strategy_definitions(strategy_id,display_name,family)"
+            " VALUES ('allowed-research-write','allowed','trend')"
+        )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute(
+                "UPDATE users SET display_name='forbidden' WHERE false"
+            )
+    finally:
+        connection.rollback()
+
+
+def test_immutable_dataset_rejects_update_and_delete(dispatcher) -> None:
+    seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    with dispatcher._conn.cursor() as cursor:
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            cursor.execute("UPDATE market_datasets SET content_hash=%s", ("a" * 64,))
+    dispatcher._conn.rollback()
+    with dispatcher._conn.cursor() as cursor:
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            cursor.execute("DELETE FROM market_datasets")
+    dispatcher._conn.rollback()
+
+
+def test_research_http_create_is_async_idempotent_and_queryable(dispatcher) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.infrastructure.postgres.store import Store
+    from app.main import app
+
+    seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_version = _rows(
+        dispatcher,
+        """
+        SELECT u.id,d.dataset_version FROM users u CROSS JOIN market_datasets d LIMIT 1
+        """,
+    )[0]
+    store = Store(DATABASE_URL)
+    previous_store = getattr(app.state, "store", None)
+    app.state.store = store
+    headers = {
+        "Authorization": "Bearer development-internal-token",
+        "X-User-ID": str(owner_id),
+        "X-Request-ID": "itest-http-create",
+        "Idempotency-Key": "itest-http-create",
+    }
+    body = {
+        "owner_id": str(owner_id),
+        "strategy_id": "composite",
+        "strategy_version": "v1",
+        "candidate_definition": COMPOSITE_CANDIDATE,
+        "dataset_version": dataset_version,
+        "idempotency_key": "itest-http-create",
+    }
+    try:
+        # Avoid running the application lifespan here: this test injects an
+        # isolated integration Store explicitly and startup would resolve the
+        # developer/default DATABASE_URL instead.
+        client = TestClient(app)
+        created = client.post("/api/v1/experiments", headers=headers, json=body)
+        assert created.status_code == 202
+        accepted = created.json()
+        assert accepted["status"] == "queued"
+
+        repeated = client.post("/api/v1/experiments", headers=headers, json=body)
+        assert repeated.status_code == 200
+        assert repeated.json()["experiment_id"] == accepted["experiment_id"]
+        assert repeated.json()["run_id"] == accepted["run_id"]
+        assert repeated.json()["reused"] is True
+
+        summary = client.get(
+            f"/api/v1/experiments/{accepted['experiment_id']}", headers=headers
+        )
+        assert summary.status_code == 200
+        payload = summary.json()
+        assert payload["id"] == accepted["experiment_id"]
+        assert payload["status"] == "queued"
+        assert payload["candidate_definition"] == COMPOSITE_CANDIDATE
+        assert payload["metrics"] is None
+        assert payload["execution"]["fill_policy"] == "bbo_limit"
+        correlation = _rows(
+            dispatcher,
+            """
+            SELECT e.correlation_id,event.correlation_id
+            FROM experiments e JOIN domain_events event
+              ON event.aggregate_type='experiment' AND event.aggregate_id=e.id
+            WHERE e.id=%s
+            """,
+            (accepted["experiment_id"],),
+        )
+        assert correlation == [("itest-http-create", "itest-http-create")]
+    finally:
+        app.state.store = previous_store

@@ -72,11 +72,29 @@ export type Notice = { text: string; tone: NoticeTone };
 export type InspectorTab = "metrics" | "trades" | "provenance";
 export type LoadState = "idle" | "loading" | "ready" | "unavailable";
 
+type RealtimeFrame = {
+  type?: "subscribed" | "resync_required" | "kline" | "bbo" | "stream_status" | "error";
+  sequence?: number;
+  seq?: number;
+  final?: boolean;
+  state?: "connecting" | "stale" | "connected" | "recovered";
+  kline?: {
+    open_time: string;
+    close_time: string;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+    trade_count?: number | string;
+  };
+};
+
 const panelSeed = [
-  { id: "chart-1", title: "Scalp feed", timeframe: "5m", strategy: "composite@1.0.0" },
-  { id: "chart-2", title: "Trend check", timeframe: "15m", strategy: "ma_cross@1.0.0" },
-  { id: "chart-3", title: "Volatility", timeframe: "1h", strategy: "bollinger@1.0.0" },
-  { id: "chart-4", title: "Structure", timeframe: "4h", strategy: "support_resistance@1.0.0" },
+  { id: "chart-1", title: "Scalp feed", timeframe: "5m", strategy: "composite@v1" },
+  { id: "chart-2", title: "Trend check", timeframe: "15m", strategy: "ma_cross@v1" },
+  { id: "chart-3", title: "Volatility", timeframe: "1h", strategy: "bollinger@v1" },
+  { id: "chart-4", title: "Structure", timeframe: "4h", strategy: "support_resistance@v1" },
 ];
 
 const compositeChildren = [
@@ -316,46 +334,105 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const subscriptionSignature = panels.map((panel) => `${panel.timeframe}:${panel.strategy}`).join("|");
 
   useEffect(() => {
-    const sockets = panelsRef.current.map((panel, index) => {
+    let stopped = false;
+    const sockets = new Set<WebSocket>();
+    const reconnectTimers = new Set<number>();
+    panelsRef.current.forEach((panel, index) => {
       const key = `binance_usdm|ETHUSDT|${panel.timeframe}|${panel.strategy}|sha256:${"4".repeat(64)}`;
-      const socket = new WebSocket(wsURL(key));
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ action: "subscribe", key, req: `${panel.id}-${Date.now()}` }));
-        setPanel(index, { liveState: "live" });
-      };
-      socket.onmessage = (event) => {
-        const frame = JSON.parse(event.data) as {
-          type?: string;
-          kline?: Record<string, string>;
-          series?: OverlaySeries[];
-          markers?: OverlayMarker[];
+      let lastSequence = 0;
+      let reconnectAttempt = 0;
+
+      const connect = () => {
+        if (stopped) return;
+        const socket = new WebSocket(wsURL(key));
+        sockets.add(socket);
+        socket.onopen = () => {
+          reconnectAttempt = 0;
+          socket.send(JSON.stringify({
+            action: "subscribe",
+            key,
+            req: `${panel.id}-${Date.now()}`,
+            last_sequence: lastSequence,
+          }));
+          setPanel(index, { liveState: "live" });
         };
-        if (frame.type === "kline" && frame.kline) {
-          const kline = frame.kline;
-          const candle: Candle = {
-            provider: "binance_usdm",
-            symbol: "ETHUSDT",
-            timeframe: panel.timeframe,
-            open_time: kline.open_time,
-            close_time: kline.close_time,
-            open: Number(kline.open),
-            high: Number(kline.high),
-            low: Number(kline.low),
-            close: Number(kline.close),
-            volume: Number(kline.volume),
-            trade_count: 0,
-          };
-          setPanels((current) => current.map((p, i) => i === index
-            ? { ...p, candles: upsertCandle(p.candles, candle), lastClosed: candle.open_time, liveState: "live", loaded: true }
-            : p));
-        }
-        if (frame.type === "overlay_delta") void loadPanel(index);
+        socket.onmessage = (event) => {
+          const frame = JSON.parse(event.data) as RealtimeFrame;
+          if (frame.type === "subscribed") {
+            if (lastSequence === 0) lastSequence = frame.sequence ?? frame.seq ?? 0;
+            return;
+          }
+          if (frame.type === "resync_required") {
+            lastSequence = 0;
+            setPanel(index, { liveState: "connecting" });
+            void loadPanel(index);
+            socket.close();
+            return;
+          }
+          const sequence = frame.sequence ?? frame.seq;
+          if (sequence !== undefined) {
+            if (sequence <= lastSequence) return;
+            if (lastSequence > 0 && sequence !== lastSequence + 1) {
+              lastSequence = 0;
+              setPanel(index, { liveState: "connecting" });
+              void loadPanel(index);
+              socket.close();
+              return;
+            }
+            lastSequence = sequence;
+          }
+          if (frame.type === "kline" && frame.kline) {
+            const kline = frame.kline;
+            const candle: Candle = {
+              provider: "binance_usdm",
+              symbol: "ETHUSDT",
+              timeframe: panel.timeframe,
+              open_time: kline.open_time,
+              close_time: kline.close_time,
+              open: Number(kline.open),
+              high: Number(kline.high),
+              low: Number(kline.low),
+              close: Number(kline.close),
+              volume: Number(kline.volume),
+              trade_count: Number(kline.trade_count ?? 0),
+            };
+            setPanels((current) => current.map((p, i) => i === index
+              ? {
+                  ...p,
+                  candles: upsertCandle(p.candles, candle),
+                  lastClosed: frame.final ? candle.close_time : p.lastClosed,
+                  liveState: "live",
+                  loaded: true,
+                }
+              : p));
+          }
+          if (frame.type === "stream_status") {
+            setPanel(index, {
+              liveState: frame.state === "stale" || frame.state === "connecting" ? "stale" : "live",
+            });
+          }
+        };
+        socket.onerror = () => setPanel(index, { liveState: "stale" });
+        socket.onclose = () => {
+          sockets.delete(socket);
+          if (stopped) return;
+          setPanel(index, { liveState: "stale" });
+          const delay = Math.min(10_000, 500 * (2 ** reconnectAttempt));
+          reconnectAttempt += 1;
+          const timer = window.setTimeout(() => {
+            reconnectTimers.delete(timer);
+            connect();
+          }, delay);
+          reconnectTimers.add(timer);
+        };
       };
-      socket.onerror = () => setPanel(index, { liveState: "stale" });
-      socket.onclose = () => setPanel(index, { liveState: "stale" });
-      return socket;
+      connect();
     });
-    return () => sockets.forEach((socket) => socket.close());
+    return () => {
+      stopped = true;
+      reconnectTimers.forEach((timer) => window.clearTimeout(timer));
+      sockets.forEach((socket) => socket.close());
+    };
     // Reconnect only when a subscription key changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subscriptionSignature]);
