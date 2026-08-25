@@ -1,19 +1,31 @@
 # Postgres with the blueprint design.md DDL for Python queue-mode integration
-# tests. Separate from the main compose (which runs the divergent Go lab
-# schema): make test-postgres up -d, then
-# TEST_DATABASE_URL=postgres://cryptobot:cryptobot@localhost:55432/cryptobot?sslmode=disable
+# tests. Separate from the main compose: docker compose -f docker-compose.test.yml up -d, then
+# TEST_DATABASE_URL=postgres://cryptobot:cryptobot@127.0.0.1:55433/cryptobot?sslmode=disable
 # uv run pytest tests/integration -q
+name: cryptobot-test
+
 services:
   postgres-test:
-    image: postgres:18-alpine
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: cryptobot
       POSTGRES_PASSWORD: cryptobot
       POSTGRES_DB: cryptobot
     ports:
-      - "55432:5432"
+      - "${TEST_POSTGRES_PORT:-55433}:5432"
     volumes:
-      - ./tests/integration/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./migrations/001_research_core.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./migrations/002_platform_and_research.sql:/docker-entrypoint-initdb.d/02_platform.sql:ro
+      - ./migrations/003_integrity_and_roles.sql:/docker-entrypoint-initdb.d/03_integrity.sql:ro
+      - ./migrations/004_news_market_contract_hardening.sql:/docker-entrypoint-initdb.d/04_contracts.sql:ro
+      - ./migrations/005_market_reference_data.sql:/docker-entrypoint-initdb.d/05_reference_data.sql:ro
+      - ./migrations/006_result_provenance.sql:/docker-entrypoint-initdb.d/06_result_provenance.sql:ro
+      - ./migrations/007_deterministic_demo_dataset.sql:/docker-entrypoint-initdb.d/07_demo_dataset.sql:ro
+      - ./migrations/008_research_quota_read.sql:/docker-entrypoint-initdb.d/08_quota_read.sql:ro
+      - ./migrations/009_research_projection_reads.sql:/docker-entrypoint-initdb.d/09_projection_reads.sql:ro
+      - ./migrations/010_research_news_projection_read.sql:/docker-entrypoint-initdb.d/10_news_projection.sql:ro
+      - ./migrations/011_search_lifecycle_and_correlation.sql:/docker-entrypoint-initdb.d/11_search_lifecycle.sql:ro
+      - ./scripts/queue-scale-proof.sql:/proof/queue-scale-proof.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cryptobot -d cryptobot"]
       interval: 2s

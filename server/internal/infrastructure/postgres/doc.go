@@ -1,3 +1,3 @@
-// Package postgres contains persistence adapters and migrations seam. No SQL
-// connection is opened by this skeleton.
+// Package postgres implements the Go-owned authentication and market-data
+// persistence adapters against the checksum-migrated PostgreSQL schema.
 package postgres

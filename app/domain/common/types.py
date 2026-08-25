@@ -99,7 +99,6 @@ ERR_LOOK_AHEAD = "look-ahead access"
 ERR_PROVIDER_UNAVAILABLE = "provider unavailable"
 ERR_OWNERSHIP = "ownership denied"
 ERR_QUOTA = "quota exceeded"
-ERR_NOT_IMPLEMENTED = "not implemented"
 ERR_LEASE_LOST = "lease lost"
 
 # --- backtest/evaluation error vocabulary (specs/backtest.md, specs/evaluation.md) ---

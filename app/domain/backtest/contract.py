@@ -23,6 +23,7 @@ from ..common import (
     TradeSide,
 )
 from ..market import BBO, Candle
+from ..sentiment import NewsSentimentWindow
 from ..strategy import Reference
 
 
@@ -65,6 +66,10 @@ class ExperimentSnapshot:
     open_position_at_end: OpenPositionPolicy
     risk_policy: RiskPolicy | None = None
     evaluator_version: str = ""
+    sentiment_model: str = "sentiment-v1"
+    sentiment_model_version: str = "2026-08-01"
+    sentiment_window_sec: int = 3600
+    analysis_lag_sec: int = 300
     created_at: datetime | None = None
 
 
@@ -131,4 +136,10 @@ BacktestResult = Result
 
 
 class BacktestEngine(Protocol):
-    def run(self, snapshot: ExperimentSnapshot, candles: list[Candle], bbo: list[BBO]) -> Result: ...
+    def run(
+        self,
+        snapshot: ExperimentSnapshot,
+        candles: list[Candle],
+        bbo: list[BBO],
+        sentiment_windows: list[NewsSentimentWindow | None] | None = None,
+    ) -> Result: ...

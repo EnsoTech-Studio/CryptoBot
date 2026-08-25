@@ -1,37 +1,128 @@
-"""API response schemas (pydantic, float64).
-
-Contract shapes for the moved endpoints. All numeric fields are Python `float`
-(float64). Domain handlers are stubbed (501); these schemas pin the response
-contract until the engines are implemented.
-"""
+"""Versioned internal HTTP contracts for the research service."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class LeaderboardEntryOut(BaseModel):
-    entry_id: UUID
-    evaluation_id: UUID
-    score: float
-    rank: int
-    score_policy_version: str
+class ContractModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
-class ExperimentSummaryOut(BaseModel):
+class ErrorOut(ContractModel):
+    code: str
+    message: str
+    field: str | None = None
+    request_id: str | None = None
+
+
+class StrategyOut(ContractModel):
+    strategy_id: str
+    version: str
+    family: str | None = None
+    display_name: str
+    description: str
+    parameters_schema: dict[str, Any]
+    default_params: dict[str, Any]
+    input_requirements: list[str]
+    overlay_types: list[str]
+    warm_up_candles: int
+    is_composite: bool
+    code_fingerprint: str
+
+
+class ExperimentCreateIn(ContractModel):
+    owner_id: UUID
+    strategy_id: str = Field(min_length=1, max_length=48)
+    strategy_version: str = Field(min_length=1, max_length=24)
+    candidate_definition: dict[str, Any] = Field(default_factory=dict)
+    candidate_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    dataset_version: str = Field(min_length=1, max_length=120)
+    bbo_dataset_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    initial_equity: float = Field(default=100.0, gt=0)
+    fixed_notional: float = Field(default=10.0, gt=0)
+    leverage: float = Field(default=1.0, gt=0)
+    fee_bps: int = Field(default=10, ge=0, le=10_000)
+    slippage_bps: int = Field(default=0, ge=0, le=10_000)
+    fill_policy: Literal["bbo_limit"] = "bbo_limit"
+    position_policy: Literal["one_net_position"] = "one_net_position"
+    open_position_at_end: Literal["last_executable_bbo"] = "last_executable_bbo"
+    stop_loss_pct: float | None = Field(default=None, gt=0, lt=100)
+    take_profit_pct: float | None = Field(default=None, gt=0)
+    intrabar_priority: Literal["stop_loss_first", "take_profit_first"] = "stop_loss_first"
+    evaluator_version: str = Field(default="v1", min_length=1, max_length=24)
+    sentiment_model: str = Field(default="sentiment-v1", min_length=1, max_length=80)
+    sentiment_model_version: str = Field(default="2026-08-01", min_length=1, max_length=80)
+    sentiment_window_sec: int = Field(default=3600, ge=60, le=604_800)
+    analysis_lag_sec: int = Field(default=300, ge=0, le=86_400)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class AcceptedRunOut(ContractModel):
+    run_id: UUID
     experiment_id: UUID
+    status: str
+    reused: bool = False
+
+
+class ExperimentMetricsOut(ContractModel):
+    total_return_pct: float
+    win_rate_pct: float
+    max_drawdown_pct: float
+    trade_count: int
+    profit_factor: float | None = None
+    sharpe_ratio: float | None = None
+    score: float | None = None
+    evaluator_version: str
+
+
+class ExperimentSummaryOut(ContractModel):
+    id: UUID
+    experiment_id: UUID
+    run_id: UUID | None = None
+    owner_id: UUID
     candidate_hash: str
     status: str
-    evaluator_version: str | None = None
-    created_at: datetime | None = None
+    dataset_version: str
+    provider: str
+    symbol: str
+    timeframe: str
+    strategy_id: str
+    strategy_version: str
+    evaluator_version: str
+    content_hash: str
+    bbo_content_hash: str | None = None
+    result_hash: str | None = None
+    candidate_definition: dict[str, Any]
+    execution: dict[str, Any]
+    metrics: ExperimentMetricsOut | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    candles_read: int | None = None
+    signals_count: int | None = None
+    error_code: str | None = None
 
 
-class TradeOut(BaseModel):
+class CandleOut(ContractModel):
+    open_time: datetime
+    close_time: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    trade_count: int | None = None
+
+
+class TradeOut(ContractModel):
     sequence_no: int
     side: str
+    signal_t: datetime | None = None
     entry_time: datetime
     entry_price: float
     quantity: float
@@ -42,9 +133,198 @@ class TradeOut(BaseModel):
     pnl_absolute: float | None = None
     pnl_percent: float | None = None
     exit_reason: str | None = None
+    sl_price: float | None = None
+    tp_price: float | None = None
 
 
-class EquityPointOut(BaseModel):
+class EquityPointOut(ContractModel):
     point_time: datetime
     equity: float
     drawdown_pct: float | None = None
+
+
+class OverlayPointOut(ContractModel):
+    candle_time: datetime
+    signal: str
+    confidence: float | None = None
+    child_signals: dict[str, Any] | None = None
+
+
+class SearchStopConditions(ContractModel):
+    max_candidates: int | None = Field(default=None, strict=True, gt=0, le=500)
+    max_duration_sec: int | None = Field(default=None, strict=True, gt=0, le=86_400)
+    max_non_improving: int | None = Field(default=None, strict=True, gt=0, le=500)
+    max_failure_rate: float | None = Field(default=None, gt=0, le=1)
+
+    @field_validator("max_failure_rate", mode="before")
+    @classmethod
+    def validate_failure_rate_type(cls, value: Any) -> Any:
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ValueError("max_failure_rate must be a number")
+        return value
+
+    @model_validator(mode="after")
+    def require_one_condition(self) -> "SearchStopConditions":
+        if not any(
+            value is not None
+            for value in (
+                self.max_candidates,
+                self.max_duration_sec,
+                self.max_non_improving,
+                self.max_failure_rate,
+            )
+        ):
+            raise ValueError("at least one bounded stop condition is required")
+        return self
+
+
+class SearchSpaceInput(ContractModel):
+    strategy_ids: list[str] = Field(min_length=1, max_length=20)
+    cardinality: list[Annotated[int, Field(strict=True, ge=1, le=5)]] = Field(
+        default_factory=lambda: [1], min_length=1, max_length=4
+    )
+    policies: list[Literal["weighted_vote", "majority_vote"]] = Field(
+        default_factory=lambda: ["weighted_vote"], min_length=1, max_length=2
+    )
+    parameter_grid: dict[str, dict[str, list[Any]]] = Field(default_factory=dict)
+
+    @field_validator("cardinality")
+    @classmethod
+    def validate_cardinality(cls, values: list[int]) -> list[int]:
+        return sorted(set(values))
+
+    @model_validator(mode="after")
+    def validate_strategy_references(self) -> "SearchSpaceInput":
+        if len(set(self.strategy_ids)) != len(self.strategy_ids):
+            raise ValueError("strategy_ids must be unique")
+        unknown_grids = set(self.parameter_grid) - set(self.strategy_ids)
+        if unknown_grids:
+            raise ValueError("parameter_grid references an unknown strategy_id")
+        if min(self.cardinality) > len(self.strategy_ids):
+            raise ValueError("cardinality exceeds the number of strategies")
+        return self
+
+
+class SearchRunCreateIn(ContractModel):
+    owner_id: UUID
+    generator_id: Literal["grid", "random", "random_search", "domain_guided"] = "grid"
+    search_space: SearchSpaceInput
+    stop_conditions: SearchStopConditions
+    dataset_version: str = Field(min_length=1, max_length=120)
+    seed: int = 0
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+class SearchRunOut(ContractModel):
+    search_run_id: UUID
+    owner_id: UUID
+    generator_id: str
+    status: str
+    generated: int
+    tested: int
+    failed: int
+    best_score: float | None = None
+    current_candidate_hash: str | None = None
+    stop_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    dataset_version: str
+    content_hash: str
+    reused: bool = False
+
+
+class SearchActionIn(ContractModel):
+    actor_id: UUID
+    command_id: UUID
+    action: Literal["pause", "resume", "cancel"]
+
+
+class LeaderboardEntryOut(ContractModel):
+    entry_id: UUID
+    evaluation_id: UUID
+    score: float
+    rank: int
+    score_policy_version: str
+    dataset_version: str
+    strategy_id: str
+    strategy_version: str
+    candidate_hash: str
+    total_return_pct: float
+    win_rate_pct: float
+    max_drawdown_pct: float
+    trade_count: int
+    profit_factor: float | None = None
+    sharpe_ratio: float | None = None
+    observed_at: datetime
+
+
+class ScorePolicyCreateIn(ContractModel):
+    version: str = Field(min_length=1, max_length=24)
+    min_trades: int = Field(ge=0)
+    weights: dict[str, float]
+    formula: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_weights(self) -> "ScorePolicyCreateIn":
+        allowed = {
+            "total_return_pct",
+            "win_rate_pct",
+            "max_drawdown_pct",
+            "profit_factor",
+            "sharpe_ratio",
+        }
+        if not self.weights or not set(self.weights).issubset(allowed):
+            raise ValueError("weights contain unsupported metrics")
+        if any(value < 0 for value in self.weights.values()):
+            raise ValueError("weights must be non-negative")
+        if abs(sum(self.weights.values()) - 1.0) > 1e-9:
+            raise ValueError("weights must sum to 1.0")
+        return self
+
+
+class NewsItemOut(ContractModel):
+    id: UUID
+    title: str
+    url: str
+    published_at: datetime
+    source_key: str
+    source_name: str
+    related_coins: list[str]
+    sentiment: dict[str, Any] | None = None
+
+
+class NewsAggregateOut(ContractModel):
+    item_count: int
+    analyzed_count: int
+    coverage: float
+    average_score: float | None = None
+    label_counts: dict[str, int]
+
+
+class NewsSourceCreateIn(ContractModel):
+    source_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,62}[a-z0-9]$")
+    display_name: str = Field(min_length=1, max_length=120)
+    kind: Literal["rss"] = "rss"
+    allowed_origin: str = Field(min_length=9, max_length=255)
+    url_template: str = Field(min_length=9, max_length=2_000)
+
+
+class NewsCollectIn(ContractModel):
+    source_id: UUID | None = None
+
+
+class SentimentBackfillIn(ContractModel):
+    limit: int = Field(default=200, ge=1, le=200)
+
+
+class SentimentPredictIn(ContractModel):
+    text: str = Field(min_length=1, max_length=10_000)
+
+
+class SentimentPredictOut(ContractModel):
+    label: Literal["POSITIVE", "NEUTRAL", "NEGATIVE"]
+    score: float = Field(ge=0, le=1)
+    model: str
+    model_version: str
+    received_at: datetime

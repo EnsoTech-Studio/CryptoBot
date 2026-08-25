@@ -557,7 +557,7 @@ def test_dispatcher_fail_after_lost_lease_never_touches_run_row() -> None:
 
 def test_dispatcher_fail_writes_backtest_failed_outbox() -> None:
     job_id, token = uuid4(), uuid4()
-    dispatcher = _dispatcher_with([(None, 1), ((uuid4(),), 1), (None, 1)])
+    dispatcher = _dispatcher_with([(("failed", uuid4()), 1), ((uuid4(),), 1), (None, 1), (None, 1)])
     updated = dispatcher.fail(job_id, DomainError(ERR_VALIDATION, "boom"), False, token)
     assert updated is True
     assert dispatcher._conn.commits == 1
@@ -672,7 +672,7 @@ def test_equity_point_times_unique_despite_same_ms_boundaries() -> None:
 
 def test_outbox_rows_carry_aggregate_columns() -> None:
     # fail() happy path: jobs UPDATE -> runs UPDATE RETURNING -> BacktestFailed
-    dispatcher = _dispatcher_with([(None, 1), ((uuid4(),), 1), (None, 1)])
+    dispatcher = _dispatcher_with([(("failed", uuid4()), 1), ((uuid4(),), 1), (None, 1), (None, 1)])
     dispatcher.fail(uuid4(), DomainError(ERR_VALIDATION, "boom"), False, uuid4())
     outbox = [sql for sql in dispatcher._conn.statements if "domain_events" in sql]
     assert outbox, "expected a BacktestFailed outbox insert"

@@ -1,20 +1,11 @@
-name: cryptobot
-
-# Target production override.
-# docker-compose.yml remains the local scaffold profile and intentionally exposes
-# Python for direct smoke testing. This override removes that public surface.
+# Use with docker-compose.stack.yml. Only the browser-facing web app and Go
+# API bind host ports; internal traffic stays on the Compose network.
 services:
   postgres:
     ports: !reset []
-    expose:
-      - "5432"
 
   ai:
     ports: !reset []
-    expose:
-      - "8000"
 
   research:
     ports: !reset []
-    expose:
-      - "8001"

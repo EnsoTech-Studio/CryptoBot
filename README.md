@@ -1,172 +1,239 @@
 # Crypto Strategy Lab
 
-Full-stack implementation for the Crypto Strategy Lab blueprint. The app follows the unified product boundary in `blueprint/`: the browser renders normalized DTOs only and talks exclusively to the Go API; Go owns realtime market data (candle/BBO normalization, WSS reconnect/backfill), the edge/API, auth/RBAC and quota; the Python platform (`research`) owns the strategy runtime, backtest, search, ranking, and news extraction/tagging + AI/sentiment orchestration; `ai` is the sentiment inference adapter. See the transitional note under Architecture for how today's code maps to that target.
+Crypto Strategy Lab is a simulation-only research stack for realtime crypto market data, reproducible backtests, bounded strategy search, ranking, news, and sentiment analysis.
 
-## Run
+The browser has one boundary: the Go API. Go owns the public edge, persistent authentication, quotas, and Binance market normalization. Python `research` owns all strategy, backtest, evaluation, search, ranking, news, and sentiment orchestration. The `ai` service performs inference only.
+
+## Start development
 
 Requirements:
 
 - Docker Desktop with Docker Compose v2
-- Optional for local web checks: Node.js 22+
+- Python 3.12, Go 1.23, and Node.js 22
 
-Start the full stack:
+Development runs only PostgreSQL in Docker. The Go API, research API, AI
+adapter, queue worker, event worker, and news worker run as native processes.
+
+First-time setup:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build
+.\scripts\install-run-command.ps1
+run setup
+cd web
+npm ci
+cd ..
 ```
 
-Services:
+Start development:
 
-| Service    | URL / role                                                    |
-| ---------- | ------------------------------------------------------------- |
-| `web`      | <http://localhost:3000>                                       |
-| `api`      | <http://localhost:8080/health>, <http://localhost:8080/ready> |
-| `worker`   | no public port; polls `backtest_jobs`                         |
-| `ai`       | <http://localhost:8000/health> in dev compose                 |
-| `research` | <http://localhost:8001/health> in dev compose (Python platform skeleton) |
-| `postgres` | port `5432` in dev compose                                    |
+```powershell
+run up
+cd web
+npm run dev
+```
 
-Demo login:
+## Quick backend commands
 
-| Role       | Email                    | Password        |
-| ---------- | ------------------------ | --------------- |
-| RESEARCHER | `researcher@example.com` | `Research#2026` |
-| OPERATOR   | `operator@example.com`   | `Operator#2026` |
-| ADMIN      | `admin@example.com`      | `Admin#2026`    |
+Run these from the repository root. In PowerShell, run
+`.\scripts\install-run-command.ps1` once; `run` then works in every new
+PowerShell terminal without a `.` or `\` prefix.
 
-## Demo Flow
+| Command | Starts or performs |
+| --- | --- |
+| `run up` | PostgreSQL and every native backend service |
+| `run db` | PostgreSQL only |
+| `run api` | Go API and its required research service |
+| `run research` / `run ai` | One native HTTP service |
+| `run worker` / `run event-worker` / `run news-worker` | One worker process |
+| `run workers` | All three worker processes |
+| `run stop [service]` | All native services, or one named service/group |
+| `run status` | Native-process and PostgreSQL status |
+| `run logs api` | Follow the latest 100 API log lines |
+| `run down` | Stop native backend and PostgreSQL; keeps volumes |
 
-1. Open <http://localhost:3000>.
-2. Login with the RESEARCHER account.
-3. Watch the four independent `ETHUSDT` panels fed by Binance USD-M Futures public klines: `5m`, `15m`, `1h`, `4h`.
-4. Change one panel timeframe or strategy; only that panel refetches/resubscribes.
-5. Click **Run backtest**. The API writes an immutable experiment snapshot and a PostgreSQL job, then returns `202`.
-6. The worker claims the job, runs Go backtest/evaluation, and writes trades, equity, metrics and leaderboard entry.
-7. Inspect the result chart, metrics, trade table and equity curve.
-8. Click **Start search** to enqueue bounded composite candidates.
-9. Open Leaderboard and click **Trace** to view provenance: candidate hash, dataset hash, execution assumptions and score policy.
-10. Use News and sentiment to view CoinDesk RSS items, model coverage and the authenticated AI predict endpoint.
+Examples:
 
-## Architecture
+```powershell
+run ai
+run workers
+run stop workers
+run status
+```
 
-Unified target topology (blueprint `design.md` §1.2):
+Open `http://localhost:3000`, register a user, then use the workspace. The initial migration includes an offline deterministic `ETHUSDT` 5-minute replay dataset, so experiment and search flows work without waiting for Binance.
+
+| Service | Development endpoint / role |
+| --- | --- |
+| `web` | `http://localhost:3000` |
+| `api` | `http://localhost:8080/health` and `/ready` |
+| `research` | Native internal domain API at `http://127.0.0.1:8001` |
+| `worker` | Canonical Python backtest executor; no public port |
+| `event-worker` | Evaluation/ranking outbox consumer; no public port |
+| `news-worker` | Allowlisted collection and sentiment retry loop; no public port |
+| `ai` | Native optional sentiment inference at `http://127.0.0.1:8000` |
+| `postgres` | The only development container; source of truth, queue, facts, and projections |
+
+Check or stop the native backend without stopping PostgreSQL:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/status-native-backend.ps1
+powershell -ExecutionPolicy Bypass -File scripts/stop-native-backend.ps1
+```
+
+Use `docker compose down` when PostgreSQL should stop too. Native process output
+is written under `.runtime/logs/`.
+
+The PostgreSQL-only profile uses the `postgres-native-data` volume. The former
+full-stack development volume is not deleted automatically, so legacy local
+data remains recoverable instead of being silently migrated against a different
+schema ledger.
+
+Full-container production/rehearsal topology:
+
+```powershell
+docker compose -f docker-compose.stack.yml -f docker-compose.prod.yml up --build
+```
+
+The full-stack file is intentionally separate from local development. The
+production override publishes only `web` and `api`; PostgreSQL, research, and
+AI remain on the internal Compose network.
+
+## As-built architecture
+
+Plain-language summary: Go is the secure doorway and realtime market gateway; Python is the only research engine.
 
 ```text
 Browser (Next.js)
-  -> Go API (edge: auth/RBAC, quota, REST, WebSocket, realtime market normalize)
-      -> PostgreSQL (source of truth, queue, read views, provenance)
-      -> research (Python platform: strategy runtime, backtest, search, ranking,
-                   news extraction/tagging, sentiment/AI orchestration) :8001
-           -> ai (Python inference adapter) :8000
-      -> worker (same research image, async backtest, 1 -> N replicas)
+  -> Go API
+       |-> persistent RS256 auth, refresh rotation, CSRF/CORS, quotas
+       |-> Binance USD-M REST/WSS -> closed candles, BBO, checkpoints, WS hub
+       |-> PostgreSQL auth/market tables and versioned reads
+       -> research (authenticated internal HTTP)
+            |-> strategy registry and composite runtime
+            |-> deterministic LONG/SHORT BBO backtest and evaluation
+            |-> bounded search, ranking, provenance, news, sentiment orchestration
+            |-> PostgreSQL queue, immutable facts, transactional outbox
+            -> ai (optional inference adapter)
+
+Python worker replicas -> claim PostgreSQL jobs with leases
+Event worker           -> consume BacktestCompleted -> evaluate -> rank
+News worker            -> collect approved sources -> retry missing sentiment
 ```
 
-**Transitional note (as-built vs target).** Today the Go `server/` implements the
-strategy domain (candles, strategies, backtest, evaluation, ranking, news
-collection) and the Go worker consumes `backtest_jobs`; the `research` service
-(`app/` at repo root, port `8001`) is the canonical Python target platform and is
-currently an all-stubs skeleton; `ai` serves sentiment inference. The browser
-only ever talks to the Go API in both the current state and the target — `ai`
-and `research` are internal.
+There is no Go lab engine or Go worker fallback. The active Go source contains no canonical strategy, backtest, evaluation, ranking, news extraction, or sentiment math.
 
-Implemented blueprint boundaries:
+## Product flow
 
-- Frontend does not calculate indicators, PnL, drawdown, score, sentiment aggregation or strategy signals.
-- `POST /api/v1/experiments` is always async and returns `run_id`.
-- Worker communicates through `backtest_jobs` in PostgreSQL.
-- Leaderboard entries reference immutable evaluations and expose provenance.
-- Market candles are collected server-side from Binance USD-M Futures REST. If Binance is unavailable and no real cache exists, market data is unavailable rather than synthesized.
-- News collection uses server-side allowlisted RSS sources. CoinDesk RSS is seeded as the approved source.
-- News collection and sentiment are separate; unavailable sentiment is represented as missing/null data, not fake neutral data.
-- The app is simulation-only: no exchange API keys, no trading routes, no live order placement.
+1. Register or log in through Go.
+2. View independent market panels backed by normalized Binance USD-M data.
+3. Run an experiment. Go resolves an immutable dataset and returns `202`; the Python worker executes it asynchronously.
+4. Inspect candles, signals, trades, equity, metrics, hashes, and execution provenance after completion.
+5. Start a seeded grid, random, or domain-guided search. Candidate and concurrent-run quotas are applied atomically.
+6. Inspect leaderboard entries and immutable provenance.
+7. Read collected news. Missing AI coverage remains `sentiment: null`; it is never replaced with fake neutral data.
 
-## External Data and Services
+## Runtime guarantees
 
-The stack imports only these external runtime inputs:
+- Migrations 001 onward are checksum-verified and run by a dedicated startup step: native development uses `app.migrate`, while the full-container topology uses the one-off `migrate` service. API and workers do not execute DDL.
+- `api_service` and `research_service` receive separate PostgreSQL roles and grants.
+- Experiments and market datasets are immutable; explicit BBO rows are stored only in replay datasets.
+- Job claim, facts, terminal state, result hash, and `BacktestCompleted` outbox publication use lease guards and transactional persistence.
+- Outbox delivery is at-least-once with `(consumer_id, event_id)` idempotency.
+- Result hashes are canonical and reproducible for identical snapshots.
+- AI/news are optional dependencies and do not make core readiness fail.
+- No exchange credentials or live order routes exist.
 
-- Binance USD-M Futures public klines: `https://fapi.binance.com/fapi/v1/klines`
-- CoinDesk RSS through the allowlisted `news_sources` table: `https://www.coindesk.com/arc/outboundfeeds/rss/`
-- Internal Python AI service in Docker Compose: `http://ai:8000/predict`
+## Public API
 
-No exchange keys are required. The AI service analyzes real collected news text, but it is local to the compose stack and does not call an external LLM/API.
-
-## API Highlights
-
-Public/read:
+Market and catalogue:
 
 - `GET /api/v1/markets/pairs`
 - `GET /api/v1/markets/candles`
+- `GET|POST /api/v1/markets/datasets`
+- `GET /api/v1/markets/status`
 - `GET /api/v1/markets/chart-overlays`
-- `GET /api/v1/markets/stream` WebSocket
+- `GET /api/v1/markets/stream` (WebSocket)
 - `GET /api/v1/strategies`
+
+Research:
+
+- `POST /api/v1/experiments`
+- `GET /api/v1/experiments/{id}` and `/candles`, `/trades`, `/equity`, `/overlays`
+- `POST /api/v1/search-runs`
+- `GET /api/v1/search-runs/{id}`
+- `POST /api/v1/search-runs/{id}/actions`
 - `GET /api/v1/leaderboard`
 - `GET /api/v1/leaderboard/{entryId}/provenance`
-- `GET /api/v1/news`
-- `GET /api/v1/news/aggregate`
-
-Authenticated commands:
-
-- `POST /api/v1/auth/login`
-- `POST /api/v1/experiments`
-- `POST /api/v1/search-runs`
-- `POST /api/v1/search-runs/{id}/actions`
+- `GET /api/v1/news` and `/api/v1/news/aggregate`
 - `POST /api/v1/ai/predict`
 
-Operational:
+Authentication and operations:
 
-- `GET /health`
-- `GET /ready`
-- `GET /metrics` requires OPERATOR or ADMIN
+- `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`
+- `GET /api/v1/auth/me`
+- `GET /health`, `/ready`
+- `GET /metrics` for OPERATOR or ADMIN
 
-## Development Checks
+Cookie-authenticated commands require a matching `X-CSRF-Token`. Go propagates request, correlation, user, role, and idempotency metadata to research.
 
-Frontend:
+## Verification
+
+Run the smoke flow after starting the native backend and web app on the default
+ports, or after starting the full-container topology:
 
 ```powershell
-cd web
-npm install
+powershell -ExecutionPolicy Bypass -File scripts/rehearsal-smoke.ps1 `
+  -ApiBaseUrl http://127.0.0.1:8080 `
+  -WebBaseUrl http://127.0.0.1:3000
+```
+
+Research unit and PostgreSQL integration tests:
+
+```powershell
+py -3 -m pytest tests --ignore=tests/integration -q
+docker compose -f docker-compose.test.yml up -d postgres-test
+py -3 -m pytest tests/integration -q
+```
+
+The 100k-job claim proof runs inside a transaction and rolls back all generated rows:
+
+```powershell
+docker compose -f docker-compose.test.yml exec postgres-test `
+  psql -U cryptobot -d cryptobot -f /proof/queue-scale-proof.sql
+py -3 scripts/api-latency-smoke.py --url http://127.0.0.1:8080/ready --requests 100
+```
+
+Other gates:
+
+```powershell
+cd server
+go test -race ./...
+
+cd ../ai
+py -3 -m pytest -q
+
+cd ../web
+npm ci
 npm run lint
 npx tsc --noEmit
+npm run build
+
+cd ..
+py -3 scripts/check_architecture.py
+docker run --rm -v "${PWD}:/repo" -w /repo ghcr.io/astral-sh/ruff:0.6.9 `
+  check app tests scripts
 ```
 
-Python (AI service):
-
-```powershell
-cd ai
-pip install -r requirements-dev.txt
-python -m pytest
-```
-
-Python (research platform, canonical target skeleton):
-
-```powershell
-pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest
-uvicorn app.main:app --reload --port 8001
-```
-
-Full stack verification should be done with:
-
-```powershell
-docker compose up --build
-```
-
-Production hardening override:
-
-```powershell
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
-```
-
-The production override removes public host ports for `ai` and `postgres`.
+CI runs these suites, PostgreSQL migrations/integration tests, the ownership scan, and builds the research, API, AI, and web images.
 
 ## Documentation
 
-Read order:
+Read in this order:
 
 1. [`requirements.html`](requirements.html)
 2. [`blueprint/README.md`](blueprint/README.md)
 3. [`blueprint/design.md`](blueprint/design.md)
 4. [`blueprint/specs/`](blueprint/specs/)
 
-The implementation intentionally keeps the blueprint's core rule: the browser only talks to the Go edge; the Python platform (`research`) is the canonical strategy/backtest/news domain target; `ai` is the sentiment model adapter; and Next.js is presentation.
+The source-of-truth boundary remains: browser -> Go; Go -> research; research -> AI; no live trading.

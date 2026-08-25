@@ -31,3 +31,4 @@ web/tsconfig.tsbuildinfo
 Thumbs.db
 *.log
 .playwright-mcp/
+.runtime/

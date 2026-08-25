@@ -21,6 +21,18 @@ export type Candle = {
   trade_count: number;
 };
 
+export type MarketDataset = {
+  id: string;
+  dataset_version: string;
+  market: { provider: string; symbol: string; timeframe: string };
+  range_from: string;
+  range_to: string;
+  revision_no: number;
+  candle_count: number;
+  content_hash: string;
+  bbo_content_hash: string;
+};
+
 export type OverlayPoint = { t: string; v: number | null };
 export type OverlaySeries = {
   name: string;
@@ -71,13 +83,13 @@ export type Metrics = {
   trade_count: number;
   profit_factor: number;
   sharpe_ratio: number;
-  score: number;
+  score: number | null;
   evaluator_version: string;
 };
 
 export type ExperimentSummary = {
   id: string;
-  run_id: string;
+  run_id: string | null;
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   provider: string;
   symbol: string;
@@ -170,6 +182,94 @@ type ErrorPayload = {
   detail?: string;
 };
 
+type Numeric = number | string;
+type ResearchTrade = {
+  sequence_no: number;
+  side: string;
+  signal_t: string | null;
+  entry_time: string;
+  entry_price: number;
+  quantity: number;
+  exit_time: string | null;
+  exit_price: number | null;
+  pnl_absolute: number | null;
+  pnl_percent: number | null;
+  exit_reason: string | null;
+};
+type ResearchEquityPoint = {
+  point_time: string;
+  equity: number;
+  drawdown_pct: number | null;
+};
+type ResearchOverlay = {
+  candle_time: string;
+  signal: string;
+  confidence: number | null;
+  child_signals: Record<string, unknown> | null;
+};
+type ResearchSearchRun = {
+  search_run_id: string;
+  generator_id: string;
+  status: string;
+  generated: number;
+  tested: number;
+  failed: number;
+  best_score: number | null;
+  current_candidate_hash: string | null;
+  dataset_version: string;
+  content_hash: string;
+  stop_reason: string | null;
+  updated_at: string;
+};
+type ResearchLeaderboardEntry = Omit<LeaderboardEntry, "id"> & { entry_id: string };
+type ResearchNewsItem = Omit<NewsItem, "source"> & {
+  source_key: string;
+  source_name: string;
+};
+type ResearchNewsAggregate = {
+  item_count: number;
+  analyzed_count: number;
+  coverage: number;
+  average_score: number | null;
+  label_counts: Record<"POSITIVE" | "NEUTRAL" | "NEGATIVE", number>;
+};
+
+function normalizeCandle(candle: Omit<Candle, "open" | "high" | "low" | "close" | "volume"> & {
+  open: Numeric;
+  high: Numeric;
+  low: Numeric;
+  close: Numeric;
+  volume: Numeric;
+}): Candle {
+  return {
+    ...candle,
+    open: Number(candle.open),
+    high: Number(candle.high),
+    low: Number(candle.low),
+    close: Number(candle.close),
+    volume: Number(candle.volume),
+  };
+}
+
+function normalizeSearchRun(run: ResearchSearchRun): SearchRun {
+  return {
+    search_run_id: run.search_run_id,
+    generator_id: run.generator_id,
+    status: run.status,
+    candidates: { generated: run.generated, tested: run.tested, failed: run.failed },
+    best_score: run.best_score,
+    current_candidate: run.current_candidate_hash ?? "",
+    dataset: { dataset_version: run.dataset_version, content_hash: run.content_hash },
+    stop_reason: run.stop_reason,
+    updated_at: run.updated_at,
+  };
+}
+
+async function ensureDataset(timeframe: string): Promise<MarketDataset> {
+  const existing = await api.datasets(timeframe);
+  return existing.datasets[0] ?? api.createDataset(timeframe);
+}
+
 function csrfToken(): string {
   if (typeof document === "undefined") return "";
   const match = document.cookie
@@ -214,13 +314,16 @@ export const api = {
   strategies() {
     return request<{ strategies: Strategy[] }>("/api/v1/strategies");
   },
-  candles(timeframe: string, strategy = "composite@1.0.0") {
+  candles(timeframe: string, strategy = "composite@v1") {
     void strategy;
     return request<{ candles: Candle[] }>(
       `/api/v1/markets/candles?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&limit=180`,
-    );
+    ).then((payload) => ({
+      ...payload,
+      candles: payload.candles.map(normalizeCandle),
+    }));
   },
-  overlays(timeframe: string, strategy = "composite@1.0.0") {
+  overlays(timeframe: string, strategy = "composite@v1") {
     return request<{
       series: OverlaySeries[];
       markers: OverlayMarker[];
@@ -231,7 +334,24 @@ export const api = {
       `/api/v1/markets/chart-overlays?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&strategy=${strategy}&config_hash=sha256:${"4".repeat(64)}&limit=180`,
     );
   },
-  createExperiment(children: Array<{ strategy_id: string; weight: number }>) {
+  datasets(timeframe = "5m") {
+    return request<{ datasets: MarketDataset[] }>(
+      `/api/v1/markets/datasets?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&limit=20`,
+    );
+  },
+  createDataset(timeframe = "5m") {
+    return request<MarketDataset>("/api/v1/markets/datasets", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "binance_usdm",
+        symbol: "ETHUSDT",
+        timeframe,
+        revision_no: 1,
+      }),
+    });
+  },
+  async createExperiment(children: Array<{ strategy_id: string; weight: number }>) {
+    const dataset = await ensureDataset("5m");
     return request<{ run_id: string; experiment_id: string; status: string }>("/api/v1/experiments", {
       method: "POST",
       body: JSON.stringify({
@@ -239,10 +359,11 @@ export const api = {
         symbol: "ETHUSDT",
         timeframe: "5m",
         strategy_id: "composite",
-        strategy_version: "1.0.0",
+        strategy_version: "v1",
+        dataset_version: dataset.dataset_version,
         children: children.map((child) => ({
           strategy_id: child.strategy_id,
-          version: "1.0.0",
+          version: "v1",
           weight: child.weight,
           parameters: defaultParams(child.strategy_id),
         })),
@@ -263,21 +384,66 @@ export const api = {
     return request<ExperimentSummary>(`/api/v1/experiments/${id}`);
   },
   experimentCandles(id: string) {
-    return request<{ candles: Candle[] }>(`/api/v1/experiments/${id}/candles`);
+    return request<{ candles: Omit<Candle, "provider" | "symbol" | "timeframe">[] }>(
+      `/api/v1/experiments/${id}/candles`,
+    ).then((payload) => ({
+      candles: payload.candles.map((candle) => normalizeCandle({
+        ...candle,
+        provider: "binance_usdm",
+        symbol: "ETHUSDT",
+        timeframe: "5m",
+      })),
+    }));
   },
   experimentTrades(id: string) {
-    return request<{ trades: Trade[] }>(`/api/v1/experiments/${id}/trades`);
+    return request<{ trades: ResearchTrade[] }>(`/api/v1/experiments/${id}/trades`).then((payload) => ({
+      trades: payload.trades.map((trade) => ({
+        id: `${id}-${trade.sequence_no}`,
+        sequence_no: trade.sequence_no,
+        side: trade.side,
+        entry_time: trade.entry_time,
+        exit_time: trade.exit_time ?? trade.entry_time,
+        entry_price: trade.entry_price,
+        exit_price: trade.exit_price ?? trade.entry_price,
+        quantity: trade.quantity,
+        pnl: trade.pnl_absolute ?? 0,
+        pnl_pct: trade.pnl_percent ?? 0,
+        exit_reason: trade.exit_reason ?? "open",
+        signal_t: trade.signal_t ?? trade.entry_time,
+      })),
+    }));
   },
   experimentEquity(id: string) {
-    return request<{ points: EquityPoint[]; max_drawdown: EquityPoint }>(`/api/v1/experiments/${id}/equity`);
+    return request<{ equity: ResearchEquityPoint[] }>(`/api/v1/experiments/${id}/equity`).then((payload) => {
+      const points = payload.equity.map((point) => ({
+        t: point.point_time,
+        equity: point.equity,
+        drawdown_pct: point.drawdown_pct ?? 0,
+      }));
+      const maxDrawdown = points.reduce(
+        (lowest, point) => point.drawdown_pct < lowest.drawdown_pct ? point : lowest,
+        points[0] ?? { t: "", equity: 0, drawdown_pct: 0 },
+      );
+      return { points, max_drawdown: maxDrawdown };
+    });
   },
   experimentOverlays(id: string) {
-    return request<{ series: OverlaySeries[]; signal_markers: OverlayMarker[]; execution_markers: ExecutionMarker[] }>(
+    return request<{ overlays: ResearchOverlay[] }>(
       `/api/v1/experiments/${id}/overlays`,
-    );
+    ).then((payload) => ({
+      series: [] as OverlaySeries[],
+      signal_markers: payload.overlays.map((item) => ({
+        t: item.candle_time,
+        overlay_type: item.signal.toLowerCase(),
+        confidence: item.confidence,
+        evidence: item.child_signals,
+      })),
+      execution_markers: [] as ExecutionMarker[],
+    }));
   },
-  startSearch() {
-    return request<{ search_run_id: string }>("/api/v1/search-runs", {
+  async startSearch() {
+    const dataset = await ensureDataset("5m");
+    return request<ResearchSearchRun>("/api/v1/search-runs", {
       method: "POST",
       body: JSON.stringify({
         generator_id: "domain_guided",
@@ -292,6 +458,7 @@ export const api = {
           provider: "binance_usdm",
           symbol: "ETHUSDT",
           timeframe: "5m",
+          dataset_version: dataset.dataset_version,
           range_from: "2026-01-01T00:00:00Z",
           range_to: "2026-03-01T00:00:00Z",
         },
@@ -299,10 +466,10 @@ export const api = {
         seed: 42,
         idempotency_key: `search-${Date.now()}`,
       }),
-    });
+    }).then(normalizeSearchRun);
   },
   searchRun(id: string) {
-    return request<SearchRun>(`/api/v1/search-runs/${id}`);
+    return request<ResearchSearchRun>(`/api/v1/search-runs/${id}`).then(normalizeSearchRun);
   },
   searchAction(id: string, action: "pause" | "resume" | "cancel") {
     return request<{ status: string }>(`/api/v1/search-runs/${id}/actions`, {
@@ -311,20 +478,32 @@ export const api = {
     });
   },
   leaderboard(sortBy = "score") {
-    return request<{ entries: LeaderboardEntry[] }>(`/api/v1/leaderboard?limit=10&sort_by=${sortBy}`);
+    return request<{ entries: ResearchLeaderboardEntry[] }>(`/api/v1/leaderboard?limit=10&sort_by=${sortBy}`).then(
+      (payload) => ({ entries: payload.entries.map((entry) => ({ ...entry, id: entry.entry_id })) }),
+    );
   },
   provenance(id: string) {
     return request<Record<string, unknown>>(`/api/v1/leaderboard/${id}/provenance`);
   },
   news() {
-    return request<{ items: NewsItem[]; meta: { last_collected_at: string; total: number } }>("/api/v1/news");
+    return request<{ items: ResearchNewsItem[] }>("/api/v1/news").then((payload) => ({
+      items: payload.items.map((item) => ({
+        ...item,
+        source: { key: item.source_key, display_name: item.source_name },
+      })),
+      meta: { last_collected_at: "", total: payload.items.length },
+    }));
   },
   newsAggregate() {
-    return request<{
-      distribution: Record<"POSITIVE" | "NEUTRAL" | "NEGATIVE", number>;
-      avg_score: number;
-      coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number };
-    }>("/api/v1/news/aggregate");
+    return request<ResearchNewsAggregate>("/api/v1/news/aggregate").then((payload) => ({
+      distribution: payload.label_counts,
+      avg_score: payload.average_score ?? 0,
+      coverage: {
+        items_total: payload.item_count,
+        items_analyzed: payload.analyzed_count,
+        items_unanalyzed: payload.item_count - payload.analyzed_count,
+      },
+    }));
   },
   predict(text: string) {
     return request<Prediction>("/api/v1/ai/predict", {
@@ -345,7 +524,7 @@ function defaultParams(strategyID: string): Record<string, number> {
     case "support_resistance":
       return { lookback: 60, zone_bps: 45 };
     case "news_sentiment":
-      return { window_sec: 3600, buy_threshold: 0.45, sell_threshold: -0.45 };
+      return { buy_above: 0.45, sell_below: -0.45, min_items: 3 };
     case "macd":
       return { fast: 12, slow: 26, signal: 9 };
     default:
