@@ -1,17 +1,38 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { GeistMono } from "geist/font/mono";
+import { GeistSans } from "geist/font/sans";
 
 import "./globals.css";
 
+import { WorkspaceShell } from "./WorkspaceShell";
+
 export const metadata: Metadata = {
   title: "Crypto Strategy Lab",
-  description: "Full-stack crypto strategy research dashboard",
+  description:
+    "Simulation-only research cockpit: live market structure, deterministic backtests, ranked candidates and provenance in one workspace.",
+  applicationName: "Crypto Strategy Lab",
+  openGraph: {
+    title: "Crypto Strategy Lab",
+    description:
+      "Simulation-only research cockpit: live market structure, deterministic backtests, ranked candidates and provenance in one workspace.",
+    type: "website",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0a0e0d" },
+    { media: "(prefers-color-scheme: light)", color: "#f3f4ee" },
+  ],
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="vi">
-      <body>{children}</body>
+    <html lang="vi" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body>
+        <WorkspaceShell>{children}</WorkspaceShell>
+      </body>
     </html>
   );
 }

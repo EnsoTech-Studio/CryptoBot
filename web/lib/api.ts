@@ -147,7 +147,7 @@ export type NewsItem = {
   url: string;
   published_at: string;
   source: { key: string; display_name: string };
-  related_coins: string[];
+  related_coins: string[] | null;
   sentiment: null | {
     label: "POSITIVE" | "NEUTRAL" | "NEGATIVE";
     score: number;

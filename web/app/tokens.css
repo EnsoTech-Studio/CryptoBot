@@ -1,0 +1,169 @@
+/* ===========================================================================
+   Crypto Strategy Lab — design tokens
+   ---------------------------------------------------------------------------
+   THREE COLOR NAMESPACES. They must never bleed into each other:
+
+     --brand-*    identity, primary action, focus ring. Nothing else.
+     --status-*   research state: live / syncing / queued / running /
+                  complete / stale / unavailable. Never brand, never data.
+     --data-*     chart pixels: candles, overlays, equity, signals.
+                  Never inherits a UI accent.
+
+   Rationale: PRODUCT.md principle 1 requires that live, stale, queued,
+   running, completed and unavailable never look interchangeable. That is
+   impossible while one accent doubles as brand, status and signal colour.
+   =========================================================================== */
+
+:root {
+  /* --- type ------------------------------------------------------------- */
+  --font-ui: var(--font-geist-sans), "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "Cascadia Code", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  /* 10px is the floor. Anything smaller is not readable at AA. */
+  --text-2xs: 0.625rem; /* 10px — uppercase micro labels only, with tracking */
+  --text-xs: 0.6875rem; /* 11px — table cells, captions */
+  --text-sm: 0.75rem;   /* 12px — controls, secondary body */
+  --text-base: 0.8125rem; /* 13px — body */
+  --text-md: 0.875rem;  /* 14px — panel titles */
+  --text-lg: 1rem;      /* 16px — section titles */
+  --text-xl: 1.25rem;   /* 20px — metric values */
+  --text-2xl: 1.625rem; /* 26px — instrument price */
+  --text-3xl: 2.125rem; /* 34px — rare, single hero number */
+
+  /* Geist is variable, so these weights are real steps, not 400/700 rounding. */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --tracking-tight: -0.02em;
+  --tracking-tighter: -0.035em;
+  --tracking-label: 0.08em;
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.55;
+
+  /* --- spacing (4px base) ----------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* --- radius ----------------------------------------------------------- */
+  --radius-inner: 4px;     /* inputs, chips, chart frames */
+  --radius-panel: 8px;     /* panels, cards */
+  --radius-container: 14px; /* outer containers only */
+  --radius-pill: 999px;
+
+  /* --- control sizing --------------------------------------------------- */
+  --control-h: 34px;
+  --control-h-sm: 28px;
+  --rail-w: 236px;
+  --inspector-w: 376px;
+
+  /* --- motion ----------------------------------------------------------- */
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* --- z-index scale (no 9999 anywhere) --------------------------------- */
+  --z-rail: 20;
+  --z-header: 30;
+  --z-inspector: 40;
+  --z-toast: 60;
+
+  /* --- surfaces & ink (dark is the default) ----------------------------- */
+  --bg: #0a0e0d;
+  --surface-1: #0e1312;
+  --surface-2: #121817;
+  --surface-3: #171f1d;
+  --surface-4: #1d2724;
+  --ink-1: #e8eeea;
+  --ink-2: #b3bfba;
+  --ink-3: #7d8b85;
+  --line-1: #212c29;
+  --line-2: #2f3d38;
+  --line-3: #45564f;
+
+  --elev-1: 0 1px 2px rgba(4, 8, 7, 0.5);
+  --elev-2: 0 10px 28px -12px rgba(4, 8, 7, 0.7);
+
+  /* --- brand ------------------------------------------------------------ */
+  --brand: #d2ec46;
+  --brand-hover: #dff45f;
+  --brand-ink: #121a03;
+  --focus-ring: #d2ec46;
+
+  /* --- status ----------------------------------------------------------- */
+  --status-live: #4fb87d;
+  --status-syncing: #d3a445;
+  --status-queued: #8a94a0;
+  --status-running: #5b9dd9;
+  --status-complete: #79c9a5;
+  --status-stale: #df7a72;
+  --status-unavailable: #7d8b85;
+
+  /* --- data (charts) ---------------------------------------------------- */
+  --data-up: #46ac78;
+  --data-down: #d2645c;
+  --data-series-1: #6f9ed7; /* MA, MACD line */
+  --data-series-2: #c4a253; /* Bollinger */
+  --data-series-3: #7cb492; /* RSI */
+  --data-series-4: #a58ec2; /* MACD signal */
+  --data-signal: #dde4df;
+  --data-zone-support: #46ac78;
+  --data-zone-resistance: #d2645c;
+  --chart-bg: #0c1211;
+  --chart-pane-alt: #101716;
+  --chart-grid: #1e2926;
+  --chart-axis: #6f7d78;
+}
+
+:root[data-theme="light"] {
+  --bg: #f3f4ee;
+  --surface-1: #eceee7;
+  --surface-2: #fbfbf7;
+  --surface-3: #f0f2eb;
+  --surface-4: #e6e9e0;
+  --ink-1: #141d1b;
+  --ink-2: #3b4844;
+  --ink-3: #67736e;
+  --line-1: #d8ded5;
+  --line-2: #c3cbc0;
+  --line-3: #a4afa7;
+
+  --elev-1: 0 1px 2px rgba(33, 46, 40, 0.06);
+  --elev-2: 0 10px 28px -14px rgba(33, 46, 40, 0.18);
+
+  --brand: #c3da2e;
+  --brand-hover: #b4cd21;
+  --brand-ink: #141c04;
+  /* Lime on white fails as a focus ring, so light mode uses a dark olive. */
+  --focus-ring: #6f8a0d;
+
+  --status-live: #2c7d55;
+  --status-syncing: #8d6b16;
+  --status-queued: #5d6873;
+  --status-running: #2f6ba6;
+  --status-complete: #2f7f60;
+  --status-stale: #b8443c;
+  --status-unavailable: #67736e;
+
+  --data-up: #2f7d57;
+  --data-down: #b8514a;
+  --data-series-1: #3a6da8;
+  --data-series-2: #8b6f1f;
+  --data-series-3: #47795c;
+  --data-series-4: #6d5391;
+  --data-signal: #2a3330;
+  --data-zone-support: #2f7d57;
+  --data-zone-resistance: #b8514a;
+  --chart-bg: #fafbf6;
+  --chart-pane-alt: #f2f4ed;
+  --chart-grid: #dde3d9;
+  --chart-axis: #6a766f;
+}

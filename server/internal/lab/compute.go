@@ -473,7 +473,7 @@ func evaluate(initial, final float64, trades []Trade, equity []EquityPoint, retu
 
 func ChartOverlays(candles []Candle, strategyID string) ([]OverlaySeries, []OverlayMarker) {
 	if len(candles) == 0 {
-		return nil, nil
+		return []OverlaySeries{}, []OverlayMarker{}
 	}
 	closes := make([]float64, len(candles))
 	for i, c := range candles {
@@ -501,7 +501,7 @@ func ChartOverlays(candles []Candle, strategyID string) ([]OverlaySeries, []Over
 		)
 	}
 
-	var markers []OverlayMarker
+	markers := make([]OverlayMarker, 0)
 	def := map[string]any{"children": []any{
 		map[string]any{"strategy_id": "ma_cross", "weight": 0.34, "parameters": DefaultParams("ma_cross")},
 		map[string]any{"strategy_id": "rsi", "weight": 0.33, "parameters": DefaultParams("rsi")},
