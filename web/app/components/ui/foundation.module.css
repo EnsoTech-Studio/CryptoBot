@@ -1,0 +1,180 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  border: 1px solid transparent;
+  border-radius: var(--radius-inner);
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.buttonPrimary {
+  border-color: var(--brand);
+  background: var(--brand-gradient);
+  color: var(--brand-ink);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+.buttonSecondary {
+  border-color: var(--line-2);
+  background: var(--surface-1);
+  color: var(--ink-1);
+}
+
+.buttonGhost {
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.buttonDanger {
+  border-color: color-mix(in srgb, var(--status-stale) 35%, var(--line-2));
+  background: var(--status-stale-bg);
+  color: var(--status-stale);
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface-3);
+  padding: 3px;
+}
+
+.segment {
+  min-height: var(--control-h-sm);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 0 var(--space-3);
+  color: var(--ink-3);
+}
+
+.segmentActive {
+  background: var(--surface-1);
+  color: var(--brand);
+  box-shadow: var(--elev-1);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--ink-2);
+}
+
+.toggleTrack {
+  display: flex;
+  width: 38px;
+  height: 22px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--line-3);
+  padding: 3px;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.toggleThumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface-1);
+  box-shadow: var(--elev-1);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.toggleOn .toggleTrack {
+  background: var(--brand);
+}
+
+.toggleOn .toggleThumb {
+  transform: translateX(16px);
+}
+
+.statusDot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-unavailable);
+}
+
+.statusLive { background: var(--status-live); }
+.statusSyncing { background: var(--status-syncing); }
+.statusError { background: var(--status-stale); }
+
+.statusMessage {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-inner);
+  background: var(--surface-1);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+}
+
+.statusMessageWarn {
+  border-color: color-mix(in srgb, var(--status-syncing) 22%, var(--line-1));
+  background: var(--status-syncing-bg);
+}
+
+.statusMessageError {
+  border-color: color-mix(in srgb, var(--status-stale) 22%, var(--line-1));
+  background: var(--status-stale-bg);
+  color: var(--status-stale);
+}
+
+.dialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--ink-1) 28%, transparent);
+  padding: var(--space-4);
+}
+
+.dialog {
+  width: min(520px, 100%);
+  max-height: min(720px, calc(100dvh - 32px));
+  overflow: auto;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-container);
+  background: var(--surface-1);
+  box-shadow: var(--elev-2);
+  padding: var(--space-5);
+}
+
+.dialogHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.dialogHead h2 { font-size: var(--text-xl); }
+
+.dialogClose {
+  display: grid;
+  width: var(--control-h-sm);
+  min-height: var(--control-h-sm);
+  place-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--ink-3);
+}
+
+.dialogClose svg { width: 18px; height: 18px; }

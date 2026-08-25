@@ -175,7 +175,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [predictionText, setPredictionText] = useState("Ethereum inflows look positive, but volatility risk remains.");
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [notice, setNotice] = useState<Notice>({ text: "Connecting market stream…", tone: "info" });
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("metrics");
   const autoOpened = useRef<string | null>(null);
@@ -301,12 +301,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const stored = window.localStorage.getItem("crypto-lab-theme");
-      const preferred: Theme = stored === "light" || stored === "dark"
-        ? stored
-        : window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-      setTheme(preferred);
-      document.documentElement.dataset.theme = preferred;
+      setTheme("light");
+      window.localStorage.setItem("crypto-lab-theme", "light");
+      document.documentElement.dataset.theme = "light";
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
