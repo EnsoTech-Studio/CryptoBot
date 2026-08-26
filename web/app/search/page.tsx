@@ -1,15 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { SearchPanel } from "../components/Operations";
-import { LeaderboardPanel } from "../components/LeaderboardPanel";
-
+/* Old links and bookmarks keep working; Discovery now owns this workspace. */
 export default function SearchPage() {
-  return (
-    <>
-      <section className="operation-grid single">
-        <SearchPanel />
-      </section>
-      <LeaderboardPanel />
-    </>
-  );
+  redirect("/discovery");
 }

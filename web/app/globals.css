@@ -92,6 +92,17 @@ a {
   top: var(--space-3);
 }
 
+/* Screen-reader-only text. Status colour and icon shape alone must never be the
+   only carrier of meaning (LONG/HOLD/SHORT, rank medals, live dots). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* --- shared primitives --------------------------------------------------- */
 
 .muted {

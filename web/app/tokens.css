@@ -100,6 +100,41 @@
   --status-syncing-bg: #fff8e8;
   --status-stale-bg: #fff0f2;
 
+  /* Accent tints — strategy families, side tags, status pills. Each pair is a
+     pale surface plus a text/icon colour that meets 4.5:1 on it. */
+  --tint-brand-bg: #eaf2fe;
+  --tint-brand-ink: #1a58bb;
+  --tint-brand-line: #cddffb;
+  --tint-violet-bg: #f3eeff;
+  --tint-violet-ink: #5a34cf;
+  --tint-violet-line: #ddd2fb;
+  --tint-green-bg: #ecf9f2;
+  --tint-green-ink: #10704b;
+  --tint-green-line: #bfe4d1;
+  --tint-amber-bg: #fdf5e6;
+  --tint-amber-ink: #a3690b;
+  --tint-amber-line: #f6dfb4;
+  --tint-red-bg: #fdeef1;
+  --tint-red-ink: #ab2f42;
+  --tint-red-line: #f6ccd4;
+
+  /* Rank medals — gold/silver/bronze are rank identity, not status. */
+  --medal-gold-bg: #fdf1d6;
+  --medal-gold-ink: #b07d10;
+  --medal-silver-bg: #eceef2;
+  --medal-silver-ink: #6c7686;
+  --medal-bronze-bg: #fbe8dc;
+  --medal-bronze-ink: #a4633a;
+
+  /* External asset brand colours. Fixed by the coins themselves, so they are
+     deliberately outside the palette above. */
+  --asset-btc: #f7931a;
+  --asset-eth: #6b7ce0;
+  --asset-sol: linear-gradient(135deg, #14f195 0%, #9945ff 100%);
+
+  /* Code token colour for quoted strings in the JSON viewer. */
+  --code-string: #a3335c;
+
   /* Chart and quantitative data */
   --data-up: #159264;
   --data-down: #d1465b;

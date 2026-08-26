@@ -1,0 +1,351 @@
+/* Backtest screen — matches ui-reference/backtest.jpg: one full-width filter
+   strip, a 40/60 chart + ledger row, then six KPI cells beside the profit
+   formula and assumptions panels. */
+
+.screen { min-width: 0; }
+
+.stack {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+/* --- filter strip --------------------------------------------------------- */
+
+.filterStrip {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 200px 108px 168px 168px 148px 184px 136px 128px;
+  align-items: end;
+  gap: 18px;
+  border: 1px solid var(--line-1);
+  border-radius: 11px;
+  background: var(--surface-1);
+  box-shadow: var(--elev-1);
+  padding: 15px 17px;
+  overflow-x: auto;
+}
+
+.coinField { position: relative; }
+
+.coinBadge {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  z-index: 1;
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--asset-btc);
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.coinField select { padding-left: 43px; font-family: var(--font-mono); font-weight: var(--weight-semibold); }
+
+.dateField { position: relative; }
+.dateField > span > svg:first-child {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  z-index: 1;
+  width: 15px;
+  height: 15px;
+  color: var(--ink-3);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.dateField input { padding-left: 34px; font-family: var(--font-mono); }
+
+/* --- results row ---------------------------------------------------------- */
+
+.resultsRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 40fr) minmax(0, 60fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.chartHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.legendRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.legendRow > span { display: inline-flex; align-items: center; gap: 6px; }
+.legendRow b { font-family: var(--font-mono); font-weight: var(--weight-semibold); }
+
+.legendSwatch { display: block; width: 14px; height: 2px; border-radius: 2px; }
+.swatchMa20 { background: var(--data-series-1); }
+.swatchMa50 { background: var(--data-series-4); }
+.swatchSupport { background: var(--data-zone-support); }
+.swatchResistance { background: var(--data-zone-resistance); }
+
+.legendLabel { color: var(--ink-3); }
+.legendMa20 { color: var(--data-series-1); }
+.legendMa50 { color: var(--data-series-4); }
+.legendSupport { color: var(--data-zone-support); }
+.legendResistance { color: var(--data-zone-resistance); }
+
+.chartViewport {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--chart-bg);
+}
+
+.chartViewport svg { display: block; width: 100%; height: auto; }
+
+.expandButton {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: var(--surface-1);
+  color: var(--ink-2);
+}
+
+.expandButton > svg { width: 15px; height: 15px; }
+
+/* --- trade ledger --------------------------------------------------------- */
+
+.ledgerWrap { min-width: 0; overflow-x: auto; }
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger th {
+  border-bottom: 1px solid var(--line-1);
+  padding: 0 7px 9px;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ledger td {
+  border-bottom: 1px solid var(--line-1);
+  padding: 9px 7px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ledger tbody tr:last-child td { border-bottom: 0; }
+.ledger tbody tr:hover { background: var(--surface-2); }
+
+.numeric { font-family: var(--font-mono); text-align: right; }
+.money { font-family: var(--font-mono); text-align: right; font-weight: var(--weight-semibold); }
+.gain { color: var(--data-up); }
+.loss { color: var(--data-down); }
+.cost { color: var(--ink-2); font-family: var(--font-mono); text-align: right; }
+
+.sideTag {
+  display: inline-block;
+  min-width: 52px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.sideLong { background: var(--tint-green-bg); color: var(--tint-green-ink); }
+.sideShort { background: var(--tint-red-bg); color: var(--tint-red-ink); }
+
+.ledgerFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 12px;
+  flex-wrap: wrap;
+}
+
+.pageSizeGroup {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.pageSizeGroup > span:first-child { white-space: nowrap; }
+.pageSizeSelect { width: 78px; }
+.rangeLabel { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+
+.pager { display: flex; align-items: center; gap: 5px; }
+
+.pager button {
+  display: grid;
+  min-width: 32px;
+  min-height: 32px;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: var(--surface-1);
+  padding: 0 8px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+}
+
+.pager button:hover:not(:disabled) { border-color: var(--line-3); color: var(--ink-1); }
+.pager button:disabled { color: var(--ink-3); cursor: not-allowed; opacity: 0.55; }
+.pager button > svg { width: 14px; height: 14px; }
+.pageActive { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
+.pageActive:hover { color: var(--brand-ink); }
+.pageGap { border: 0; background: transparent; color: var(--ink-3); cursor: default; }
+
+/* --- KPI + explanation row ------------------------------------------------ */
+
+.metricsRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) minmax(0, 1.55fr) minmax(0, 1.55fr);
+  align-items: stretch;
+  gap: 10px;
+}
+
+.kpiCell {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 5px;
+  border: 1px solid var(--line-1);
+  border-radius: 11px;
+  background: var(--surface-1);
+  box-shadow: var(--elev-1);
+  padding: 14px 13px;
+}
+
+.kpiLabel { color: var(--ink-2); font-size: 12px; font-weight: var(--weight-semibold); }
+
+.kpiValue {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 25px;
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
+}
+
+.kpiValue > em { font-size: 13px; font-style: normal; font-weight: var(--weight-semibold); }
+.kpiCaption { color: var(--ink-3); font-size: 11px; }
+.kpiSpark { margin-top: 4px; }
+.kpiSpark svg { display: block; width: 100%; height: 42px; }
+
+.donut { margin-top: 4px; }
+.donut svg { display: block; width: 46px; height: 46px; }
+
+.formulaRow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  gap: 4px;
+}
+
+.formulaStep {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  text-align: center;
+}
+
+.formulaIcon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.formulaIcon > svg { width: 18px; height: 18px; }
+.formulaGreen { background: var(--tint-green-bg); color: var(--data-up); }
+.formulaBrand { background: var(--tint-brand-bg); color: var(--brand); }
+.formulaAmber { background: var(--tint-amber-bg); color: var(--tint-amber-ink); }
+
+.formulaStep > strong { font-size: 12px; font-weight: var(--weight-semibold); }
+.formulaStep > span { color: var(--ink-3); font-size: 11px; line-height: var(--leading-snug); }
+
+.formulaOperator {
+  position: absolute;
+  top: 10px;
+  right: -8px;
+  color: var(--ink-3);
+  font-size: 15px;
+  font-weight: var(--weight-semibold);
+}
+
+.assumptionList { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
+
+.assumptionList > li {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: var(--leading-snug);
+}
+
+.assumptionList > li > svg { width: 15px; height: 15px; margin-top: 1px; color: var(--data-up); }
+
+.mockNote { margin: 0; color: var(--ink-3); font-size: 12px; }
+
+/* --- responsive ----------------------------------------------------------- */
+
+@media (max-width: 1560px) {
+  .metricsRow { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .formulaPanel, .assumptionPanel { grid-column: span 3; }
+}
+
+@media (max-width: 1280px) {
+  .resultsRow { grid-template-columns: minmax(0, 1fr); }
+  .metricsRow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .formulaPanel, .assumptionPanel { grid-column: span 3; }
+}
+
+@media (max-width: 860px) {
+  .filterStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metricsRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .formulaPanel, .assumptionPanel { grid-column: span 2; }
+  .formulaRow { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+  .formulaOperator { display: none; }
+}
+
+@media (max-width: 620px) {
+  .filterStrip { grid-template-columns: minmax(0, 1fr); }
+  .metricsRow { grid-template-columns: minmax(0, 1fr); }
+  .formulaPanel, .assumptionPanel { grid-column: auto; }
+  .ledgerFoot { justify-content: flex-start; }
+}

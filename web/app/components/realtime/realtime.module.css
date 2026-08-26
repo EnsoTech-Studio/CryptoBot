@@ -59,7 +59,7 @@
   height: 23px;
   place-items: center;
   border-radius: 50%;
-  background: #f7931a;
+  background: var(--asset-btc);
   color: #fff;
   font-family: Arial, sans-serif;
   font-size: 14px;

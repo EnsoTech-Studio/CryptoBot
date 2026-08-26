@@ -14,9 +14,11 @@ import { messageFromError } from "../../lib/format";
 import {
   api,
   wsURL,
+  DEFAULT_EXECUTION,
   type Candle,
   type EquityPoint,
   type ExecutionMarker,
+  type ExecutionSettings,
   type ExperimentSummary,
   type LeaderboardEntry,
   type MarketPair,
@@ -31,6 +33,7 @@ import {
   type Trade,
   type User,
 } from "../../lib/api";
+import type { DiscoveryDraft } from "../../lib/discovery";
 import {
   DEFAULT_MARKET,
   appendMarketEvent,
@@ -132,11 +135,20 @@ type WorkspaceValue = {
   experiment: ExperimentSummary | null;
   result: ResultBundle | null;
   search: SearchRun | null;
+  /* The API reports tested/generated but never echoes back the draft that
+     started the run. Snapshotting it keeps progress honest: the denominator and
+     the strategy names shown beside a score belong to the submitted run, not to
+     whatever the user edited afterwards. */
+  submittedDraft: DiscoveryDraft | null;
   leaderboard: LeaderboardEntry[];
   leaderboardState: LoadState;
   news: NewsItem[];
   newsState: LoadState;
   coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number } | null;
+  /* Percentages are derived from the aggregate's label counts so the News
+     screen never hardcodes a sentiment split. */
+  newsDistribution: { positive: number; neutral: number; negative: number } | null;
+  newsAverageScore: number | null;
   provenance: Record<string, unknown> | null;
   prediction: Prediction | null;
   predictionText: string;
@@ -151,8 +163,8 @@ type WorkspaceValue = {
   closeInspector: () => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  runBacktest: () => Promise<void>;
-  startSearch: () => Promise<void>;
+  runBacktest: (children?: Array<{ strategy_id: string; weight: number }>, execution?: ExecutionSettings, timeframe?: string) => Promise<void>;
+  startSearch: (draft: DiscoveryDraft) => Promise<void>;
   searchAction: (action: "pause" | "resume" | "cancel") => Promise<void>;
   refreshStaticData: () => Promise<void>;
   loadProvenance: (id: string) => Promise<void>;
@@ -204,11 +216,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [result, setResult] = useState<ResultBundle | null>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [search, setSearch] = useState<SearchRun | null>(null);
+  const [submittedDraft, setSubmittedDraft] = useState<DiscoveryDraft | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [leaderboardState, setLeaderboardState] = useState<LoadState>("loading");
   const [news, setNews] = useState<NewsItem[]>([]);
   const [newsState, setNewsState] = useState<LoadState>("loading");
   const [coverage, setCoverage] = useState<WorkspaceValue["coverage"]>(null);
+  const [newsDistribution, setNewsDistribution] = useState<WorkspaceValue["newsDistribution"]>(null);
+  const [newsAverageScore, setNewsAverageScore] = useState<number | null>(null);
   const [provenance, setProvenance] = useState<Record<string, unknown> | null>(null);
   const [predictionText, setPredictionText] = useState("Ethereum inflows look positive, but volatility risk remains.");
   const [prediction, setPrediction] = useState<Prediction | null>(null);
@@ -446,6 +461,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setNews(newsPayload?.items ?? []);
     setNewsState(newsPayload ? "ready" : "unavailable");
     setCoverage(aggregate?.coverage ?? null);
+    setNewsAverageScore(aggregate?.avg_score ?? null);
+    setNewsDistribution(distributionFromCounts(aggregate?.distribution));
   }
 
   async function refreshExperiment(id: string) {
@@ -821,11 +838,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     experiment,
     result,
     search,
+    submittedDraft,
     leaderboard,
     leaderboardState,
     news,
     newsState,
     coverage,
+    newsDistribution,
+    newsAverageScore,
     provenance,
     prediction,
     predictionText,
@@ -856,9 +876,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         report(messageFromError(error), "error");
       }
     },
-    async runBacktest() {
+    async runBacktest(children = compositeChildren, execution = DEFAULT_EXECUTION, timeframe) {
       try {
-        const accepted = await api.createExperiment(compositeChildren, selectedMarket, panels[0]?.timeframe ?? "5m");
+        const accepted = await api.createExperiment(
+          children,
+          selectedMarket,
+          timeframe ?? panels[0]?.timeframe ?? "5m",
+          execution,
+        );
         setActiveExperimentId(accepted.experiment_id);
         setResult(null);
         report(`Backtest queued: ${accepted.run_id.slice(0, 8)}`);
@@ -866,10 +891,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         report(messageFromError(error), "error");
       }
     },
-    async startSearch() {
+    async startSearch(draft) {
       try {
-        const accepted = await api.startSearch(selectedMarket, panels[0]?.timeframe ?? "5m");
+        const accepted = await api.startSearch(draft);
         setSearchId(accepted.search_run_id);
+        setSubmittedDraft(draft);
         report(`Search run started: ${accepted.search_run_id.slice(0, 8)}`);
       } catch (error) {
         report(messageFromError(error), "error");
@@ -906,6 +932,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 
+/* The API returns label counts, not percentages. Deriving the last share from
+   the other two keeps the three values summing to exactly 100. */
+function distributionFromCounts(counts?: Record<"POSITIVE" | "NEUTRAL" | "NEGATIVE", number>) {
+  if (!counts) return null;
+  const total = counts.POSITIVE + counts.NEUTRAL + counts.NEGATIVE;
+  if (total <= 0) return null;
+  const positive = Math.round((counts.POSITIVE / total) * 100);
+  const neutral = Math.round((counts.NEUTRAL / total) * 100);
+  return { positive, neutral, negative: 100 - positive - neutral };
+}
+
 function timeframeOrder(timeframe: string) {
   const match = timeframe.match(/^(\d+)([mhdw])$/i);
   if (!match) return Number.MAX_SAFE_INTEGER;
@@ -913,8 +950,7 @@ function timeframeOrder(timeframe: string) {
   return Number(match[1]) * (unitMinutes[match[2].toLowerCase()] ?? Number.MAX_SAFE_INTEGER);
 }
 
-function readPersistedMarket(): MarketSelection | null {
-  try {
+function readPersistedMarket(): MarketSelection | null {  try {
     const value = JSON.parse(window.localStorage.getItem("crypto-lab-market") ?? "null") as Partial<MarketSelection> | null;
     if (!value?.provider || !value.symbol) return null;
     return { provider: value.provider, symbol: value.symbol.toUpperCase() };

@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { LeaderboardPanel } from "../components/LeaderboardPanel";
-
+/* The leaderboard is a section of Discovery now, not its own screen. */
 export default function LeaderboardPage() {
-  return <LeaderboardPanel />;
+  redirect("/discovery");
 }
