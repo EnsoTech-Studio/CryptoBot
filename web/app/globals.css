@@ -993,7 +993,7 @@ td span {
 .current-price-box.down { fill: var(--data-down); }
 
 .current-price-label {
-  fill: #ffffff;
+  fill: var(--brand-ink);
   font-family: var(--font-mono);
   font-size: 8px;
   font-weight: var(--weight-semibold);
@@ -1038,6 +1038,10 @@ td span {
 .overlay-line.ma,
 .overlay-line.macd_line {
   stroke: var(--data-series-1);
+}
+
+.overlay-line.moving_average_50 {
+  stroke: var(--data-series-4);
 }
 
 .volume-value {

@@ -46,10 +46,9 @@ export const DISCOVERY_METHODS: Array<{
   icon: "dice" | "target" | "dna" | "sliders";
   supported: boolean;
 }> = [
-  { value: "grid", label: "Grid Search", description: "Quét toàn bộ không gian tham số theo thứ tự xác định.", icon: "sliders", supported: true },
   { value: "random_search", label: "Random Search", description: "Sinh ngẫu nhiên các biến thể theo seed.", icon: "dice", supported: true },
   { value: "domain_guided", label: "Domain-guided Search", description: "Tìm kiếm dựa trên kiến thức và ràng buộc.", icon: "target", supported: true },
-  { value: "genetic", label: "Genetic Search", description: "Tiến hóa qua chọn lọc và lai ghép.", icon: "dna", supported: false },
+  { value: "genetic", label: "Genetic Search", description: "Tiến hóa qua chọn lọc và lai ghép.", icon: "dna", supported: true },
 ];
 
 /* Short labels for chips. The registry display_name ("MA Cross (SMA)") is too
@@ -62,11 +61,21 @@ const SHORT_LABELS: Record<string, string> = {
   macd: "MACD",
   support_resistance: "S/R",
   news_sentiment: "Sentiment",
+  smc: "SMC",
+  wyckoff: "Wyckoff",
   composite: "Composite",
+};
+
+const DISPLAY_LABELS: Record<string, string> = {
+  support_resistance: "Support / Resistance",
 };
 
 export function shortLabel(strategyId: string): string {
   return SHORT_LABELS[strategyId] ?? strategyId;
+}
+
+export function displayLabel(strategyId: string): string {
+  return DISPLAY_LABELS[strategyId] ?? shortLabel(strategyId);
 }
 
 export type FamilyTone = "brand" | "violet" | "green" | "amber" | "neutral";

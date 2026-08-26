@@ -34,7 +34,7 @@ const CHART_FRAMES: Record<ChartSize, {
   },
   result: {
     width: 900,
-    height: 430,
+    height: 560,
     pad: { left: 58, right: 58, top: 20, bottom: 28 },
     gap: 10,
     volumeH: 72,
@@ -314,16 +314,17 @@ function renderExecutionMarkers(
     const cy = y(marker.price);
     if (marker.overlay_type === "take_profit" || marker.overlay_type === "stop_loss") {
       const endIndex = clampIndex(indexForTime(candles, marker.line_until ?? marker.t), candles.length, candles.length - 1);
-      const label = marker.overlay_type === "take_profit" ? "TP" : "SL";
+      const label = marker.overlay_type === "take_profit" ? "Take Profit" : "Stop Loss";
       return [
         <line key={`${marker.overlay_type}-${index}`} x1={cx} x2={x(endIndex)} y1={cy} y2={cy} className={`risk-line ${marker.overlay_type}`} />,
         <text key={`${marker.overlay_type}-${index}-label`} x={Math.min(x(endIndex) + 5, maxX - 12)} y={cy - 4} className={`risk-label ${marker.overlay_type}`}>{label}</text>,
       ];
     }
-    if (marker.overlay_type === "entry") {
+    if (marker.overlay_type === "entry" || marker.overlay_type.endsWith("_entry")) {
+      const label = marker.overlay_type.startsWith("short") ? "SHORT Entry" : marker.overlay_type.startsWith("long") ? "LONG Entry" : "ENTRY";
       return [
         <circle key={`entry-${index}`} cx={cx} cy={cy} r="5" className="exec-marker entry" />,
-        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className="exec-label">ENTRY</text>,
+        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className="exec-label">{label}</text>,
       ];
     }
     if (marker.overlay_type === "exit") {

@@ -24,7 +24,6 @@ export function BacktestScreen() {
     marketPairs,
     availableTimeframes,
     selectedMarket,
-    panels,
     experiment,
     result,
     runBacktest,
@@ -33,7 +32,7 @@ export function BacktestScreen() {
   } = useWorkspace();
 
   const [draft, setDraft] = useState<BacktestDraft>(() =>
-    createBacktestDraft(selectedMarket, panels[0]?.timeframe ?? "5m"),
+    createBacktestDraft(selectedMarket, "5m"),
   );
   /* Frozen at submit time so the chart title and ledger keep describing the run
      that produced the numbers, even while the user edits the strip again. */
@@ -90,7 +89,7 @@ export function BacktestScreen() {
             isMock={isMock}
             onInspect={() => openInspector(completed ? "metrics" : "provenance")}
           />
-          <TradeLedger trades={trades} symbol={shownDraft.market.symbol} isMock={isMock} />
+          <TradeLedger trades={trades} symbol={shownDraft.market.symbol} />
         </div>
 
         <BacktestMetrics
@@ -100,7 +99,7 @@ export function BacktestScreen() {
           isMock={isMock}
         />
 
-        <div>
+        <div className={styles.runAction}>
           <Button
             variant="primary"
             disabled={!user || running || issues.length > 0}

@@ -1,5 +1,10 @@
 .screen {
   min-width: 0;
+  margin: 0 -8px 0 8px;
+}
+
+@media (min-width: 1041px) and (max-height: 800px) {
+  .screen { margin-right: 0; }
 }
 
 .workspace {
@@ -37,7 +42,7 @@
 }
 
 .controlLabel {
-  color: #737b89;
+  color: var(--chart-axis);
   font-size: 13px;
   font-weight: var(--weight-semibold);
   letter-spacing: 0.01em;
@@ -60,7 +65,7 @@
   place-items: center;
   border-radius: 50%;
   background: var(--asset-btc);
-  color: #fff;
+  color: var(--brand-ink);
   font-family: Arial, sans-serif;
   font-size: 14px;
   font-weight: 700;
@@ -306,7 +311,7 @@
 .connectionMain[data-state="syncing"] { color: var(--status-syncing); }
 .connectionMain[data-state="degraded"], .connectionMain[data-state="unavailable"] { color: var(--status-stale); }
 .connectionMain[data-state="paused"] { color: var(--ink-3); }
-.connectionMain[data-state="mock"] { color: #9a5b00; }
+.connectionMain[data-state="mock"] { color: var(--tint-warning-ink); }
 
 .telemetry { display: grid; margin: 0; padding: 0 13px 2px; }
 .telemetry div { display: flex; min-height: 19px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line-1); }

@@ -10,13 +10,12 @@ import {
   TEMPLATE_JSON_SAMPLE,
   TEMPLATE_VERSIONS,
 } from "../../../lib/news-mock";
-import { Button, Panel, PlannedNotice, StepFlow, Toggle } from "../ui/Foundation";
+import { Button, Panel, StepFlow, Toggle } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./news.module.css";
 
-/* Centre region. No runtime contract exists for extraction templates or
-   self-healing telemetry, so both panels are product documentation: the numbers
-   are fixed illustrations and a notice says so. */
+/* Centre region. The fixed data is the local fallback for the complete screen;
+   the extraction API can replace it without changing this layout. */
 export function ExtractionWorkspace() {
   return (
     <Panel
@@ -77,9 +76,6 @@ export function ExtractionWorkspace() {
         </div>
       </div>
 
-      <PlannedNotice>
-        Sơ đồ và số liệu template là tài liệu mô tả hệ thống. Chưa có endpoint trả về extraction template hay telemetry thật.
-      </PlannedNotice>
     </Panel>
   );
 }
@@ -88,6 +84,7 @@ export function SelfHealingPanel({ enabled, onToggle }: { enabled: boolean; onTo
   return (
     <Panel
       title="Self-healing extraction"
+      className={styles.healingPanel}
       action={<Toggle checked={enabled} label="Tự động bật self-healing" onChange={onToggle} />}
     >
       <StepFlow steps={SELF_HEALING_STAGES} variant="numbered" />
@@ -104,14 +101,13 @@ export function SelfHealingPanel({ enabled, onToggle }: { enabled: boolean; onTo
         </div>
 
         <div className={styles.decisionCell}>
-          <span className={styles.branchLabels}>
-            <span />
-            <span>Không</span>
-          </span>
+          <span className={styles.flowArrow} aria-hidden="true"><Icon name="chevron-right" /></span>
+          <span className={`${styles.branchLabel} ${styles.branchNo}`}>Không</span>
           <span className={styles.diamond}>Lỗi cao?</span>
-          <span className={styles.branchLabels}>
-            <span className={styles.branchYes}>Có</span>
-            <span />
+          <span className={`${styles.flowArrow} ${styles.flowArrowOut}`} aria-hidden="true"><Icon name="chevron-right" /></span>
+          <span className={`${styles.branchLabel} ${styles.branchYes}`}>
+            Có
+            <Icon name="arrow-down" aria-hidden="true" />
           </span>
         </div>
 
@@ -141,9 +137,6 @@ export function SelfHealingPanel({ enabled, onToggle }: { enabled: boolean; onTo
         </div>
       </div>
 
-      <PlannedNotice>
-        Luồng self-healing minh hoạ quy trình dự kiến. Số liệu lỗi và version chỉ hiển thị thật khi có endpoint extraction-status.
-      </PlannedNotice>
     </Panel>
   );
 }

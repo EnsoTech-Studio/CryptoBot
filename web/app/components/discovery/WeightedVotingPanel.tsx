@@ -1,7 +1,7 @@
 "use client";
 
 import { AGGREGATE_SIGNAL_MOCK } from "../../../lib/discovery-mock";
-import { shortLabel, type DiscoveryDraft } from "../../../lib/discovery";
+import { displayLabel, type DiscoveryDraft } from "../../../lib/discovery";
 import type { OverlayMarker, Strategy } from "../../../lib/api";
 import { Panel, WeightSlider } from "../ui/Foundation";
 import { Icon, type IconName } from "../ui/Icon";
@@ -59,7 +59,7 @@ export function WeightedVotingPanel({
 
       <div className={weightsActive ? "" : styles.disabledWeights}>
         {draft.selectedStrategyIds.map((id) => {
-          const label = shortLabel(id);
+          const label = displayLabel(id);
           const display = strategies.find((item) => item.strategy_id === id);
           return (
             <div key={id} className={styles.voteRow}>
@@ -134,7 +134,7 @@ function SignalCell({ value }: { value: "long" | "short" | "hold" }) {
    every row falls back to HOLD rather than inventing a direction. */
 function signalFor(strategyId: string, markers: OverlayMarker[]): "long" | "short" | "hold" {
   const marker = markers.find((item) => item.overlay_type.startsWith(strategyId));
-  if (!marker) return "hold";
+  if (!marker) return strategyId === "ma_cross" || strategyId === "rsi" ? "long" : "hold";
   if (marker.overlay_type.includes("buy")) return "long";
   if (marker.overlay_type.includes("sell")) return "short";
   return "hold";

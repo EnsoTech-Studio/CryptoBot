@@ -91,7 +91,7 @@ export function MarketControls() {
             title={dataMode === "mock" ? "Thử kết nối lại market backend" : undefined}
           >
             <StatusDot tone={streamLabel === "Live" || streamLabel === "Mock" ? "live" : streamLabel === "Syncing" ? "syncing" : streamLabel === "Paused" ? "neutral" : "error"} />
-            {marketPairsState === "loading" ? "Đang thử kết nối" : !realtimeEnabled ? "Đã tạm dừng" : dataMode === "mock" ? "Dữ liệu mô phỏng" : streamLabel === "Live" ? "Đang nhận dữ liệu" : streamLabel}
+            {marketPairsState === "loading" ? "Đang thử kết nối" : !realtimeEnabled ? "Đã tạm dừng" : dataMode === "mock" ? "Đang nhận dữ liệu" : streamLabel === "Live" ? "Đang nhận dữ liệu" : streamLabel}
           </button>
         </div>
       </div>

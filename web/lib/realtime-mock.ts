@@ -41,10 +41,17 @@ const timeframeMinutes: Record<string, number> = {
 
 const referenceClose: Record<string, number> = {
   "1m": 69_342.18,
-  "5m": 69_318.42,
-  "15m": 69_301.76,
-  "1h": 69_284.53,
+  "5m": 69_342.18,
+  "15m": 69_342.18,
+  "1h": 69_342.18,
   "4h": 69_214.82,
+};
+
+const referenceMovingAverage: Record<string, number> = {
+  "1m": 69_315.45,
+  "5m": 69_182.73,
+  "15m": 68_912.35,
+  "1h": 68_215.66,
 };
 
 export function createMockPanelData(
@@ -66,8 +73,8 @@ export function createMockPanelData(
   };
   const marketScale = isBitcoin ? 1 : 0.055;
   const displayRange = (displayRangeByTimeframe[timeframe] ?? 520) * marketScale;
-  const trendRange = displayRange * 3;
-  const waveSize = displayRange * 0.07;
+  const trendRange = displayRange * 2.2;
+  const waveSize = displayRange * 0.18;
   const stepMs = minutes * 60_000;
   const anchor = Date.parse(timeframe === "1m"
     ? "2025-05-16T10:45:00.000Z"
@@ -78,7 +85,7 @@ export function createMockPanelData(
     const progress = index / Math.max(1, count - 1);
     const wave = Math.sin(index * 0.39 + minutes * 0.03) * waveSize;
     const micro = Math.cos(index * 0.17 + 1.2) * waveSize * 0.48;
-    const pullback = Math.sin(progress * Math.PI * 5.2) * waveSize * 0.75;
+    const pullback = Math.sin(progress * Math.PI * 5.2) * waveSize * 1.1;
     const trend = -trendRange * (1 - progress);
     return trend + wave + micro + pullback;
   });
@@ -105,9 +112,10 @@ export function createMockPanelData(
     };
   });
 
+  const movingAverage = alignMovingAverage(createMovingAverage(candles), referenceMovingAverage[timeframe]);
   return {
     candles,
-    series: [createMovingAverage(candles)],
+    series: [movingAverage],
     markers: createSignalMarkers(candles, timeframe),
   };
 }
@@ -115,15 +123,15 @@ export function createMockPanelData(
 export function createMockTicks(symbol = "BTCUSDT"): DisplayTick[] {
   const base = symbol.toUpperCase().startsWith("BTC") ? 69_342.18 : 3_782.46;
   const rows = [
-    { seconds: 23, delta: 0, quantity: 0.024, side: "buy" as const },
-    { seconds: 21, delta: -1.42, quantity: 0.013, side: "sell" as const },
-    { seconds: 18, delta: 0.86, quantity: 0.041, side: "buy" as const },
-    { seconds: 15, delta: -2.18, quantity: 0.008, side: "sell" as const },
-    { seconds: 11, delta: -0.34, quantity: 0.019, side: "buy" as const },
+    { timestamp: "38.123", delta: 0, quantity: 0.012, side: "buy" as const },
+    { timestamp: "38.087", delta: -0.01, quantity: 0.005, side: "buy" as const },
+    { timestamp: "38.051", delta: -0.02, quantity: 0.01, side: "sell" as const },
+    { timestamp: "38.015", delta: -0.03, quantity: 0.007, side: "buy" as const },
+    { timestamp: "37.979", delta: -0.04, quantity: 0.02, side: "sell" as const },
   ];
   return rows.map((row, index) => ({
     id: `mock-tick-${index}`,
-    occurredAt: `2025-04-29T10:45:${String(row.seconds).padStart(2, "0")}.000Z`,
+    occurredAt: `2025-04-29T10:45:${row.timestamp}Z`,
     price: roundPrice(base + row.delta),
     quantity: row.quantity,
     side: row.side,
@@ -173,6 +181,16 @@ function createMovingAverage(candles: Candle[]): OverlaySeries {
     overlay_type: "moving_average",
     pane: "main",
     points,
+  };
+}
+
+function alignMovingAverage(series: OverlaySeries, target?: number): OverlaySeries {
+  const last = series.points?.at(-1)?.v;
+  if (target == null || last == null) return series;
+  const offset = target - last;
+  return {
+    ...series,
+    points: series.points?.map((point) => ({ ...point, v: point.v == null ? null : roundPrice(point.v + offset) })),
   };
 }
 

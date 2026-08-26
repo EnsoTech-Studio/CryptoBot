@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { DEFINITION_JSON, PARSED_BLOCKS } from "../../../lib/strategy-authoring";
 import { Panel } from "../ui/Foundation";
@@ -48,6 +48,7 @@ export function DefinitionJson() {
   return (
     <Panel
       title="Định nghĩa strategy (JSON)"
+      className={styles.jsonPanel}
       action={
         <button type="button" className={styles.copyButton} onClick={() => void copy()}>
           <Icon name={copied ? "check" : "copy"} aria-hidden="true" />
@@ -55,7 +56,29 @@ export function DefinitionJson() {
         </button>
       }
     >
-      <pre className={styles.jsonBlock}>{DEFINITION_JSON}</pre>
+      <pre className={styles.jsonBlock}>{highlightJson(DEFINITION_JSON)}</pre>
     </Panel>
   );
+}
+
+function highlightJson(value: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const tokenPattern = /("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenPattern.exec(value))) {
+    if (match.index > cursor) nodes.push(value.slice(cursor, match.index));
+    const token = match[0];
+    const isKey = token.startsWith('"') && value.slice(tokenPattern.lastIndex).trimStart().startsWith(":");
+    nodes.push(
+      <span key={`${match.index}-${token}`} className={isKey ? styles.jsonKey : token.startsWith('"') ? styles.jsonString : styles.jsonNumber}>
+        {token}
+      </span>,
+    );
+    cursor = tokenPattern.lastIndex;
+  }
+
+  if (cursor < value.length) nodes.push(value.slice(cursor));
+  return nodes;
 }

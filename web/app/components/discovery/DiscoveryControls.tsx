@@ -145,7 +145,7 @@ export function DiscoveryProgress({
           </Button>
         </div>
       ) : (
-        <>
+        <div className={styles.progressMockActions}>
           <PlannedNotice>Số liệu minh hoạ theo thiết kế. Bắt đầu một run để thay bằng dữ liệu thật.</PlannedNotice>
           <div className={styles.runActions}>
             <Button variant="primary" disabled={!canStart} onClick={onStart}>
@@ -153,7 +153,7 @@ export function DiscoveryProgress({
               Bắt đầu Discovery
             </Button>
           </div>
-        </>
+        </div>
       )}
     </Panel>
   );

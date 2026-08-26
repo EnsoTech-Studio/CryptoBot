@@ -38,7 +38,7 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --page-gutter: clamp(16px, 1.8vw, 28px);
+  --page-gutter: clamp(16px, 1.8vw, 30px);
 
   /* Shape and layout */
   --radius-inner: 8px;
@@ -47,7 +47,7 @@
   --radius-pill: 999px;
   --control-h: 38px;
   --control-h-sm: 32px;
-  --rail-w: 240px;
+  --rail-w: 230px;
   --inspector-w: 376px;
   --header-h: 73px;
 
@@ -64,11 +64,12 @@
   --z-toast: 60;
 
   /* Surfaces */
-  --bg: #f7f8fc;
+  --bg: #fefefe;
   --surface-1: #ffffff;
   --surface-2: #fbfcfe;
   --surface-3: #f4f6fa;
   --surface-4: #edf1f7;
+  --surface-plan: #f7f9ff;
   --ink-1: #171a21;
   --ink-2: #4f5868;
   --ink-3: #7b8494;
@@ -117,6 +118,12 @@
   --tint-red-bg: #fdeef1;
   --tint-red-ink: #ab2f42;
   --tint-red-line: #f6ccd4;
+  --tint-avatar-bg: #eef2ff;
+  --tint-avatar-ink: #4f6edb;
+  --tint-avatar-line: #e1e7fb;
+  --tint-warning-bg: #fff8e9;
+  --tint-warning-ink: #9a5b00;
+  --tint-warning-line: #f1d69f;
 
   /* Rank medals — gold/silver/bronze are rank identity, not status. */
   --medal-gold-bg: #fdf1d6;

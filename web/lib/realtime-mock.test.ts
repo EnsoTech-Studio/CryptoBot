@@ -11,7 +11,7 @@ test("mock panel data is deterministic and matches the requested timeframe", () 
 
   assert.deepEqual(first, second);
   assert.equal(first.candles.length, 180);
-  assert.equal(first.candles.at(-1)?.close, 69_318.42);
+  assert.equal(first.candles.at(-1)?.close, 69_342.18);
   assert.equal(first.candles.every((candle) => candle.timeframe === "5m"), true);
   assert.equal(first.series[0]?.name, "MA(20)");
   assert.equal(first.markers.at(-1)?.overlay_type, "buy_signal");

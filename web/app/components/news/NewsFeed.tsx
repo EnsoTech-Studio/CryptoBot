@@ -86,8 +86,10 @@ function FeedRow({ item, isMock }: { item: NewsItem; isMock: boolean }) {
           {item.sentiment ? item.sentiment.label : "CHƯA PHÂN TÍCH"}
         </span>
       </div>
-      <span className={styles.feedSource}>{item.source.display_name}</span>
-      <span className={styles.feedTime}>{timeOf(item.published_at)}</span>
+      <span className={styles.feedMeta}>
+        <span className={styles.feedSource}>{item.source.display_name}</span>
+        <span className={styles.feedTime}>{timeOf(item.published_at)}</span>
+      </span>
     </article>
   );
 }

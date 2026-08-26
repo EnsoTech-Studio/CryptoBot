@@ -177,7 +177,7 @@ function IconPaths({ name }: { name: IconName }) {
     case "user":
       return <><circle cx="12" cy="8" r="4" /><path d="M4.8 21a7.2 7.2 0 0 1 14.4 0" /></>;
     case "wand":
-      return <><path d="m5 19 9.5-9.5" /><path d="M17 3v3.4M17 9.6V13M13.3 8h3.1M17.6 8h3.1" /><path d="m14.2 9.8 2.6-2.6" /></>;
+      return <><path d="m5 19 9.5-9.5" /><path d="m17 3 .8 2.2L20 6l-2.2.8L17 9l-.8-2.2L14 6l2.2-.8L17 3Z" /><path d="m8 4 .5 1.5L10 6l-1.5.5L8 8l-.5-1.5L6 6l1.5-.5L8 4Z" /><path d="m19 13 .4 1.1 1.1.4-1.1.4L19 16l-.4-1.1-1.1-.4 1.1-.4L19 13Z" /></>;
     default:
       return null;
   }

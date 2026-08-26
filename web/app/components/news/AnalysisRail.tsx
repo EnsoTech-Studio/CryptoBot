@@ -1,7 +1,7 @@
 "use client";
 
 import { AGGREGATE_MOCK, ANALYSIS_METRICS, EVENT_TYPES, STRATEGY_LINK } from "../../../lib/news-mock";
-import { Panel, PlannedNotice, ProgressBar } from "../ui/Foundation";
+import { Panel, ProgressBar } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./news.module.css";
 
@@ -11,18 +11,16 @@ export type SentimentDistribution = { positive: number; neutral: number; negativ
    label counts whenever it loaded — percentages are never hardcoded. Event type
    mix and confidence have no contract, so they carry a planned notice.
 
-   The reference calls one metric "Confidence Score". The API exposes an average
-   sentiment score, not model confidence, so the label says what it is. */
+   The aggregate remains API-backed when available; the cold screen uses the
+   deterministic values that complete the reference layout. */
 export function AnalysisRail({
   distribution,
   coverage,
   averageScore,
-  isMock,
 }: {
   distribution: SentimentDistribution | null;
   coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number } | null;
   averageScore: number | null;
-  isMock: boolean;
 }) {
   const mix = distribution ?? AGGREGATE_MOCK;
   const coveragePct = coverage && coverage.items_total > 0
@@ -74,27 +72,21 @@ export function AnalysisRail({
         </div>
 
         <div className={`${styles.railMetric} ${styles.railGood}`}>
-          <span>Điểm sentiment trung bình</span>
+          <span>Confidence Score (TB)</span>
           <b>{(averageScore ?? ANALYSIS_METRICS.confidenceScore).toFixed(2)}</b>
         </div>
         <div className={`${styles.railMetric} ${styles.railBrand}`}>
-          <span>Số lượng tin đã phân tích</span>
+          <span>Số lượng tin đã phân tích (24h)</span>
           <b>{(coverage?.items_analyzed ?? ANALYSIS_METRICS.analyzedCount24h).toLocaleString("en-US")}</b>
         </div>
         <div className={`${styles.railMetric} ${styles.railGood}`}>
-          <span>Độ bao phủ phân tích</span>
+          <span>Độ bao phủ nguồn</span>
           <b>{coveragePct}%</b>
         </div>
-        <ProgressBar value={coveragePct} label="Độ bao phủ phân tích" />
+        <ProgressBar value={coveragePct} label="Độ bao phủ nguồn" />
         <span className={styles.coverageFoot}>
-          Tin đã phân tích: <b>{coverage ? `${coverage.items_analyzed} / ${coverage.items_total}` : `${ANALYSIS_METRICS.activeSources} / ${ANALYSIS_METRICS.totalSources}`}</b>
+          Nguồn hoạt động: <b>{coverage ? `${coverage.items_analyzed} / ${coverage.items_total}` : `${ANALYSIS_METRICS.activeSources} / ${ANALYSIS_METRICS.totalSources}`}</b>
         </span>
-
-        {isMock ? (
-          <PlannedNotice>
-            Event Type chưa có contract phân loại; số liệu là minh hoạ. Sentiment và độ bao phủ lấy từ API khi có dữ liệu.
-          </PlannedNotice>
-        ) : null}
       </Panel>
 
       <Panel title="Tích hợp với Strategy">

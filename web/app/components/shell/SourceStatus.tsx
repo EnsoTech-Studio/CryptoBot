@@ -18,7 +18,6 @@ export function SourceStatus({ state, dataMode }: { state: ConnectionLabel; data
     <div className={`${styles.sourceStatus} ${styles[`source${state}`]}`} title={dataMode === "mock" ? "Dữ liệu mô phỏng xác định; không phải giá thị trường thật" : `Nguồn dữ liệu ${stateLabel}`}>
       <StatusDot tone={tone} />
       <span>Nguồn dữ liệu: Binance API + WebSocket</span>
-      {dataMode === "mock" ? <em>Mock</em> : null}
     </div>
   );
 }

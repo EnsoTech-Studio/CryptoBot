@@ -1,6 +1,6 @@
-import { redirect } from "next/navigation";
+import { DiscoveryScreen } from "../components/discovery/DiscoveryScreen";
 
-/* The leaderboard is a section of Discovery now, not its own screen. */
+/* Keep the legacy URL visually stable; leaderboard is a Discovery section. */
 export default function LeaderboardPage() {
-  redirect("/discovery");
+  return <DiscoveryScreen />;
 }

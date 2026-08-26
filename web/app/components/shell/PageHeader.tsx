@@ -15,7 +15,7 @@ export function PageHeader({ navigationOpen, onOpenNavigation, menuButtonRef }: 
   const meta = pageMeta(pathname);
 
   return (
-    <header className={styles.pageHeader}>
+    <header className={styles.pageHeader} data-route={pathname}>
       <button
         ref={menuButtonRef}
         type="button"

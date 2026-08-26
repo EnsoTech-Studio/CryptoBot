@@ -179,16 +179,14 @@ export function useWorkspace(): WorkspaceValue {
   return value;
 }
 
-function createPanels(timeframes = preferredTimeframes, realtimeEnabled = true): Panel[] {
+function createPanels(timeframes = preferredTimeframes, realtimeEnabled = true, seedMock = false): Panel[] {
   const safeTimeframes = timeframes.length > 0 ? timeframes : preferredTimeframes;
   return safeTimeframes.slice(0, panelSeed.length).map((timeframe, index) => ({
     ...panelSeed[index],
     timeframe,
-    candles: [],
-    series: [],
-    markers: [],
-    liveState: realtimeEnabled ? "connecting" : "paused",
-    loaded: false,
+    ...(seedMock ? createMockPanelData(DEFAULT_MARKET, timeframe, 180) : { candles: [], series: [], markers: [] }),
+    liveState: seedMock ? (realtimeEnabled ? "live" : "paused") : realtimeEnabled ? "connecting" : "paused",
+    loaded: seedMock,
     historyLoading: false,
     historyLimit: 180,
   }));
@@ -197,20 +195,28 @@ function createPanels(timeframes = preferredTimeframes, realtimeEnabled = true):
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [panels, setPanels] = useState<Panel[]>(() => createPanels());
+  const [panels, setPanels] = useState<Panel[]>(() => createPanels(preferredTimeframes, true, true));
   const [focusIndex, setFocusIndex] = useState(0);
-  const [marketPairs, setMarketPairs] = useState<MarketPair[]>([]);
-  const [marketPairsState, setMarketPairsState] = useState<LoadState>("loading");
-  const [dataMode, setDataMode] = useState<DataMode>("live");
+  const [marketPairs, setMarketPairs] = useState<MarketPair[]>(MOCK_MARKET_PAIRS);
+  const [marketPairsState, setMarketPairsState] = useState<LoadState>("ready");
+  const [dataMode, setDataMode] = useState<DataMode>("mock");
   const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(DEFAULT_MARKET);
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
   const [recentTicks, setRecentTicks] = useState<DisplayTick[]>([]);
-  const [lastFrameAt, setLastFrameAt] = useState<string>();
-  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [lastFrameAt, setLastFrameAt] = useState<string | undefined>("2025-04-29T10:45:38.123Z");
+  const [latencyMs, setLatencyMs] = useState<number | null>(102);
   const [socketReconnectCount, setSocketReconnectCount] = useState(0);
-  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
-  const [marketStatusState, setMarketStatusState] = useState<LoadState>("loading");
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>({
+    provider: "binance_usdm",
+    symbol: DEFAULT_MARKET.symbol,
+    timeframe: "1m",
+    stale: false,
+    last_closed_at: "2025-04-29T10:45:38.123Z",
+    last_sequence: 1,
+    reconnect_count: 0,
+  });
+  const [marketStatusState, setMarketStatusState] = useState<LoadState>("ready");
   const [activeExperimentId, setActiveExperimentId] = useState<string | null>(null);
   const [experiment, setExperiment] = useState<ExperimentSummary | null>(null);
   const [result, setResult] = useState<ResultBundle | null>(null);
@@ -317,14 +323,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setMarketPairs(mockPairs);
     setMarketPairsState("ready");
     setRecentTicks(createMockTicks(market.symbol));
-    setLatencyMs(24);
-    setLastFrameAt("2025-04-29T10:45:23.000Z");
+    setLatencyMs(102);
+    setLastFrameAt("2025-04-29T10:45:38.123Z");
     setMarketStatus({
       provider: "deterministic_mock",
       symbol: market.symbol.toUpperCase(),
       timeframe: panelsRef.current[0]?.timeframe ?? "1m",
       stale: false,
-      last_closed_at: "2025-04-29T10:45:23.000Z",
+      last_closed_at: "2025-04-29T10:45:38.123Z",
       last_sequence: 1,
       reconnect_count: 0,
     });
@@ -425,7 +431,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
 
   async function retryMarketPairs() {
-    setMarketPairsState("loading");
     try {
       const payload = await api.marketPairs();
       const pairs = (payload.pairs ?? []).map((pair) => ({
@@ -529,15 +534,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const timeframeSignature = availableTimeframes.join("|");
   useEffect(() => {
     const resetFrame = window.requestAnimationFrame(() => {
-      const nextPanels = createPanels(availableTimeframes, realtimeEnabled);
+      const nextPanels = createPanels(availableTimeframes, realtimeEnabled, dataModeRef.current === "mock");
       setPanels(nextPanels);
       setFocusIndex(0);
       setRecentMarketEvents([]);
-      setRecentTicks(dataModeRef.current === "mock" ? createMockTicks(selectedMarket.symbol) : []);
-      setLastFrameAt(undefined);
-      setLatencyMs(null);
+      const mockMode = dataModeRef.current === "mock";
+      setRecentTicks(mockMode ? createMockTicks(selectedMarket.symbol) : []);
+      setLastFrameAt(mockMode ? "2025-04-29T10:45:38.123Z" : undefined);
+      setLatencyMs(mockMode ? 102 : null);
       setSocketReconnectCount(0);
-      setMarketStatus(null);
+      setMarketStatus(mockMode ? {
+        provider: "binance_usdm",
+        symbol: selectedMarket.symbol,
+        timeframe: nextPanels[0]?.timeframe ?? "1m",
+        stale: false,
+        last_closed_at: "2025-04-29T10:45:38.123Z",
+        last_sequence: 1,
+        reconnect_count: 0,
+      } : null);
       window.localStorage.setItem("crypto-lab-market", JSON.stringify(selectedMarket));
       nextPanels.forEach((panel, index) => void loadPanel(index, {
         timeframe: panel.timeframe,
@@ -755,7 +769,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
       setLastFrameAt(now);
       setLatencyMs(22 + (tick % 9));
-    }, 1_600);
+    }, 60_000);
     return () => window.clearInterval(timer);
   }, [dataMode, marketSignature, realtimeEnabled, selectedMarket.symbol]);
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from "react";
 
 import { Icon, type IconName } from "./Icon";
 import styles from "./foundation.module.css";
@@ -209,6 +209,7 @@ export function WeightSlider({
       <input
         type="range"
         className={styles.range}
+        style={{ "--range-progress": `${max === min ? 0 : ((value - min) / (max - min)) * 100}%` } as CSSProperties}
         aria-label={`Trọng số ${label}`}
         min={min}
         max={max}
@@ -232,9 +233,9 @@ export function WeightSlider({
   );
 }
 
-export function Chip({ label, tone = "brand", onRemove }: { label: string; tone?: "brand" | "amber" | "green" | "violet" | "neutral"; onRemove?: () => void }) {
+export function Chip({ label, tone = "brand", onRemove, className = "" }: { label: string; tone?: "brand" | "amber" | "green" | "violet" | "neutral"; onRemove?: () => void; className?: string }) {
   return (
-    <span className={`${styles.chip} ${styles[`chip${tone[0].toUpperCase()}${tone.slice(1)}`] ?? ""}`}>
+    <span className={`${styles.chip} ${styles[`chip${tone[0].toUpperCase()}${tone.slice(1)}`] ?? ""} ${className}`}>
       {label}
       {onRemove ? (
         <button type="button" onClick={onRemove} aria-label={`Bỏ ${label}`}>

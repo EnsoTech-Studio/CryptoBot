@@ -2,6 +2,7 @@
 
 import { LOOP_STEPS } from "../../../lib/discovery-mock";
 import { Panel, StepFlow } from "../ui/Foundation";
+import { Icon } from "../ui/Icon";
 import styles from "./discovery.module.css";
 
 /* Column 3, top: the five-stage loop. Static process documentation, except the
@@ -11,6 +12,7 @@ export function DiscoveryWorkflow({ status }: { status?: string }) {
     <Panel title="Loop Discovery" info="Vòng lặp tự động: sinh biến thể, backtest, đánh giá, xếp hạng.">
       <div className={styles.loopFlow}>
         <StepFlow steps={LOOP_STEPS} current={stageIndex(status)} />
+        <span className={styles.loopReturn} aria-hidden="true"><Icon name="arrow-up" /></span>
       </div>
     </Panel>
   );
@@ -27,6 +29,6 @@ function stageIndex(status?: string): number | undefined {
     case "completed":
       return 4;
     default:
-      return undefined;
+      return 4;
   }
 }

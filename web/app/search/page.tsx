@@ -1,6 +1,6 @@
-import { redirect } from "next/navigation";
+import { DiscoveryScreen } from "../components/discovery/DiscoveryScreen";
 
-/* Old links and bookmarks keep working; Discovery now owns this workspace. */
+/* Keep the legacy URL visually stable; search is a Discovery section. */
 export default function SearchPage() {
-  redirect("/discovery");
+  return <DiscoveryScreen />;
 }

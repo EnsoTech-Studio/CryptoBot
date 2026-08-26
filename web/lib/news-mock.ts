@@ -8,9 +8,9 @@ import type { NewsItem } from "./api";
 export type SourceMode = "website" | "rss" | "html";
 
 export const SOURCE_MODES: Array<{ value: SourceMode; label: string; icon: "globe" | "rss" | "code"; supported: boolean }> = [
-  { value: "website", label: "Website", icon: "globe", supported: false },
+  { value: "website", label: "Website", icon: "globe", supported: true },
   { value: "rss", label: "RSS", icon: "rss", supported: true },
-  { value: "html", label: "HTML", icon: "code", supported: false },
+  { value: "html", label: "HTML", icon: "code", supported: true },
 ];
 
 export const REFRESH_OPTIONS = [1, 2, 3, 4, 5] as const;

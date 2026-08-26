@@ -9,6 +9,7 @@ import {
   normalizeWeights,
   type DiscoveryDraft,
 } from "../../../lib/discovery";
+import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
 import { useWorkspace } from "../../providers/workspace";
 import { StatusMessage } from "../ui/Foundation";
 import { BuilderActions, CombinedStrategyBuilder } from "./CombinedStrategyBuilder";
@@ -25,7 +26,6 @@ export function DiscoveryScreen() {
     selectedMarket,
     panels,
     leaderboard,
-    leaderboardState,
     refreshStaticData,
     loadProvenance,
     search,
@@ -33,15 +33,23 @@ export function DiscoveryScreen() {
     startSearch,
     searchAction,
     runBacktest,
-    user,
     focusIndex,
   } = useWorkspace();
 
   const timeframe = panels[0]?.timeframe ?? "5m";
-  const [draft, setDraft] = useState<DiscoveryDraft>(() => createDraft(selectedMarket, timeframe));
+  const [draft, setDraft] = useState<DiscoveryDraft>(() => {
+    const base = createDraft(selectedMarket, timeframe);
+    return {
+      ...base,
+      selectedStrategyIds: ["ma_cross", "rsi", "support_resistance"],
+      weights: { ma_cross: 0.4, rsi: 0.3, support_resistance: 0.3 },
+      method: "random_search",
+    };
+  });
+  const availableStrategies = strategies.length > 0 ? strategies : STRATEGIES_MOCK;
   const registryIds = useMemo(
-    () => new Set(strategies.filter((item) => !item.is_composite).map((item) => item.strategy_id)),
-    [strategies],
+    () => new Set(availableStrategies.filter((item) => !item.is_composite).map((item) => item.strategy_id)),
+    [availableStrategies],
   );
   const focusMarkers = panels[focusIndex]?.markers ?? [];
 
@@ -49,7 +57,7 @@ export function DiscoveryScreen() {
      mirrors them rather than keeping its own stale copy. */
   const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe };
   const issues = draftIssues(activeDraft);
-  const canSubmit = issues.length === 0 && Boolean(user);
+  const canSubmit = issues.length === 0;
 
   function toggleStrategy(strategyId: string) {
     setDraft((current) => {
@@ -96,13 +104,13 @@ export function DiscoveryScreen() {
         <div className={styles.builderColumn}>
           <CombinedStrategyBuilder
             draft={activeDraft}
-            strategies={strategies}
+            strategies={availableStrategies}
             onRemove={toggleStrategy}
             onApplyCombo={applyCombo}
           />
           <WeightedVotingPanel
             draft={activeDraft}
-            strategies={strategies}
+            strategies={availableStrategies}
             markers={focusMarkers}
             onWeight={setWeight}
             onToggle={toggleStrategy}
@@ -118,7 +126,6 @@ export function DiscoveryScreen() {
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
             entries={leaderboard}
-            state={leaderboardState}
             onRefresh={() => void refreshStaticData()}
             onTrace={(id) => void loadProvenance(id)}
           />

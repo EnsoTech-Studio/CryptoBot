@@ -1,7 +1,7 @@
 "use client";
 
 import { QUICK_COMBOS } from "../../../lib/discovery-mock";
-import { MAX_COMBINED, familyTone, shortLabel, type DiscoveryDraft } from "../../../lib/discovery";
+import { MAX_COMBINED, displayLabel, familyTone, type DiscoveryDraft } from "../../../lib/discovery";
 import type { Strategy } from "../../../lib/api";
 import { Button, Chip, Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
@@ -35,7 +35,7 @@ export function CombinedStrategyBuilder({
           draft.selectedStrategyIds.map((id) => (
             <Chip
               key={id}
-              label={shortLabel(id)}
+              label={displayLabel(id)}
               tone={familyTone(strategies.find((item) => item.strategy_id === id)?.family)}
               onRemove={() => onRemove(id)}
             />

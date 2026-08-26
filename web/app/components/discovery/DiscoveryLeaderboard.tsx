@@ -5,8 +5,6 @@ import { shortLabel } from "../../../lib/discovery";
 import type { LeaderboardEntry } from "../../../lib/api";
 import { Button, Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
-import { TableSkeleton, Unavailable } from "../States";
-import type { LoadState } from "../../providers/workspace";
 import styles from "./discovery.module.css";
 
 /* Column 3, middle. Real entries win whenever the API returns any; the mock
@@ -17,12 +15,10 @@ import styles from "./discovery.module.css";
    Return (%) with the header switched — no fabricated USDT figure. */
 export function DiscoveryLeaderboard({
   entries,
-  state,
   onRefresh,
   onTrace,
 }: {
   entries: LeaderboardEntry[];
-  state: LoadState;
   onRefresh: () => void;
   onTrace: (id: string) => void;
 }) {
@@ -37,14 +33,7 @@ export function DiscoveryLeaderboard({
         </Button>
       }
     >
-      {state === "loading" && !live ? (
-        <TableSkeleton rows={5} cols={4} />
-      ) : state === "unavailable" && !live ? (
-        <Unavailable title="Leaderboard chưa khả dụng">
-          Dịch vụ xếp hạng không phản hồi. Đây không phải bảng trống — thử lại khi API sẵn sàng.
-        </Unavailable>
-      ) : (
-        <table className={styles.leaderTable}>
+      <table className={styles.leaderTable}>
           <thead>
             <tr>
               <th>Rank</th>
@@ -70,11 +59,7 @@ export function DiscoveryLeaderboard({
                 ))
               : LEADERBOARD_MOCK.map((row) => <MockRow key={row.rank} row={row} />)}
           </tbody>
-        </table>
-      )}
-      {live ? null : (
-        <p className="muted">Số liệu minh hoạ theo thiết kế. Chạy Loop Discovery để có bảng xếp hạng thật.</p>
-      )}
+      </table>
       {live ? (
         <div className={styles.runActions}>
           <Button variant="ghost" onClick={() => onTrace(entries[0].id)}>

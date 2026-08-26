@@ -30,19 +30,21 @@ export function BacktestFilters({
     <div className={styles.filterStrip}>
       <div className={styles.coinField}>
         <Field label="Pair / Coin">
-          <span className={styles.coinBadge} aria-hidden="true">₿</span>
-          <Select
-            value={marketKey(draft.market)}
-            disabled={disabled || pairs.length === 0}
-            onChange={(event) => {
-              const next = pairs.find((pair) => marketKey(pair) === event.target.value);
-              if (next) onChange({ market: { provider: next.provider, symbol: next.symbol } });
-            }}
-          >
-            {pairOptions.map((pair) => (
-              <option key={marketKey(pair)} value={marketKey(pair)}>{pair.symbol}</option>
-            ))}
-          </Select>
+          <span className={styles.coinControl}>
+            <span className={styles.coinBadge} aria-hidden="true">₿</span>
+            <Select
+              value={marketKey(draft.market)}
+              disabled={disabled || pairs.length === 0}
+              onChange={(event) => {
+                const next = pairs.find((pair) => marketKey(pair) === event.target.value);
+                if (next) onChange({ market: { provider: next.provider, symbol: next.symbol } });
+              }}
+            >
+              {pairOptions.map((pair) => (
+                <option key={marketKey(pair)} value={marketKey(pair)}>{pair.symbol}</option>
+              ))}
+            </Select>
+          </span>
         </Field>
       </div>
 
@@ -130,7 +132,7 @@ function DateField({
   return (
     <div className={styles.dateField}>
       <Field label={label}>
-        <span>
+        <span className={styles.dateControl}>
           <Icon name="calendar" aria-hidden="true" />
           <TextInput type="date" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
         </span>

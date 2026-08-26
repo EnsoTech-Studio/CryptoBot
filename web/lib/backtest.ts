@@ -35,8 +35,8 @@ export function createBacktestDraft(market: MarketSelection, timeframe: string):
   return {
     market,
     timeframe,
-    rangeFrom: "2026-01-01",
-    rangeTo: "2026-01-01",
+    rangeFrom: "2025-05-01",
+    rangeTo: "2025-05-15",
     initialEquity: 100,
     strategyId: "ma_cross",
     feePercent: 0.08,

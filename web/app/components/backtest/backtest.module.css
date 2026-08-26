@@ -2,12 +2,16 @@
    strip, a 40/60 chart + ledger row, then six KPI cells beside the profit
    formula and assumptions panels. */
 
-.screen { min-width: 0; }
+.screen { min-width: 0; margin: 0 -10px 0 0; padding-top: 22px; }
+
+@media (min-width: 1041px) and (max-height: 800px) {
+  .screen { margin-right: 0; }
+}
 
 .stack {
   display: grid;
   min-width: 0;
-  gap: 14px;
+  gap: 19px;
 }
 
 /* --- filter strip --------------------------------------------------------- */
@@ -15,18 +19,18 @@
 .filterStrip {
   display: grid;
   min-width: 0;
-  grid-template-columns: 200px 108px 168px 168px 148px 184px 136px 128px;
+  grid-template-columns: 180px 86px 154px 144px 148px 174px 150px 150px;
   align-items: end;
   gap: 18px;
   border: 1px solid var(--line-1);
   border-radius: 11px;
   background: var(--surface-1);
   box-shadow: var(--elev-1);
-  padding: 15px 17px;
+  padding: 18px 17px;
   overflow-x: auto;
 }
 
-.coinField { position: relative; }
+.coinControl { position: relative; display: block; min-width: 0; }
 
 .coinBadge {
   position: absolute;
@@ -39,7 +43,7 @@
   place-items: center;
   border-radius: 50%;
   background: var(--asset-btc);
-  color: #fff;
+  color: var(--brand-ink);
   font-family: Arial, sans-serif;
   font-size: 14px;
   font-weight: 700;
@@ -49,8 +53,8 @@
 
 .coinField select { padding-left: 43px; font-family: var(--font-mono); font-weight: var(--weight-semibold); }
 
-.dateField { position: relative; }
-.dateField > span > svg:first-child {
+.dateControl { position: relative; display: block; }
+.dateControl > svg {
   position: absolute;
   top: 50%;
   left: 11px;
@@ -69,10 +73,12 @@
 .resultsRow {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 40fr) minmax(0, 60fr);
+  grid-template-columns: minmax(0, 45fr) minmax(0, 55fr);
   align-items: start;
   gap: 14px;
 }
+
+.resultsRow > section { min-height: 492px; }
 
 .chartHead {
   display: flex;
@@ -135,14 +141,28 @@
 .ledger {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-variant-numeric: tabular-nums;
 }
 
+.ledger th:nth-child(1), .ledger td:nth-child(1) { width: 4%; }
+.ledger th:nth-child(2), .ledger td:nth-child(2) { width: 10.5%; }
+.ledger th:nth-child(3), .ledger td:nth-child(3) { width: 16.5%; }
+.ledger th:nth-child(4), .ledger td:nth-child(4) { width: 7%; }
+.ledger th:nth-child(5), .ledger td:nth-child(5),
+.ledger th:nth-child(6), .ledger td:nth-child(6),
+.ledger th:nth-child(7), .ledger td:nth-child(7),
+.ledger th:nth-child(8), .ledger td:nth-child(8) { width: 10%; }
+.ledger th:nth-child(9), .ledger td:nth-child(9) { width: 5%; }
+.ledger th:nth-child(10), .ledger td:nth-child(10) { width: 7%; }
+.ledger th:nth-child(11), .ledger td:nth-child(11) { width: 11%; }
+
 .ledger th {
   border-bottom: 1px solid var(--line-1);
-  padding: 0 7px 9px;
+  padding: 0 4px 7px;
   color: var(--ink-2);
-  font-size: 11px;
+  overflow: hidden;
+  font-size: 9px;
   font-weight: var(--weight-semibold);
   text-align: left;
   white-space: nowrap;
@@ -150,8 +170,10 @@
 
 .ledger td {
   border-bottom: 1px solid var(--line-1);
-  padding: 9px 7px;
-  font-size: 12px;
+  overflow: hidden;
+  padding: 4px 3px;
+  font-size: 10px;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -166,10 +188,10 @@
 
 .sideTag {
   display: inline-block;
-  min-width: 52px;
+  min-width: 0;
   border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: 2px 4px;
+  font-size: 10px;
   font-weight: var(--weight-bold);
   text-align: center;
   letter-spacing: 0.02em;
@@ -227,11 +249,21 @@
 
 .metricsRow {
   display: grid;
+  height: 181px;
   min-width: 0;
-  grid-template-columns: repeat(6, minmax(0, 1fr)) minmax(0, 1.55fr) minmax(0, 1.55fr);
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr))
+    repeat(2, minmax(0, 1.25fr))
+    minmax(0, 1.08fr)
+    minmax(0, 3.2fr)
+    minmax(0, 2.4fr);
   align-items: stretch;
   gap: 10px;
+  overflow: hidden;
 }
+
+.runAction { display: none; }
+.metricsRow > * { min-height: 0; overflow: hidden; }
 
 .kpiCell {
   display: grid;
@@ -325,7 +357,12 @@
 /* --- responsive ----------------------------------------------------------- */
 
 @media (max-width: 1560px) {
-  .metricsRow { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .metricsRow {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    height: auto;
+    overflow: visible;
+  }
+  .metricsRow > * { min-height: 181px; }
   .formulaPanel, .assumptionPanel { grid-column: span 3; }
 }
 
@@ -333,6 +370,12 @@
   .resultsRow { grid-template-columns: minmax(0, 1fr); }
   .metricsRow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .formulaPanel, .assumptionPanel { grid-column: span 3; }
+  .metricsRow { height: auto; overflow: visible; }
+  .runAction { display: block; }
+}
+
+@media (max-width: 1600px) {
+  .filterStrip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 860px) {

@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 import { PAGE_SIZES } from "../../../lib/backtest";
-import { compactDateTime } from "../../../lib/format";
 import type { Trade } from "../../../lib/api";
 import { Panel, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
@@ -15,11 +14,9 @@ import styles from "./backtest.module.css";
 export function TradeLedger({
   trades,
   symbol,
-  isMock,
 }: {
   trades: Trade[];
   symbol: string;
-  isMock: boolean;
 }) {
   const [pageSize, setPageSize] = useState<number>(10);
   const [page, setPage] = useState(1);
@@ -60,7 +57,7 @@ export function TradeLedger({
                 <tr key={trade.id}>
                   <td className={styles.numeric}>{trade.sequence_no}</td>
                   <td>{symbol}</td>
-                  <td>{compactDateTime(trade.entry_time)}</td>
+                  <td>{ledgerDate(trade.entry_time)}</td>
                   <td>
                     <span className={`${styles.sideTag} ${isLong(trade.side) ? styles.sideLong : styles.sideShort}`}>
                       {isLong(trade.side) ? "LONG" : "SHORT"}
@@ -107,9 +104,20 @@ export function TradeLedger({
         <Pager page={currentPage} totalPages={totalPages} onPage={setPage} />
       </div>
 
-      {isMock ? <p className={styles.mockNote}>Dữ liệu minh hoạ theo thiết kế. Chạy backtest để xem lệnh thật.</p> : null}
     </Panel>
   );
+}
+
+function ledgerDate(value: string) {
+  return new Date(value).toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  }).replace(",", "");
 }
 
 function Pager({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (page: number) => void }) {

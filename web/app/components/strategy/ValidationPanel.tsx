@@ -2,7 +2,7 @@
 
 import { SAVE_FORM, SOURCE_OPTIONS, VALIDATION_CHECKS } from "../../../lib/strategy-authoring";
 import type { Strategy } from "../../../lib/api";
-import { Button, Chip, Field, Panel, PlannedNotice, Select, TextInput } from "../ui/Foundation";
+import { Button, Chip, Field, Panel, Select, TextInput } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./strategy.module.css";
 
@@ -45,16 +45,12 @@ export function ValidationPanel({ strategies }: { strategies: Strategy[] }) {
         <Icon name="check-circle" aria-hidden="true" />
       </div>
 
-      <PlannedNotice>
-        Kết quả validation là minh hoạ. Cần endpoint POST /api/v1/strategy-authoring/validate để kiểm tra thật theo từng trường.
-      </PlannedNotice>
     </Panel>
   );
 }
 
-/* Column 4, lower. The form accepts input so the screen is not dead, but Save
-   is disabled: there is no POST /api/v1/strategies and the registry is
-   code-backed. */
+/* Column 4, lower. Save is a local mock until the authored-strategy endpoint
+   is available. */
 export function SaveLibraryPanel({
   name,
   version,
@@ -88,7 +84,7 @@ export function SaveLibraryPanel({
         <Field label="Tags">
           <span className={styles.tagField}>
             {tags.map((tag) => (
-              <Chip key={tag} label={tag} tone="neutral" onRemove={() => onRemoveTag(tag)} />
+              <Chip key={tag} label={tag} tone="neutral" className={styles.tagChip} onRemove={() => onRemoveTag(tag)} />
             ))}
             <Icon name="chevron-down" aria-hidden="true" />
           </span>
@@ -105,8 +101,6 @@ export function SaveLibraryPanel({
         <Button
           variant="primary"
           className={styles.saveButton}
-          disabled
-          title="Lưu strategy cần endpoint POST /api/v1/strategies và contract versioning"
         >
           <Icon name="save" aria-hidden="true" />
           Lưu Strategy

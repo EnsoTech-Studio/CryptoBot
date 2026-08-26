@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { NEWS_MOCK, type SourceMode } from "../../../lib/news-mock";
 import { useWorkspace } from "../../providers/workspace";
-import { Button, Dialog, StatusMessage } from "../ui/Foundation";
+import { Button, Dialog } from "../ui/Foundation";
 import { AnalysisRail, type SentimentDistribution } from "./AnalysisRail";
 import { ExtractionWorkspace, SelfHealingPanel } from "./ExtractionWorkspace";
 import { NewsControls } from "./NewsControls";
@@ -26,7 +26,7 @@ export function NewsScreen() {
     user,
   } = useWorkspace();
 
-  const [mode, setMode] = useState<SourceMode>("rss");
+  const [mode, setMode] = useState<SourceMode>("website");
   const [asset, setAsset] = useState<string>("BTC, ETH, SOL");
   const [refreshMinutes, setRefreshMinutes] = useState(1);
   const [selfHealing, setSelfHealing] = useState(true);
@@ -47,15 +47,10 @@ export function NewsScreen() {
   return (
     <section className={styles.screen} aria-label="Không gian thu thập tin tức và phân tích sentiment">
       <div className={styles.stack}>
-        {mode !== "rss" ? (
-          <StatusMessage tone="syncing">Chỉ chế độ RSS được backend hỗ trợ.</StatusMessage>
-        ) : null}
-
         <NewsControls
           mode={mode}
           asset={asset}
           refreshMinutes={refreshMinutes}
-          isAdmin={user?.role === "ADMIN"}
           onMode={setMode}
           onAsset={setAsset}
           onRefresh={setRefreshMinutes}
@@ -66,7 +61,7 @@ export function NewsScreen() {
           <NewsFeed
             items={items}
             state={newsState}
-            updatedAt={new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            updatedAt={isMock ? "10:45:18" : new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             isMock={isMock}
             onShowAll={() => void refreshStaticData()}
           />
@@ -78,15 +73,14 @@ export function NewsScreen() {
 
           <div className={styles.railColumn}>
             <AnalysisRail
-              distribution={distribution}
-              coverage={coverage}
-              averageScore={newsAverageScore}
-              isMock={isMock}
-            />
+            distribution={distribution}
+            coverage={coverage}
+            averageScore={newsAverageScore}
+          />
           </div>
         </div>
 
-        <div>
+        <div className={styles.manualAction}>
           <Button variant="secondary" onClick={() => setAnalyzeOpen(true)}>
             Phân tích một đoạn văn bản
           </Button>

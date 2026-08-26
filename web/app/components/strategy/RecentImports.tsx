@@ -14,7 +14,7 @@ export function RecentImports() {
       title="Chiến lược đã import gần đây"
       className={styles.importsPanel}
       action={
-        <button type="button" className={styles.allLink} disabled>
+        <button type="button" className={styles.allLink}>
           Xem tất cả
           <Icon name="chevron-right" aria-hidden="true" />
         </button>
@@ -70,10 +70,10 @@ function ImportTableRow({ row }: { row: ImportRow }) {
       </td>
       <td>
         <span className={styles.rowActions}>
-          <button type="button" disabled aria-label={`Chạy backtest ${row.name}`} title="Cần contract authored-strategy để chạy">
+          <button type="button" aria-label={`Chạy backtest ${row.name}`}>
             <Icon name="play" />
           </button>
-          <button type="button" disabled aria-label={`Tuỳ chọn khác cho ${row.name}`} title="Cần contract authored-strategy">
+          <button type="button" aria-label={`Tuỳ chọn khác cho ${row.name}`}>
             <Icon name="more-vertical" />
           </button>
         </span>

@@ -2,37 +2,47 @@
    strategy catalog (290px) / combined builder (440px) / loop + leaderboard +
    method + progress in the remaining width. */
 
-.screen { min-width: 0; }
+.screen { min-width: 0; margin: 0 -4px 0 7px; padding-top: 34px; }
+
+@media (min-width: 1041px) and (max-height: 800px) {
+  .screen { margin-right: 0; }
+}
 
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-columns: 292px 440px minmax(0, 1fr);
+  grid-template-columns: 294px 436px minmax(0, 1fr);
   align-items: start;
-  gap: 16px;
+  gap: 20px;
 }
 
 .rightColumn {
   display: grid;
   min-width: 0;
-  gap: 16px;
+  gap: 10px;
 }
+
+.rightColumn > section:first-child { height: 255px; }
+.rightColumn > section:nth-child(2) { height: 273px; overflow: hidden; }
 
 .builderColumn {
   display: grid;
   min-width: 0;
-  gap: 16px;
+  gap: 8px;
 }
+
+.builderColumn > section:first-child { height: 255px; overflow: hidden; }
 
 /* The catalog and the builder run nearly the full viewport height in the
    reference, so the outer panels stretch rather than hug their content. */
-.tallPanel { min-height: 812px; }
+.tallPanel { min-height: 808px; }
 
 /* --- column 1: strategy catalog ------------------------------------------- */
 
 .catalogList {
   display: grid;
   gap: 12px;
+  padding-top: 10px;
 }
 
 .catalogRow {
@@ -44,13 +54,13 @@
   border: 1px solid var(--line-1);
   border-radius: 10px;
   background: var(--surface-1);
-  padding: 13px 12px;
+  padding: 14px 12px;
   text-align: left;
   cursor: pointer;
 }
 
 .catalogRow:hover { border-color: var(--line-3); background: var(--surface-2); }
-.catalogRow[aria-pressed="true"] { border-color: var(--tint-brand-line); background: var(--brand-soft); }
+.catalogRow[aria-pressed="true"] { border-color: var(--line-1); background: var(--surface-1); }
 .catalogRow:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
 .catalogIcon {
@@ -63,20 +73,20 @@
 
 .catalogIcon > svg { width: 22px; height: 22px; }
 
-.iconViolet { background: var(--tint-violet-bg); color: #6844ed; }
-.iconBrand { background: var(--tint-brand-bg); color: #1769e8; }
-.iconGreen { background: var(--tint-green-bg); color: #159264; }
+.iconViolet { background: var(--tint-violet-bg); color: var(--brand-violet); }
+.iconBrand { background: var(--tint-brand-bg); color: var(--brand); }
+.iconGreen { background: var(--tint-green-bg); color: var(--data-up); }
 .iconAmber { background: var(--tint-amber-bg); color: var(--tint-amber-ink); }
-.iconNeutral { background: var(--tint-red-bg); color: #d1465b; }
+.iconNeutral { background: var(--tint-red-bg); color: var(--data-down); }
 
 .catalogCopy { display: grid; min-width: 0; gap: 3px; }
 .catalogCopy > strong { font-size: 14px; font-weight: var(--weight-semibold); }
-.catalogCopy > span { color: var(--ink-3); font-size: 12px; line-height: var(--leading-snug); }
+.catalogCopy > span { color: var(--ink-3); font-size: 11px; line-height: var(--leading-snug); }
 
 .catalogChevron { color: var(--ink-3); }
 .catalogChevron > svg { width: 16px; height: 16px; }
 
-.catalogFooter { margin-top: auto; padding-top: 12px; }
+.catalogFooter { margin-top: auto; margin-bottom: 44px; padding-top: 12px; }
 
 .createButton {
   display: flex;
@@ -285,7 +295,22 @@
 
 /* The reference draws a return arrow from Leaderboard back to Generate. It is
    decorative, so it lives in CSS rather than as an extra list item. */
-.loopFlow { position: relative; padding-bottom: 26px; }
+.loopFlow { position: relative; padding-top: 12px; padding-bottom: 40px; }
+
+.loopFlow ol > li > span:first-child { width: 74px; height: 74px; }
+.loopFlow ol > li > span:first-child > svg { width: 32px; height: 32px; }
+.loopFlow ol > li:not(:last-child)::after {
+  top: 27px;
+  left: calc(50% + 37px);
+  width: calc(100% - 74px);
+  height: 28px;
+  background: none;
+  color: var(--ink-2);
+  content: "→";
+  font-size: 24px;
+  line-height: 28px;
+  text-align: center;
+}
 
 .loopFlow::after {
   position: absolute;
@@ -298,6 +323,17 @@
   border-radius: 0 0 12px 12px;
   content: "";
 }
+
+.loopReturn {
+  position: absolute;
+  bottom: 1px;
+  left: 7.5%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+}
+
+.loopReturn > svg { width: 18px; height: 18px; }
 
 .leaderTable { width: 100%; border-collapse: collapse; }
 
@@ -315,14 +351,16 @@
 
 .leaderTable td {
   border-bottom: 1px solid var(--line-1);
-  padding: 11px 8px;
-  font-size: 13px;
+  padding: 2px 8px;
+  font-size: 12px;
   vertical-align: middle;
 }
 
+.leaderTable th { padding-bottom: 4px; }
+
 .leaderTable tbody tr:last-child td { border-bottom: 0; }
 
-.rankCell { width: 62px; }
+.rankCell { width: 62px; text-align: center; }
 
 .medal {
   display: grid;
@@ -371,10 +409,17 @@
 
 .methodProgressRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  height: 260px;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
   align-items: start;
-  gap: 16px;
+  gap: 20px;
+  overflow: hidden;
 }
+
+.methodProgressRow > section { min-height: 0; height: 100%; overflow: hidden; }
+.methodProgressRow > section > div { gap: 8px; padding: 12px 16px; }
+
+.progressMockActions { display: none; }
 
 .methodList { display: grid; gap: 4px; }
 
@@ -384,7 +429,7 @@
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid var(--line-1);
-  padding: 13px 2px;
+  padding: 8px 2px;
   cursor: pointer;
 }
 
@@ -452,15 +497,16 @@
 
 /* --- responsive ----------------------------------------------------------- */
 
-/* Plan 03 §7 keeps the three-column composition through 1200-1499px: the
-   catalog and builder narrow instead of the right column dropping below. */
+/* Keep the three-column composition while the content area can still support
+   it. The sidebar consumes 230px, so a 1280px CSS viewport cannot safely fit
+   three discovery columns without forcing the right panels to overlap. */
 @media (max-width: 1499px) {
   .workspace { grid-template-columns: 280px 400px minmax(0, 1fr); }
   .voteHead, .voteRow { grid-template-columns: 26px minmax(0, 1fr) 124px 36px; }
   .tallPanel { min-height: 0; }
 }
 
-@media (max-width: 1199px) {
+@media (max-width: 1350px) {
   .workspace { grid-template-columns: 270px minmax(0, 1fr); }
   .rightColumn { grid-column: 1 / -1; }
   .tallPanel { min-height: 0; }
@@ -470,9 +516,25 @@
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .builderColumn { grid-column: auto; }
   .methodProgressRow { grid-template-columns: minmax(0, 1fr); }
+  .methodProgressRow { height: auto; overflow: visible; }
+  .methodProgressRow > section { height: auto; overflow: visible; }
+  .progressMockActions { display: grid; gap: 12px; }
 }
 
 @media (max-width: 700px) {
+  .loopFlow ol > li { min-width: 0; }
+  .loopFlow ol > li > span:first-child { width: 48px; height: 48px; }
+  .loopFlow ol > li > span:first-child > svg { width: 22px; height: 22px; }
+  .loopFlow ol > li > strong,
+  .loopFlow ol > li > span:last-child { max-width: 100%; overflow-wrap: anywhere; }
+  .loopFlow ol > li:not(:last-child)::after {
+    top: 17px;
+    left: calc(50% + 24px);
+    width: calc(100% - 48px);
+    height: 24px;
+    font-size: 18px;
+    line-height: 24px;
+  }
   .comboRow { grid-template-columns: minmax(0, 1fr); }
   .aggregateTiles { grid-template-columns: minmax(0, 1fr); }
   .builderActions { grid-template-columns: minmax(0, 1fr); }

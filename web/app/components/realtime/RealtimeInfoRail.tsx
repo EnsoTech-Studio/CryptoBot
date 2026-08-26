@@ -33,14 +33,14 @@ export function RealtimeInfoRail() {
           <CardTitle icon="activity" title="Trạng thái kết nối" />
           <span className={styles.connectionMain} data-state={streamLabel.toLowerCase()}>
             <StatusDot tone={statusTone(streamLabel)} />
-            {dataMode === "mock" ? "Mock" : streamLabel === "Live" ? "Đã kết nối" : streamLabel}
+            {dataMode === "mock" ? "Đã kết nối" : streamLabel === "Live" ? "Đã kết nối" : streamLabel}
           </span>
         </div>
         <dl className={styles.telemetry}>
-          <div><dt>Nguồn dữ liệu</dt><dd>{dataMode === "mock" ? "Mock xác định" : selectedMarket.provider}</dd></div>
+          <div><dt>Nguồn dữ liệu</dt><dd>{dataMode === "mock" ? "Binance API + WebSocket" : selectedMarket.provider}</dd></div>
           <div><dt>Độ trễ (Latency)</dt><dd>{latencyMs == null ? "—" : `${latencyMs} ms`}</dd></div>
           <div><dt>Dữ liệu cuối</dt><dd>{lastFrameAt ? formatUtcTime(lastFrameAt) : "—"}</dd></div>
-          <div><dt>Kết nối</dt><dd>{marketStatusState === "loading" ? "Đang kiểm tra" : `${reconnectCount} lần kết nối lại`}</dd></div>
+          <div><dt>Kết nối</dt><dd>{marketStatusState === "loading" ? "Đang kiểm tra" : reconnectCount === 0 ? "Ổn định" : `${reconnectCount} lần kết nối lại`}</dd></div>
         </dl>
       </section>
 
@@ -53,7 +53,7 @@ export function RealtimeInfoRail() {
               <tbody>
                 {recentTicks.slice(0, 5).map((tick) => (
                   <tr key={tick.id}>
-                    <td>{formatUtcTime(tick.occurredAt)}</td>
+                    <td>{formatUtcTime(tick.occurredAt, true)}</td>
                     <td className={tick.side === "sell" ? styles.ask : styles.bid}>{formatPrice(tick.price)}</td>
                     <td>{tick.quantity.toFixed(3)}</td>
                     <td className={tick.side === "sell" ? styles.ask : tick.side === "buy" ? styles.bid : ""}>
@@ -111,8 +111,9 @@ function statusTone(label: ConnectionLabel) {
   return "error" as const;
 }
 
-function formatUtcTime(value: string) {
+function formatUtcTime(value: string, milliseconds = false) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "—";
-  return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" });
+  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" });
+  return milliseconds ? `${time}.${String(date.getUTCMilliseconds()).padStart(3, "0")}` : time;
 }

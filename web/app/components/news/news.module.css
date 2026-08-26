@@ -2,13 +2,19 @@
    strip, then three regions (news list 380px / extraction centre / analysis
    rail 340px). */
 
-.screen { min-width: 0; }
+.screen { min-width: 0; margin: 0 -8px 0 -18px; padding-top: 29px; }
+
+@media (min-width: 1041px) and (max-height: 800px) {
+  .screen { margin-right: 0; margin-left: 0; }
+}
 
 .stack {
   display: grid;
   min-width: 0;
   gap: 14px;
 }
+
+.manualAction { display: none; }
 
 /* --- control strip -------------------------------------------------------- */
 
@@ -22,7 +28,7 @@
   border-radius: 11px;
   background: var(--surface-1);
   box-shadow: var(--elev-1);
-  padding: 15px 17px;
+  padding: 14px 17px;
 }
 
 .modeGroup {
@@ -87,7 +93,7 @@
 .mainRow {
   display: grid;
   min-width: 0;
-  grid-template-columns: 380px minmax(0, 1fr) 344px;
+  grid-template-columns: 377px minmax(0, 1fr) 359px;
   align-items: start;
   gap: 14px;
 }
@@ -129,7 +135,7 @@
 
 .feedHead {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 78px 46px;
+  grid-template-columns: 34px minmax(0, 1fr) 48px 46px;
   gap: 9px;
   border-bottom: 1px solid var(--line-1);
   padding-bottom: 8px;
@@ -138,17 +144,17 @@
   font-weight: var(--weight-semibold);
 }
 
-.feedHead > span:last-child { text-align: right; }
+.feedHead > span:last-child { text-align: right; white-space: nowrap; font-size: 10px; }
 
 .feedList { display: grid; gap: 0; }
 
 .feedRow {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 78px 46px;
+  grid-template-columns: 34px minmax(0, 1fr) 48px 46px;
   align-items: start;
   gap: 9px;
   border-bottom: 1px solid var(--line-1);
-  padding: 12px 0;
+  padding: 3px 0;
 }
 
 .feedList > article:last-child { border-bottom: 0; }
@@ -159,9 +165,9 @@
   height: 28px;
   place-items: center;
   border-radius: 50%;
-  color: #fff;
+  color: var(--brand-ink);
   font-family: Arial, sans-serif;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -173,16 +179,30 @@
 
 .feedTitle {
   margin: 0;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: var(--weight-semibold);
-  line-height: var(--leading-snug);
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .feedTitle a:hover { color: var(--brand); text-decoration: underline; }
-.feedSummary { margin: 0; color: var(--ink-3); font-size: 12px; line-height: var(--leading-snug); }
+.feedSummary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.3;
+}
 
-.feedSource { color: var(--ink-2); font-size: 12px; }
-.feedTime { color: var(--ink-2); font-family: var(--font-mono); font-size: 12px; text-align: right; }
+.feedSource { color: var(--ink-2); font-size: 10px; }
+.feedTime { color: var(--ink-2); font-family: var(--font-mono); font-size: 10px; text-align: right; }
+.feedMeta { display: contents; }
 
 .sentimentTag {
   display: inline-block;
@@ -236,13 +256,16 @@
 
 .codeBlock {
   margin: 0;
-  overflow-x: auto;
+  overflow: hidden;
   color: var(--ink-2);
   font-family: var(--font-mono);
   font-size: 10.5px;
   line-height: 1.55;
   white-space: pre;
 }
+
+.codeBlock { scrollbar-width: none; }
+.codeBlock::-webkit-scrollbar { display: none; }
 
 .codeTag { color: var(--brand); }
 .codeString { color: var(--data-series-3); }
@@ -259,7 +282,7 @@
 
 .fieldMapRow > b { color: var(--ink-2); font-weight: var(--weight-medium); }
 .fieldMapRow > i { color: var(--ink-3); font-style: normal; }
-.fieldMapRow > code { color: var(--brand); font-family: var(--font-mono); font-size: 10.5px; }
+.fieldMapRow > code { overflow: hidden; color: var(--brand); font-family: var(--font-mono); font-size: 10.5px; text-overflow: clip; white-space: nowrap; }
 
 .stageMeta {
   display: flex;
@@ -274,7 +297,7 @@
 
 .stageMeta b { color: var(--data-up); font-family: var(--font-mono); font-weight: var(--weight-semibold); }
 
-.versionList { display: grid; gap: 6px; }
+.versionList { display: grid; gap: 3px; }
 
 .versionRow {
   display: grid;
@@ -282,17 +305,18 @@
   align-items: center;
   gap: 6px;
   border-radius: 7px;
-  padding: 6px 8px;
-  font-size: 11px;
+  padding: 4px 6px;
+  font-size: 10px;
 }
 
 .versionCurrent { background: var(--tint-green-bg); }
 .versionCurrent b { color: var(--tint-green-ink); }
-.versionRow b { display: block; font-family: var(--font-mono); font-weight: var(--weight-semibold); }
-.versionRow span { color: var(--ink-3); font-size: 10.5px; }
+.versionRow b { display: block; font-family: var(--font-mono); font-size: 10px; font-weight: var(--weight-semibold); white-space: nowrap; }
+.versionRow span { color: var(--ink-3); font-size: 9px; line-height: 1.25; white-space: nowrap; }
 .versionRow > svg { width: 13px; height: 13px; color: var(--ink-3); }
 
 .linkButton {
+  min-height: 24px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -307,10 +331,15 @@
 
 .healingRow {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.6fr) minmax(0, .9fr);
+  align-items: stretch;
   gap: 10px;
 }
+
+.healingPanel ol { gap: 10px; }
+.healingRow .stageCard { gap: 5px; padding: 8px; }
+.healingRow .metricList { gap: 4px; }
+.healingRow button { min-height: 28px; padding: 0 6px; }
 
 .metricList { display: grid; gap: 7px; }
 
@@ -327,7 +356,13 @@
 .metricAlert > b { color: var(--data-down); }
 .metricGood > b { color: var(--data-up); }
 
-.decisionCell { display: grid; justify-items: center; gap: 6px; }
+.decisionCell {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+}
 
 .diamond {
   display: grid;
@@ -342,16 +377,42 @@
   font-weight: var(--weight-semibold);
 }
 
-.branchLabels {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
+.flowArrow {
+  position: absolute;
+  top: 50%;
+  left: -10px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  transform: translate(-50%, -50%);
+}
+
+.flowArrow > svg { width: 17px; height: 17px; }
+.flowArrowOut { left: calc(50% + 54px); transform: translateY(-50%); }
+
+.branchLabel {
+  position: absolute;
   color: var(--ink-3);
   font-size: 11px;
 }
 
-.branchYes { color: var(--data-down); }
+.branchNo {
+  top: calc(50% - 35px);
+  left: calc(50% + 48px);
+  color: var(--data-up);
+}
+
+.branchYes {
+  bottom: 0;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: var(--data-down);
+  transform: translateX(-50%);
+}
+
+.branchYes > svg { width: 15px; height: 15px; }
 
 /* --- analysis rail -------------------------------------------------------- */
 
@@ -365,7 +426,7 @@
 .distributionBar > span {
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--brand-ink);
   font-size: 12px;
   font-weight: var(--weight-bold);
 }
@@ -393,13 +454,20 @@
 .eventChip {
   display: inline-flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 6px;
   border: 1px solid var(--line-2);
   border-radius: 7px;
   background: var(--surface-1);
-  padding: 5px 9px;
-  font-size: 11.5px;
+  padding: 4px 7px;
+  font-size: 10.5px;
 }
+
+.railColumn > section:first-child { height: 402px; overflow: hidden; }
+.railColumn > section:first-child > div { gap: 7px; padding-top: 12px; padding-bottom: 8px; }
+.centreColumn > section:first-child { height: 366px; overflow: hidden; }
+.centreColumn > section:nth-child(2) { height: 312px; overflow: hidden; }
+.centreColumn > section.healingPanel { height: auto; min-height: 312px; overflow: visible; }
+.railColumn > section:nth-child(2) { height: 276px; overflow: hidden; }
 
 .eventChip > b { color: var(--ink-2); font-family: var(--font-mono); font-weight: var(--weight-semibold); }
 
@@ -479,7 +547,30 @@
 /* --- responsive ----------------------------------------------------------- */
 
 @media (max-width: 1560px) {
-  .mainRow { grid-template-columns: 340px minmax(0, 1fr) 312px; }
+  .mainRow { grid-template-columns: 320px minmax(0, 1fr); }
+  .railColumn { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .controlStrip { grid-template-columns: minmax(0, 1.25fr) 176px minmax(0, 1.25fr); }
+  .controlStrip > span { display: none; }
+  .stripActions { grid-column: 1 / -1; justify-content: flex-end; }
+  .modeGroup, .refreshGroup { min-width: 0; }
+  .modeButton, .refreshGroup button { min-width: 0; flex: 1; }
+
+  .codeBlock { font-size: 10px; line-height: 1.45; }
+
+  .diagram { gap: 6px; }
+  .diagramNode { gap: 3px; padding: 7px 5px; }
+  .diagramNode > svg { width: 17px; height: 17px; }
+  .diagramNode > strong { font-size: 10.5px; }
+  .diagramNode > span { font-size: 9.5px; }
+  .diagramConnector { font-size: 9px; }
+  .diagramConnector > i { width: 34px; }
+  .diagramAlt { gap: 2px; font-size: 9.5px; }
+  .diagramAlt > i { height: 9px; }
+  .diagramLeaf { padding: 7px 9px; }
+  .diagramLeaf > svg { width: 15px; height: 15px; }
+  .diagramLeaf strong { font-size: 10.5px; }
+  .diagramLeaf span { font-size: 9.5px; }
 }
 
 @media (max-width: 1360px) {
@@ -491,18 +582,27 @@
   .controlStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stripActions { grid-column: 1 / -1; }
   .stageCards, .healingRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .flowArrow, .branchNo { display: none; }
+  .branchYes { bottom: 8px; }
 }
 
 @media (max-width: 940px) {
   .mainRow { grid-template-columns: minmax(0, 1fr); }
   .railColumn { grid-template-columns: minmax(0, 1fr); }
   .refreshGroup { overflow-x: auto; }
+  .manualAction { display: block; }
 }
 
 @media (max-width: 640px) {
+  .screen { margin: 0; }
+  .railColumn > section:first-child,
+  .railColumn > section:nth-child(2),
+  .centreColumn > section:first-child,
+  .centreColumn > section:nth-child(2) { height: auto; }
   .controlStrip { grid-template-columns: minmax(0, 1fr); }
   .modeGroup { flex-wrap: wrap; }
   .stageCards, .healingRow { grid-template-columns: minmax(0, 1fr); }
+  .branchYes { bottom: 4px; }
   .feedHead { display: none; }
   .feedRow {
     grid-template-columns: 34px minmax(0, 1fr);
@@ -511,7 +611,8 @@
   }
   .feedRow > .assetIcon { grid-area: icon; }
   .feedRow > .feedBody { grid-area: body; }
-  .feedRow > .feedSource, .feedRow > .feedTime { grid-area: meta; display: inline; text-align: left; }
+  .feedMeta { display: flex; grid-area: meta; align-items: center; gap: 10px; }
+  .feedSource, .feedTime { display: inline; text-align: left; }
   .distributionLegend { grid-template-columns: minmax(0, 1fr); }
   .diagramRow { grid-template-columns: minmax(0, 1fr); }
 }
