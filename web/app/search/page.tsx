@@ -1,15 +1,6 @@
-"use client";
+import { DiscoveryScreen } from "../components/discovery/DiscoveryScreen";
 
-import { SearchPanel } from "../components/Operations";
-import { LeaderboardPanel } from "../components/LeaderboardPanel";
-
+/* Keep the legacy URL visually stable; search is a Discovery section. */
 export default function SearchPage() {
-  return (
-    <>
-      <section className="operation-grid single">
-        <SearchPanel />
-      </section>
-      <LeaderboardPanel />
-    </>
-  );
+  return <DiscoveryScreen />;
 }

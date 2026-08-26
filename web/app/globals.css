@@ -15,12 +15,13 @@
 
 html {
   background: var(--bg);
-  color-scheme: dark;
+  color-scheme: light;
   scroll-behavior: smooth;
   scroll-padding-top: var(--space-5);
 }
 
-html[data-theme="light"] {
+html[data-theme="light"],
+html[data-theme="dark"] {
   color-scheme: light;
 }
 
@@ -89,6 +90,17 @@ a {
 
 .skip-link:focus {
   top: var(--space-3);
+}
+
+/* Screen-reader-only text. Status colour and icon shape alone must never be the
+   only carrier of meaning (LONG/HOLD/SHORT, rank medals, live dots). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* --- shared primitives --------------------------------------------------- */
@@ -180,13 +192,14 @@ a:focus-visible {
 
 .primary-action {
   border-color: var(--brand);
-  background: var(--brand);
+  background: var(--brand-gradient);
   color: var(--brand-ink);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--brand) 18%, transparent);
 }
 
 .primary-action:not(:disabled):hover {
   border-color: var(--brand-hover);
-  background: var(--brand-hover);
+  background: linear-gradient(135deg, var(--brand-hover), var(--brand-violet));
 }
 
 .ghost-action {
@@ -966,6 +979,26 @@ td span {
   opacity: 0.6;
 }
 
+.current-price-line {
+  stroke: var(--data-series-1);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.65;
+}
+
+.current-price-line.up { stroke: var(--data-up); }
+.current-price-line.down { stroke: var(--data-down); }
+
+.current-price-box.up { fill: var(--data-up); }
+.current-price-box.down { fill: var(--data-down); }
+
+.current-price-label {
+  fill: var(--brand-ink);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: var(--weight-semibold);
+}
+
 .wick {
   stroke-width: 1.2;
 }
@@ -1002,8 +1035,18 @@ td span {
 }
 
 .overlay-line.moving_average,
+.overlay-line.ma,
 .overlay-line.macd_line {
   stroke: var(--data-series-1);
+}
+
+.overlay-line.moving_average_50 {
+  stroke: var(--data-series-4);
+}
+
+.volume-value {
+  fill: var(--data-up);
+  font-weight: var(--weight-semibold);
 }
 
 .overlay-line.bollinger {
@@ -1347,14 +1390,16 @@ td span {
   gap: var(--space-3);
 }
 
-.unavailable-state {
+.unavailable-state,
+.error-state {
   border: 1px dashed var(--status-stale);
   border-radius: var(--radius-inner);
   background: color-mix(in srgb, var(--status-stale) 8%, transparent);
   padding: var(--space-3);
 }
 
-.unavailable-state span {
+.unavailable-state span,
+.error-state span {
   color: var(--status-stale);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -1363,13 +1408,19 @@ td span {
   text-transform: uppercase;
 }
 
-.unavailable-state p {
+.unavailable-state p,
+.error-state p {
   margin: var(--space-2) 0 0;
   max-width: 62ch;
   color: var(--ink-2);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   text-wrap: pretty;
+}
+
+.error-state {
+  border-style: solid;
+  background: var(--status-stale-bg);
 }
 
 /* --- sortable table header ----------------------------------------------- */

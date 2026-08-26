@@ -1,7 +1,6 @@
-"use client";
+import { DiscoveryScreen } from "../components/discovery/DiscoveryScreen";
 
-import { LeaderboardPanel } from "../components/LeaderboardPanel";
-
+/* Keep the legacy URL visually stable; leaderboard is a Discovery section. */
 export default function LeaderboardPage() {
-  return <LeaderboardPanel />;
+  return <DiscoveryScreen />;
 }

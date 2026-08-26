@@ -21,15 +21,12 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0a0e0d" },
-    { media: "(prefers-color-scheme: light)", color: "#f3f4ee" },
-  ],
+  themeColor: "#fefefe",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="vi" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="vi" data-theme="light" data-scroll-behavior="smooth" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
         <WorkspaceShell>{children}</WorkspaceShell>
       </body>

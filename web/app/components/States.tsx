@@ -54,3 +54,12 @@ export function Unavailable({ title = "Service unavailable", children }: { title
     </div>
   );
 }
+
+export function ErrorState({ title = "Không thể hoàn tất", children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <div className="error-state" role="alert">
+      <span>{title}</span>
+      <p>{children}</p>
+    </div>
+  );
+}

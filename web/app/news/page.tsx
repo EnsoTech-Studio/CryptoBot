@@ -1,7 +1,5 @@
-"use client";
-
-import { NewsPanel } from "../components/NewsPanel";
+import { NewsScreen } from "../components/news/NewsScreen";
 
 export default function NewsPage() {
-  return <NewsPanel />;
+  return <NewsScreen />;
 }

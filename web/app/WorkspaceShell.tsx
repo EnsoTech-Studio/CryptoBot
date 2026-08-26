@@ -1,11 +1,13 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { WorkspaceProvider, useWorkspace } from "./providers/workspace";
-import { InstrumentHeader } from "./components/InstrumentHeader";
 import { Inspector } from "./components/Inspector";
-import { LeftRail } from "./components/LeftRail";
+import { AppSidebar } from "./components/shell/AppSidebar";
+import { PageHeader } from "./components/shell/PageHeader";
+import styles from "./components/shell/shell.module.css";
+import { StatusMessage } from "./components/ui/Foundation";
 
 /* One shell for every route. The provider sits above it, so navigating between
    pages keeps the market sockets, polls and inspector state alive. */
@@ -18,14 +20,58 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  const { inspectorOpen } = useWorkspace();
+  const { inspectorOpen, notice } = useWorkspace();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationWasOpen = useRef(false);
+
+  useEffect(() => {
+    if (!navigationOpen) {
+      if (navigationWasOpen.current) {
+        navigationWasOpen.current = false;
+        menuButtonRef.current?.focus();
+      }
+      return;
+    }
+
+    navigationWasOpen.current = true;
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const keepFocusInDrawer = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNavigationOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const drawer = document.getElementById("app-navigation");
+      const focusable = Array.from(drawer?.querySelectorAll<HTMLElement>("a[href], button:not(:disabled), input:not(:disabled), summary") ?? []);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", keepFocusInDrawer);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", keepFocusInDrawer);
+    };
+  }, [navigationOpen]);
+
   return (
-    <div className={`terminal-shell ${inspectorOpen ? "has-inspector" : ""}`}>
-      <a className="skip-link" href="#workspace-main">Skip to content</a>
-      <LeftRail />
-      <section className="terminal-main" id="workspace-main">
-        <InstrumentHeader />
-        {children}
+    <div className={`${styles.shell} ${inspectorOpen ? styles.withInspector : ""}`}>
+      <a className="skip-link" href="#workspace-main">Đi đến nội dung chính</a>
+      <AppSidebar open={navigationOpen} onClose={() => setNavigationOpen(false)} closeButtonRef={closeButtonRef} />
+      {navigationOpen ? <button type="button" className={styles.drawerBackdrop} onClick={() => setNavigationOpen(false)} aria-label="Đóng menu" /> : null}
+      <section className={styles.main} id="workspace-main" tabIndex={-1} inert={navigationOpen ? true : undefined}>
+        <PageHeader navigationOpen={navigationOpen} onOpenNavigation={() => setNavigationOpen(true)} menuButtonRef={menuButtonRef} />
+        {notice.tone === "error" ? <div className={styles.noticeSlot}><StatusMessage tone="error">{notice.text}</StatusMessage></div> : null}
+        <div className={styles.content}>{children}</div>
       </section>
       <Inspector />
     </div>

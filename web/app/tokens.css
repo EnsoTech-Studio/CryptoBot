@@ -1,36 +1,22 @@
 /* ===========================================================================
-   Crypto Strategy Lab — design tokens
-   ---------------------------------------------------------------------------
-   THREE COLOR NAMESPACES. They must never bleed into each other:
-
-     --brand-*    identity, primary action, focus ring. Nothing else.
-     --status-*   research state: live / syncing / queued / running /
-                  complete / stale / unavailable. Never brand, never data.
-     --data-*     chart pixels: candles, overlays, equity, signals.
-                  Never inherits a UI accent.
-
-   Rationale: PRODUCT.md principle 1 requires that live, stale, queued,
-   running, completed and unavailable never look interchangeable. That is
-   impossible while one accent doubles as brand, status and signal colour.
+   Crypto Strategy Lab — shared light design system
    =========================================================================== */
 
 :root {
-  /* --- type ------------------------------------------------------------- */
+  /* Type */
   --font-ui: var(--font-geist-sans), "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), "Cascadia Code", ui-monospace, "SFMono-Regular", Consolas, monospace;
 
-  /* 10px is the floor. Anything smaller is not readable at AA. */
-  --text-2xs: 0.625rem; /* 10px — uppercase micro labels only, with tracking */
-  --text-xs: 0.6875rem; /* 11px — table cells, captions */
-  --text-sm: 0.75rem;   /* 12px — controls, secondary body */
-  --text-base: 0.8125rem; /* 13px — body */
-  --text-md: 0.875rem;  /* 14px — panel titles */
-  --text-lg: 1rem;      /* 16px — section titles */
-  --text-xl: 1.25rem;   /* 20px — metric values */
-  --text-2xl: 1.625rem; /* 26px — instrument price */
-  --text-3xl: 2.125rem; /* 34px — rare, single hero number */
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.625rem;
+  --text-3xl: 2.125rem;
 
-  /* Geist is variable, so these weights are real steps, not 400/700 rounding. */
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
@@ -38,13 +24,13 @@
 
   --tracking-tight: -0.02em;
   --tracking-tighter: -0.035em;
-  --tracking-label: 0.08em;
+  --tracking-label: 0.06em;
 
-  --leading-tight: 1.15;
-  --leading-snug: 1.35;
+  --leading-tight: 1.18;
+  --leading-snug: 1.38;
   --leading-normal: 1.55;
 
-  /* --- spacing (4px base) ----------------------------------------------- */
+  /* Spacing */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -52,118 +38,128 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --page-gutter: clamp(16px, 1.8vw, 30px);
 
-  /* --- radius ----------------------------------------------------------- */
-  --radius-inner: 4px;     /* inputs, chips, chart frames */
-  --radius-panel: 8px;     /* panels, cards */
-  --radius-container: 14px; /* outer containers only */
+  /* Shape and layout */
+  --radius-inner: 8px;
+  --radius-panel: 12px;
+  --radius-container: 16px;
   --radius-pill: 999px;
-
-  /* --- control sizing --------------------------------------------------- */
-  --control-h: 34px;
-  --control-h-sm: 28px;
-  --rail-w: 236px;
+  --control-h: 38px;
+  --control-h-sm: 32px;
+  --rail-w: 230px;
   --inspector-w: 376px;
+  --header-h: 73px;
 
-  /* --- motion ----------------------------------------------------------- */
+  /* Motion */
   --dur-fast: 120ms;
   --dur: 180ms;
   --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
 
-  /* --- z-index scale (no 9999 anywhere) --------------------------------- */
+  /* Layering */
   --z-rail: 20;
   --z-header: 30;
   --z-inspector: 40;
+  --z-overlay: 50;
   --z-toast: 60;
 
-  /* --- surfaces & ink (dark is the default) ----------------------------- */
-  --bg: #0a0e0d;
-  --surface-1: #0e1312;
-  --surface-2: #121817;
-  --surface-3: #171f1d;
-  --surface-4: #1d2724;
-  --ink-1: #e8eeea;
-  --ink-2: #b3bfba;
-  --ink-3: #7d8b85;
-  --line-1: #212c29;
-  --line-2: #2f3d38;
-  --line-3: #45564f;
+  /* Surfaces */
+  --bg: #fefefe;
+  --surface-1: #ffffff;
+  --surface-2: #fbfcfe;
+  --surface-3: #f4f6fa;
+  --surface-4: #edf1f7;
+  --surface-plan: #f7f9ff;
+  --ink-1: #171a21;
+  --ink-2: #4f5868;
+  --ink-3: #7b8494;
+  --line-1: #e8ebf1;
+  --line-2: #dce1e9;
+  --line-3: #c8cfda;
 
-  --elev-1: 0 1px 2px rgba(4, 8, 7, 0.5);
-  --elev-2: 0 10px 28px -12px rgba(4, 8, 7, 0.7);
+  --elev-1: 0 1px 2px rgba(23, 26, 33, 0.04), 0 4px 12px rgba(23, 26, 33, 0.03);
+  --elev-2: 0 18px 50px -24px rgba(30, 42, 72, 0.28);
 
-  /* --- brand ------------------------------------------------------------ */
-  --brand: #d2ec46;
-  --brand-hover: #dff45f;
-  --brand-ink: #121a03;
-  --focus-ring: #d2ec46;
+  /* Brand */
+  --brand: #1769e8;
+  --brand-hover: #0f5fd9;
+  --brand-violet: #6844ed;
+  --brand-soft: #eef4ff;
+  --brand-gradient: linear-gradient(135deg, #1769e8 0%, #6844ed 100%);
+  --brand-ink: #ffffff;
+  --focus-ring: #2b72e8;
 
-  /* --- status ----------------------------------------------------------- */
-  --status-live: #4fb87d;
-  --status-syncing: #d3a445;
-  --status-queued: #8a94a0;
-  --status-running: #5b9dd9;
-  --status-complete: #79c9a5;
-  --status-stale: #df7a72;
-  --status-unavailable: #7d8b85;
+  /* Status */
+  --status-live: #16885a;
+  --status-syncing: #b7790b;
+  --status-queued: #687386;
+  --status-running: #256bd7;
+  --status-complete: #16885a;
+  --status-stale: #cf3f55;
+  --status-unavailable: #7b8494;
+  --status-live-bg: #ecf9f2;
+  --status-syncing-bg: #fff8e8;
+  --status-stale-bg: #fff0f2;
 
-  /* --- data (charts) ---------------------------------------------------- */
-  --data-up: #46ac78;
-  --data-down: #d2645c;
-  --data-series-1: #6f9ed7; /* MA, MACD line */
-  --data-series-2: #c4a253; /* Bollinger */
-  --data-series-3: #7cb492; /* RSI */
-  --data-series-4: #a58ec2; /* MACD signal */
-  --data-signal: #dde4df;
-  --data-zone-support: #46ac78;
-  --data-zone-resistance: #d2645c;
-  --chart-bg: #0c1211;
-  --chart-pane-alt: #101716;
-  --chart-grid: #1e2926;
-  --chart-axis: #6f7d78;
+  /* Accent tints — strategy families, side tags, status pills. Each pair is a
+     pale surface plus a text/icon colour that meets 4.5:1 on it. */
+  --tint-brand-bg: #eaf2fe;
+  --tint-brand-ink: #1a58bb;
+  --tint-brand-line: #cddffb;
+  --tint-violet-bg: #f3eeff;
+  --tint-violet-ink: #5a34cf;
+  --tint-violet-line: #ddd2fb;
+  --tint-green-bg: #ecf9f2;
+  --tint-green-ink: #10704b;
+  --tint-green-line: #bfe4d1;
+  --tint-amber-bg: #fdf5e6;
+  --tint-amber-ink: #a3690b;
+  --tint-amber-line: #f6dfb4;
+  --tint-red-bg: #fdeef1;
+  --tint-red-ink: #ab2f42;
+  --tint-red-line: #f6ccd4;
+  --tint-avatar-bg: #eef2ff;
+  --tint-avatar-ink: #4f6edb;
+  --tint-avatar-line: #e1e7fb;
+  --tint-warning-bg: #fff8e9;
+  --tint-warning-ink: #9a5b00;
+  --tint-warning-line: #f1d69f;
+
+  /* Rank medals — gold/silver/bronze are rank identity, not status. */
+  --medal-gold-bg: #fdf1d6;
+  --medal-gold-ink: #b07d10;
+  --medal-silver-bg: #eceef2;
+  --medal-silver-ink: #6c7686;
+  --medal-bronze-bg: #fbe8dc;
+  --medal-bronze-ink: #a4633a;
+
+  /* External asset brand colours. Fixed by the coins themselves, so they are
+     deliberately outside the palette above. */
+  --asset-btc: #f7931a;
+  --asset-eth: #6b7ce0;
+  --asset-sol: linear-gradient(135deg, #14f195 0%, #9945ff 100%);
+
+  /* Code token colour for quoted strings in the JSON viewer. */
+  --code-string: #a3335c;
+
+  /* Chart and quantitative data */
+  --data-up: #159264;
+  --data-down: #d1465b;
+  --data-series-1: #2f6fdb;
+  --data-series-2: #9b6bdb;
+  --data-series-3: #1c8b72;
+  --data-series-4: #d48c24;
+  --data-signal: #263142;
+  --data-zone-support: #159264;
+  --data-zone-resistance: #d1465b;
+  --chart-bg: #ffffff;
+  --chart-pane-alt: #f8faff;
+  --chart-grid: #e8ecf3;
+  --chart-axis: #737d8d;
 }
 
-:root[data-theme="light"] {
-  --bg: #f3f4ee;
-  --surface-1: #eceee7;
-  --surface-2: #fbfbf7;
-  --surface-3: #f0f2eb;
-  --surface-4: #e6e9e0;
-  --ink-1: #141d1b;
-  --ink-2: #3b4844;
-  --ink-3: #67736e;
-  --line-1: #d8ded5;
-  --line-2: #c3cbc0;
-  --line-3: #a4afa7;
-
-  --elev-1: 0 1px 2px rgba(33, 46, 40, 0.06);
-  --elev-2: 0 10px 28px -14px rgba(33, 46, 40, 0.18);
-
-  --brand: #c3da2e;
-  --brand-hover: #b4cd21;
-  --brand-ink: #141c04;
-  /* Lime on white fails as a focus ring, so light mode uses a dark olive. */
-  --focus-ring: #6f8a0d;
-
-  --status-live: #2c7d55;
-  --status-syncing: #8d6b16;
-  --status-queued: #5d6873;
-  --status-running: #2f6ba6;
-  --status-complete: #2f7f60;
-  --status-stale: #b8443c;
-  --status-unavailable: #67736e;
-
-  --data-up: #2f7d57;
-  --data-down: #b8514a;
-  --data-series-1: #3a6da8;
-  --data-series-2: #8b6f1f;
-  --data-series-3: #47795c;
-  --data-series-4: #6d5391;
-  --data-signal: #2a3330;
-  --data-zone-support: #2f7d57;
-  --data-zone-resistance: #b8514a;
-  --chart-bg: #fafbf6;
-  --chart-pane-alt: #f2f4ed;
-  --chart-grid: #dde3d9;
-  --chart-axis: #6a766f;
+/* Stale persisted preferences remain harmless while legacy screens migrate. */
+:root[data-theme="light"],
+:root[data-theme="dark"] {
+  color-scheme: light;
 }

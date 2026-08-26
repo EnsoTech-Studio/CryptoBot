@@ -2,10 +2,9 @@
 
 import type { ReactElement } from "react";
 
-import { compactDate, compactTime } from "../../../lib/format";
 import type { Candle, ExecutionMarker, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
 
-export type ChartSize = "primary" | "context" | "result";
+export type ChartSize = "primary" | "context" | "result" | "realtime";
 
 /* One frame per role. The old single frame drew the same 900x280 geometry into
    a ~340px box, so axis text and the sub pane were rendered at roughly a third
@@ -35,12 +34,23 @@ const CHART_FRAMES: Record<ChartSize, {
   },
   result: {
     width: 900,
-    height: 430,
+    height: 560,
     pad: { left: 58, right: 58, top: 20, bottom: 28 },
     gap: 10,
     volumeH: 72,
     subH: 70,
     visible: 120,
+    gridTicks: [0, 0.25, 0.5, 0.75, 1],
+    showAxis: true,
+  },
+  realtime: {
+    width: 640,
+    height: 300,
+    pad: { left: 38, right: 58, top: 12, bottom: 20 },
+    gap: 6,
+    volumeH: 48,
+    subH: 0,
+    visible: 60,
     gridTicks: [0, 0.25, 0.5, 0.75, 1],
     showAxis: true,
   },
@@ -63,12 +73,14 @@ export function ChartCanvas({
   markers,
   executionMarkers = [],
   size = "primary",
+  ariaLabel = "Candlestick chart with volume and strategy overlays",
 }: {
   candles: Candle[];
   series: OverlaySeries[];
   markers: OverlayMarker[];
   executionMarkers?: ExecutionMarker[];
   size?: ChartSize;
+  ariaLabel?: string;
 }) {
   const frame = CHART_FRAMES[size];
   const { width, height, pad, gap, volumeH } = frame;
@@ -79,12 +91,13 @@ export function ChartCanvas({
   const volumeTop = pad.top + plotH + gap;
   const subTop = volumeTop + volumeH + (subH > 0 ? gap : 0);
   const view = candles.slice(-frame.visible);
+  const visibleTimes = new Set(view.map((candle) => candle.open_time));
 
   const priceValues = view.flatMap((candle) => [candle.high, candle.low]);
   series.filter((item) => item.pane === "main").forEach((item) => {
-    item.points?.forEach((point) => { if (point.v != null) priceValues.push(point.v); });
-    item.band?.upper.forEach((point) => { if (point.v != null) priceValues.push(point.v); });
-    item.band?.lower.forEach((point) => { if (point.v != null) priceValues.push(point.v); });
+    item.points?.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
+    item.band?.upper.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
+    item.band?.lower.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
     item.zones?.forEach((zone) => priceValues.push(zone.price_low, zone.price_high));
   });
   executionMarkers.forEach((marker) => {
@@ -106,9 +119,11 @@ export function ChartCanvas({
     <svg
       className="chart-svg"
       viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label="Candlestick chart with volume and strategy overlays"
+      aria-label={ariaLabel}
     >
+      <title>{ariaLabel}</title>
       <rect x="0" y="0" width={width} height={height} className="chart-bg" />
       <rect x={pad.left} y={pad.top} width={plotW} height={plotH} className="pane-bg main-pane" />
       <rect x={pad.left} y={volumeTop} width={plotW} height={volumeH} className="pane-bg volume-pane" />
@@ -118,6 +133,9 @@ export function ChartCanvas({
       ) : null}
       {frame.gridTicks.map((tick) => (
         <line key={tick} x1={pad.left} x2={width - pad.right} y1={pad.top + tick * plotH} y2={pad.top + tick * plotH} className="grid-line" />
+      ))}
+      {frame.gridTicks.map((tick) => (
+        <line key={`x-${tick}`} x1={pad.left + tick * plotW} x2={pad.left + tick * plotW} y1={pad.top} y2={volumeTop + volumeH} className="grid-line soft" />
       ))}
       {[0, 0.5, 1].map((tick) => (
         <line key={`v-${tick}`} x1={pad.left} x2={width - pad.right} y1={volumeTop + tick * volumeH} y2={volumeTop + tick * volumeH} className="grid-line soft" />
@@ -145,13 +163,43 @@ export function ChartCanvas({
       {subH > 0 ? subSeries.flatMap((item, index) => renderSubSeries(item, view, index, x, subTop, subH, pad.left, width - pad.right)) : null}
       {frame.showAxis ? (
         <>
-          <text x={pad.left} y={height - 8} className="axis-label">{view[0] ? compactDate(view[0].open_time) : ""}</text>
-          <text x={width - pad.right} y={height - 8} textAnchor="end" className="axis-label">{view.at(-1) ? compactTime(view.at(-1)!.open_time) : ""}</text>
-          <text x={width - pad.right + 6} y={pad.top + 10} className="price-label">{Number.isFinite(priceMax) ? priceMax.toFixed(2) : ""}</text>
-          <text x={width - pad.right + 6} y={pad.top + plotH - 2} className="price-label">{Number.isFinite(priceMin) ? priceMin.toFixed(2) : ""}</text>
-          <text x={pad.left + 6} y={volumeTop + 12} className="axis-label">Volume</text>
+          {frame.gridTicks.map((tick) => {
+            const candle = view[Math.round(tick * Math.max(0, view.length - 1))];
+            const anchor = tick === 0 ? "start" : tick === 1 ? "end" : "middle";
+            return (
+              <text key={`time-${tick}`} x={pad.left + tick * plotW} y={height - 8} textAnchor={anchor} className="axis-label">
+                {candle ? chartTimeLabel(candle.open_time, candle.timeframe) : ""}
+              </text>
+            );
+          })}
+          {frame.gridTicks.map((tick) => (
+            <text key={`price-${tick}`} x={width - pad.right + 6} y={pad.top + tick * plotH + (tick === 0 ? 9 : tick === 1 ? -2 : 3)} className="price-label">
+              {(priceMax - tick * (priceMax - priceMin)).toFixed(2)}
+            </text>
+          ))}
+          <text x={pad.left + 6} y={volumeTop + 12} className="axis-label">
+            Volume <tspan className="volume-value">{view.at(-1) ? compactVolume(view.at(-1)!.volume) : ""}</tspan>
+          </text>
+          {size === "realtime" ? (
+            <>
+              <text x={width - pad.right + 6} y={volumeTop + 10} className="price-label">{compactVolume(maxVolume)}</text>
+              <text x={width - pad.right + 6} y={volumeTop + volumeH - 1} className="price-label">0</text>
+            </>
+          ) : null}
         </>
       ) : null}
+      {size === "realtime" && view.at(-1) ? (() => {
+        const latest = view.at(-1)!;
+        const direction = latest.close >= latest.open ? "up" : "down";
+        const latestY = y(latest.close);
+        return (
+          <>
+            <line x1={pad.left} x2={width - pad.right} y1={latestY} y2={latestY} className={`current-price-line ${direction}`} />
+            <rect x={width - pad.right + 2} y={latestY - 8} width="54" height="16" rx="3" className={`current-price-box ${direction}`} />
+            <text x={width - pad.right + 29} y={latestY + 3} textAnchor="middle" className="current-price-label">{latest.close.toFixed(2)}</text>
+          </>
+        );
+      })() : null}
     </svg>
   );
 }
@@ -266,16 +314,17 @@ function renderExecutionMarkers(
     const cy = y(marker.price);
     if (marker.overlay_type === "take_profit" || marker.overlay_type === "stop_loss") {
       const endIndex = clampIndex(indexForTime(candles, marker.line_until ?? marker.t), candles.length, candles.length - 1);
-      const label = marker.overlay_type === "take_profit" ? "TP" : "SL";
+      const label = marker.overlay_type === "take_profit" ? "Take Profit" : "Stop Loss";
       return [
         <line key={`${marker.overlay_type}-${index}`} x1={cx} x2={x(endIndex)} y1={cy} y2={cy} className={`risk-line ${marker.overlay_type}`} />,
         <text key={`${marker.overlay_type}-${index}-label`} x={Math.min(x(endIndex) + 5, maxX - 12)} y={cy - 4} className={`risk-label ${marker.overlay_type}`}>{label}</text>,
       ];
     }
-    if (marker.overlay_type === "entry") {
+    if (marker.overlay_type === "entry" || marker.overlay_type.endsWith("_entry")) {
+      const label = marker.overlay_type.startsWith("short") ? "SHORT Entry" : marker.overlay_type.startsWith("long") ? "LONG Entry" : "ENTRY";
       return [
         <circle key={`entry-${index}`} cx={cx} cy={cy} r="5" className="exec-marker entry" />,
-        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className="exec-label">ENTRY</text>,
+        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className="exec-label">{label}</text>,
       ];
     }
     if (marker.overlay_type === "exit") {
@@ -339,4 +388,19 @@ function triangleDown(x: number, y: number, s = 1) {
 
 function crossPath(x: number, y: number) {
   return `M${x - 7},${y - 7} L${x + 7},${y + 7} M${x + 7},${y - 7} L${x - 7},${y + 7}`;
+}
+
+function compactVolume(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toFixed(0);
+}
+
+function chartTimeLabel(value: string, timeframe: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  if (timeframe === "1h" || timeframe === "4h") {
+    return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
 }

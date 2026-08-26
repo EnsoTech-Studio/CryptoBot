@@ -1,3 +1,16 @@
+import {
+  DEFAULT_MARKET,
+  MARKET_CONFIG_HASH,
+  marketRequestPath,
+  type Candle,
+  type MarketPair,
+  type MarketSelection,
+  type MarketStatus,
+} from "./market";
+import { normalizeWeights, type DiscoveryDraft } from "./discovery";
+
+export type { Candle, MarketPair, MarketSelection, MarketStatus } from "./market";
+
 export const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 export type User = {
@@ -5,20 +18,6 @@ export type User = {
   email: string;
   display_name: string;
   role: "RESEARCHER" | "OPERATOR" | "ADMIN";
-};
-
-export type Candle = {
-  provider: string;
-  symbol: string;
-  timeframe: string;
-  open_time: string;
-  close_time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  trade_count: number;
 };
 
 export type MarketDataset = {
@@ -116,6 +115,13 @@ export type Trade = {
   entry_price: number;
   exit_price: number;
   quantity: number;
+  /* Research returns these; the adapter used to drop them, which made the
+     reference ledger's Phi / Slippage / Stoploss / TakeProfit columns
+     impossible to fill truthfully. */
+  fee_paid: number;
+  slippage_cost: number;
+  sl_price: number | null;
+  tp_price: number | null;
   pnl: number;
   pnl_pct: number;
   exit_reason: string;
@@ -190,11 +196,15 @@ type ResearchTrade = {
   entry_time: string;
   entry_price: number;
   quantity: number;
+  fee_paid: number;
+  slippage_cost: number;
   exit_time: string | null;
   exit_price: number | null;
   pnl_absolute: number | null;
   pnl_percent: number | null;
   exit_reason: string | null;
+  sl_price: number | null;
+  tp_price: number | null;
 };
 type ResearchEquityPoint = {
   point_time: string;
@@ -265,10 +275,39 @@ function normalizeSearchRun(run: ResearchSearchRun): SearchRun {
   };
 }
 
-async function ensureDataset(timeframe: string): Promise<MarketDataset> {
-  const existing = await api.datasets(timeframe);
-  return existing.datasets[0] ?? api.createDataset(timeframe);
+async function ensureDataset(market: MarketSelection, timeframe: string): Promise<MarketDataset> {
+  const existing = await api.datasets(market, timeframe);
+  return existing.datasets[0] ?? api.createDataset(market, timeframe);
 }
+
+/* Execution assumptions the Backtest screen puts on screen. They used to be
+   literals inside createExperiment, which meant the visible fee and slippage
+   inputs changed nothing. Bounds mirror app/schemas.py ExperimentCreateIn. */
+export type ExecutionSettings = {
+  initialEquity: number;
+  fixedNotional: number;
+  leverage: number;
+  feeBps: number;
+  slippageBps: number;
+  stopLossPct: number | null;
+  takeProfitPct: number | null;
+  intrabarPriority: "stop_loss_first" | "take_profit_first";
+  policy: "weighted_vote" | "majority_vote";
+  threshold: number;
+};
+
+export const DEFAULT_EXECUTION: ExecutionSettings = {
+  initialEquity: 100,
+  fixedNotional: 10,
+  leverage: 1,
+  feeBps: 8,
+  slippageBps: 5,
+  stopLossPct: 2,
+  takeProfitPct: 4,
+  intrabarPriority: "stop_loss_first",
+  policy: "weighted_vote",
+  threshold: 0.34,
+};
 
 function csrfToken(): string {
   if (typeof document === "undefined") return "";
@@ -278,17 +317,26 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match.split("=")[1]) : "";
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_000): Promise<T> {
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   const method = (init.method ?? "GET").toUpperCase();
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("X-CSRF-Token", csrfToken());
 
-  const response = await fetch(`${apiUrl}${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}${path}`, {
+      ...init,
+      headers,
+      credentials: "include",
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new Error("API request timed out");
+    }
+    throw error;
+  }
 
   const payload = (await response.json().catch(() => undefined)) as unknown;
   if (!response.ok) {
@@ -314,16 +362,21 @@ export const api = {
   strategies() {
     return request<{ strategies: Strategy[] }>("/api/v1/strategies");
   },
-  candles(timeframe: string, strategy = "composite@v1") {
-    void strategy;
+  marketPairs() {
+    return request<{ pairs: MarketPair[] }>("/api/v1/markets/pairs", {}, 2_500);
+  },
+  marketStatus(market: MarketSelection, timeframe: string) {
+    return request<MarketStatus>(marketRequestPath("/api/v1/markets/status", market, { timeframe }));
+  },
+  candles(market: MarketSelection, timeframe: string, limit = 180) {
     return request<{ candles: Candle[] }>(
-      `/api/v1/markets/candles?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&limit=180`,
+      marketRequestPath("/api/v1/markets/candles", market, { timeframe, limit }),
     ).then((payload) => ({
       ...payload,
       candles: payload.candles.map(normalizeCandle),
     }));
   },
-  overlays(timeframe: string, strategy = "composite@v1") {
+  overlays(market: MarketSelection, timeframe: string, strategy = "composite@v1", limit = 180) {
     return request<{
       series: OverlaySeries[];
       markers: OverlayMarker[];
@@ -331,33 +384,43 @@ export const api = {
       last_closed_at: string;
       is_stale: boolean;
     }>(
-      `/api/v1/markets/chart-overlays?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&strategy=${strategy}&config_hash=sha256:${"4".repeat(64)}&limit=180`,
+      marketRequestPath("/api/v1/markets/chart-overlays", market, {
+        timeframe,
+        strategy,
+        config_hash: MARKET_CONFIG_HASH,
+        limit,
+      }),
     );
   },
-  datasets(timeframe = "5m") {
+  datasets(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<{ datasets: MarketDataset[] }>(
-      `/api/v1/markets/datasets?provider=binance_usdm&symbol=ETHUSDT&timeframe=${timeframe}&limit=20`,
+      marketRequestPath("/api/v1/markets/datasets", market, { timeframe, limit: 20 }),
     );
   },
-  createDataset(timeframe = "5m") {
+  createDataset(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<MarketDataset>("/api/v1/markets/datasets", {
       method: "POST",
       body: JSON.stringify({
-        provider: "binance_usdm",
-        symbol: "ETHUSDT",
+        provider: market.provider,
+        symbol: market.symbol,
         timeframe,
         revision_no: 1,
       }),
     });
   },
-  async createExperiment(children: Array<{ strategy_id: string; weight: number }>) {
-    const dataset = await ensureDataset("5m");
+  async createExperiment(
+    children: Array<{ strategy_id: string; weight: number }>,
+    market: MarketSelection = DEFAULT_MARKET,
+    timeframe = "5m",
+    execution: ExecutionSettings = DEFAULT_EXECUTION,
+  ) {
+    const dataset = await ensureDataset(market, timeframe);
     return request<{ run_id: string; experiment_id: string; status: string }>("/api/v1/experiments", {
       method: "POST",
       body: JSON.stringify({
-        provider: "binance_usdm",
-        symbol: "ETHUSDT",
-        timeframe: "5m",
+        provider: market.provider,
+        symbol: market.symbol,
+        timeframe,
         strategy_id: "composite",
         strategy_version: "v1",
         dataset_version: dataset.dataset_version,
@@ -367,15 +430,15 @@ export const api = {
           weight: child.weight,
           parameters: defaultParams(child.strategy_id),
         })),
-        combination: { policy: "weighted_vote", threshold: 0.34, encoding: "BUY=1,SELL=-1,HOLD=0" },
-        initial_equity: 100,
-        fixed_notional: 10,
-        leverage: 1,
-        fee_bps: 10,
-        slippage_bps: 0,
-        stop_loss_pct: 2.5,
-        take_profit_pct: 4,
-        intrabar_priority: "stop_loss_first",
+        combination: { policy: execution.policy, threshold: execution.threshold },
+        initial_equity: execution.initialEquity,
+        fixed_notional: execution.fixedNotional,
+        leverage: execution.leverage,
+        fee_bps: execution.feeBps,
+        slippage_bps: execution.slippageBps,
+        stop_loss_pct: execution.stopLossPct,
+        take_profit_pct: execution.takeProfitPct,
+        intrabar_priority: execution.intrabarPriority,
         idempotency_key: `manual-${Date.now()}`,
       }),
     });
@@ -383,15 +446,15 @@ export const api = {
   experiment(id: string) {
     return request<ExperimentSummary>(`/api/v1/experiments/${id}`);
   },
-  experimentCandles(id: string) {
+  experimentCandles(id: string, market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<{ candles: Omit<Candle, "provider" | "symbol" | "timeframe">[] }>(
       `/api/v1/experiments/${id}/candles`,
     ).then((payload) => ({
       candles: payload.candles.map((candle) => normalizeCandle({
         ...candle,
-        provider: "binance_usdm",
-        symbol: "ETHUSDT",
-        timeframe: "5m",
+        provider: market.provider,
+        symbol: market.symbol,
+        timeframe,
       })),
     }));
   },
@@ -406,6 +469,10 @@ export const api = {
         entry_price: trade.entry_price,
         exit_price: trade.exit_price ?? trade.entry_price,
         quantity: trade.quantity,
+        fee_paid: trade.fee_paid ?? 0,
+        slippage_cost: trade.slippage_cost ?? 0,
+        sl_price: trade.sl_price ?? null,
+        tp_price: trade.tp_price ?? null,
         pnl: trade.pnl_absolute ?? 0,
         pnl_pct: trade.pnl_percent ?? 0,
         exit_reason: trade.exit_reason ?? "open",
@@ -441,29 +508,44 @@ export const api = {
       execution_markers: [] as ExecutionMarker[],
     }));
   },
-  async startSearch() {
-    const dataset = await ensureDataset("5m");
+  /* Takes the visible draft. The previous signature ignored its arguments and
+     posted a fixed 6-strategy domain_guided payload, so the on-screen method,
+     weights and limits were decoration. */
+  async startSearch(draft: DiscoveryDraft) {
+    const dataset = await ensureDataset(draft.market, draft.timeframe);
+    const weights = normalizeWeights(draft.selectedStrategyIds, draft.weights);
     return request<ResearchSearchRun>("/api/v1/search-runs", {
       method: "POST",
       body: JSON.stringify({
-        generator_id: "domain_guided",
+        generator_id: draft.method,
         search_space: {
-          strategy_ids: ["ma_cross", "rsi", "bollinger", "support_resistance", "news_sentiment", "macd"],
-          cardinality: [2, 3],
-          policies: ["weighted_vote"],
+          strategy_ids: draft.selectedStrategyIds,
+          cardinality: [draft.selectedStrategyIds.length],
+          policies: [draft.policy],
           parameter_grid: {},
         },
-        stop_conditions: { max_candidates: 6, max_duration_sec: 900, max_non_improving: 4 },
-        market: {
-          provider: "binance_usdm",
-          symbol: "ETHUSDT",
-          timeframe: "5m",
-          dataset_version: dataset.dataset_version,
-          range_from: "2026-01-01T00:00:00Z",
-          range_to: "2026-03-01T00:00:00Z",
+        stop_conditions: {
+          max_candidates: draft.maxCandidates,
+          max_duration_sec: draft.maxDurationSec,
+          max_non_improving: draft.maxNonImproving,
         },
-        execution: {},
-        seed: 42,
+        market: {
+          provider: draft.market.provider,
+          symbol: draft.market.symbol,
+          timeframe: draft.timeframe,
+          dataset_version: dataset.dataset_version,
+          range_from: dataset.range_from,
+          range_to: dataset.range_to,
+        },
+        execution: {
+          children: draft.selectedStrategyIds.map((id) => ({
+            strategy_id: id,
+            version: "v1",
+            weight: weights[id],
+            parameters: defaultParams(id),
+          })),
+        },
+        seed: draft.seed,
         idempotency_key: `search-${Date.now()}`,
       }),
     }).then(normalizeSearchRun);
@@ -513,16 +595,20 @@ export const api = {
   },
 };
 
+/* Parameter names must match the plugin schemas in
+   app/domain/strategy/plugins/ exactly — an unrecognized key is silently
+   ignored and the strategy quietly runs on its own defaults. */
 function defaultParams(strategyID: string): Record<string, number> {
   switch (strategyID) {
     case "ma_cross":
+    case "ema_cross":
       return { fast: 20, slow: 50 };
     case "rsi":
-      return { period: 14, buy_threshold: 30, sell_threshold: 70 };
+      return { period: 14, oversold: 30, overbought: 70 };
     case "bollinger":
-      return { period: 20, stddev: 2 };
+      return { period: 20, deviation: 2 };
     case "support_resistance":
-      return { lookback: 60, zone_bps: 45 };
+      return { period: 20 };
     case "news_sentiment":
       return { buy_above: 0.45, sell_below: -0.45, min_items: 3 };
     case "macd":
