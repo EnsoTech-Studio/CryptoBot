@@ -87,8 +87,10 @@ export type Notice = { text: string; tone: NoticeTone };
 export type InspectorTab = "metrics" | "trades" | "provenance";
 export type LoadState = "idle" | "loading" | "ready" | "unavailable";
 
-const preferredTimeframes = ["1m", "5m", "15m", "1h"];
-const panelSeed = preferredTimeframes.map((timeframe, index) => ({
+const requiredTimeframes = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const defaultPanelTimeframes = ["5m", "15m", "1h", "4h"];
+const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true";
+const panelSeed = defaultPanelTimeframes.map((timeframe, index) => ({
   id: `chart-${index + 1}`,
   title: `Market view ${index + 1}`,
   timeframe,
@@ -179,12 +181,15 @@ export function useWorkspace(): WorkspaceValue {
   return value;
 }
 
-function createPanels(timeframes = preferredTimeframes, realtimeEnabled = true, seedMock = false): Panel[] {
-  const safeTimeframes = timeframes.length > 0 ? timeframes : preferredTimeframes;
-  return safeTimeframes.slice(0, panelSeed.length).map((timeframe, index) => ({
-    ...panelSeed[index],
-    timeframe,
-    ...(seedMock ? createMockPanelData(DEFAULT_MARKET, timeframe, 180) : { candles: [], series: [], markers: [] }),
+function createPanels(timeframes = requiredTimeframes, realtimeEnabled = true, seedMock = false): Panel[] {
+  const available = timeframes.length > 0 ? timeframes : requiredTimeframes;
+  const defaults = defaultPanelTimeframes.filter((timeframe) => available.includes(timeframe));
+  const fallbacks = available.filter((timeframe) => !defaults.includes(timeframe));
+  const chartTimeframes = [...defaults, ...fallbacks].slice(0, panelSeed.length);
+  return panelSeed.map((seed, index) => ({
+    ...seed,
+    timeframe: chartTimeframes[index] ?? seed.timeframe,
+    ...(seedMock ? createMockPanelData(DEFAULT_MARKET, chartTimeframes[index] ?? seed.timeframe, 180) : { candles: [], series: [], markers: [] }),
     liveState: seedMock ? (realtimeEnabled ? "live" : "paused") : realtimeEnabled ? "connecting" : "paused",
     loaded: seedMock,
     historyLoading: false,
@@ -195,28 +200,20 @@ function createPanels(timeframes = preferredTimeframes, realtimeEnabled = true, 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [panels, setPanels] = useState<Panel[]>(() => createPanels(preferredTimeframes, true, true));
+  const [panels, setPanels] = useState<Panel[]>(() => createPanels(requiredTimeframes, true, false));
   const [focusIndex, setFocusIndex] = useState(0);
-  const [marketPairs, setMarketPairs] = useState<MarketPair[]>(MOCK_MARKET_PAIRS);
-  const [marketPairsState, setMarketPairsState] = useState<LoadState>("ready");
-  const [dataMode, setDataMode] = useState<DataMode>("mock");
+  const [marketPairs, setMarketPairs] = useState<MarketPair[]>([]);
+  const [marketPairsState, setMarketPairsState] = useState<LoadState>("loading");
+  const [dataMode, setDataMode] = useState<DataMode>("live");
   const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(DEFAULT_MARKET);
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
   const [recentTicks, setRecentTicks] = useState<DisplayTick[]>([]);
-  const [lastFrameAt, setLastFrameAt] = useState<string | undefined>("2025-04-29T10:45:38.123Z");
-  const [latencyMs, setLatencyMs] = useState<number | null>(102);
+  const [lastFrameAt, setLastFrameAt] = useState<string | undefined>();
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [socketReconnectCount, setSocketReconnectCount] = useState(0);
-  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>({
-    provider: "binance_usdm",
-    symbol: DEFAULT_MARKET.symbol,
-    timeframe: "1m",
-    stale: false,
-    last_closed_at: "2025-04-29T10:45:38.123Z",
-    last_sequence: 1,
-    reconnect_count: 0,
-  });
-  const [marketStatusState, setMarketStatusState] = useState<LoadState>("ready");
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
+  const [marketStatusState, setMarketStatusState] = useState<LoadState>("loading");
   const [activeExperimentId, setActiveExperimentId] = useState<string | null>(null);
   const [experiment, setExperiment] = useState<ExperimentSummary | null>(null);
   const [result, setResult] = useState<ResultBundle | null>(null);
@@ -263,8 +260,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
   const availableTimeframes = useMemo(() => {
     const supported = selectedPair?.timeframes?.filter(Boolean) ?? [];
-    if (supported.length === 0) return preferredTimeframes;
-    return [...supported].sort((a, b) => timeframeOrder(a) - timeframeOrder(b));
+    if (supported.length === 0) return requiredTimeframes;
+    const supportedSet = new Set(supported);
+    return requiredTimeframes.filter((timeframe) => supportedSet.has(timeframe));
   }, [selectedPair]);
 
   const latestCandle = useMemo(() => {
@@ -316,7 +314,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       symbol: market.symbol.toUpperCase(),
       base_asset: market.symbol.toUpperCase().replace(/USDT$/, ""),
       quote_asset: "USDT",
-      timeframes: ["1m", "5m", "15m", "1h", "4h"],
+      timeframes: requiredTimeframes,
     }, ...MOCK_MARKET_PAIRS];
     dataModeRef.current = "mock";
     setDataMode("mock");
@@ -373,19 +371,36 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (requestId !== panelRequestIds.current[index] || requestMarketKey !== marketKey(selectedMarketRef.current)) return;
 
     if (candlesResult.status === "rejected") {
-      activateMockMode(explicitMarket);
-      const mock = createMockPanelData(explicitMarket, panel.timeframe, limit);
+      if (marketMockEnabled) {
+        activateMockMode(explicitMarket);
+        const mock = createMockPanelData(explicitMarket, panel.timeframe, limit);
+        setPanel(index, {
+          timeframe: panel.timeframe,
+          strategy: panel.strategy,
+          ...mock,
+          lastClosed: mock.candles.at(-1)?.close_time,
+          liveState: realtimeEnabledRef.current ? "live" : "paused",
+          loaded: true,
+          historyLoading: false,
+          historyLimit: limit,
+          error: undefined,
+        });
+        return;
+      }
+      const errorMessage = `Market data unavailable: ${messageFromError(candlesResult.reason)}`;
       setPanel(index, {
         timeframe: panel.timeframe,
         strategy: panel.strategy,
-        ...mock,
-        lastClosed: mock.candles.at(-1)?.close_time,
-        liveState: realtimeEnabledRef.current ? "live" : "paused",
+        candles: [],
+        series: [],
+        markers: [],
+        liveState: realtimeEnabledRef.current ? "stale" : "paused",
         loaded: true,
         historyLoading: false,
         historyLimit: limit,
-        error: undefined,
+        error: errorMessage,
       });
+      report(errorMessage, "error");
       return;
     }
 
@@ -431,6 +446,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
 
   async function retryMarketPairs() {
+    setMarketPairsState("loading");
     try {
       const payload = await api.marketPairs();
       const pairs = (payload.pairs ?? []).map((pair) => ({
@@ -449,9 +465,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ? persisted
         : pairs.find((pair) => marketKey(pair) === marketKey(selectedMarketRef.current)) ?? pairs[0];
       if (candidate) setSelectedMarket({ provider: candidate.provider, symbol: candidate.symbol });
-    } catch {
-      activateMockMode(DEFAULT_MARKET);
-      setSelectedMarket(DEFAULT_MARKET);
+    } catch (error) {
+      if (marketMockEnabled) {
+        activateMockMode(DEFAULT_MARKET);
+        setSelectedMarket(DEFAULT_MARKET);
+        return;
+      }
+      dataModeRef.current = "live";
+      setDataMode("live");
+      setMarketPairs([]);
+      setMarketPairsState("unavailable");
+      setMarketStatus(null);
+      setMarketStatusState("unavailable");
+      report(`Market backend unavailable: ${messageFromError(error)}`, "error");
     }
   }
 
@@ -566,7 +592,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const currentPrimaryTimeframe = panels[0]?.timeframe;
   const primaryTimeframe = currentPrimaryTimeframe && availableTimeframes.includes(currentPrimaryTimeframe)
     ? currentPrimaryTimeframe
-    : availableTimeframes[0] ?? preferredTimeframes[0];
+    : availableTimeframes[0] ?? requiredTimeframes[0];
   useEffect(() => {
     if (dataMode === "mock") return;
     let stopped = false;

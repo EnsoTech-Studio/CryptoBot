@@ -3,7 +3,43 @@ package ws
 import (
 	"encoding/json"
 	"testing"
+	"time"
+
+	"github.com/shopspring/decimal"
+
+	domainmarket "github.com/EnsoTech-Studio/CryptoBot/server/internal/domain/market"
 )
+
+func TestPublishBBOSamplesHighFrequencyUpdatesForTheUI(t *testing.T) {
+	hub := NewMemoryHub(nil)
+	key := "binance_usdm|ETHUSDT|1m"
+	client := &hubClient{
+		id: "test", send: make(chan []byte, 4), subscriptions: map[string]struct{}{key: {}},
+	}
+	hub.clients[client.id] = client
+	base := time.Unix(1_700_000_000, 0).UTC()
+	quote := domainmarket.BBO{
+		Provider: "binance_usdm", Symbol: "ETHUSDT", EventTime: base,
+		Bid: decimal.NewFromInt(100), Ask: decimal.NewFromInt(101),
+	}
+
+	hub.PublishBBO(quote)
+	quote.EventTime = base.Add(10 * time.Millisecond)
+	hub.PublishBBO(quote)
+	quote.EventTime = base.Add(100 * time.Millisecond)
+	hub.PublishBBO(quote)
+
+	first := decodeFrame(t, <-client.send)
+	second := decodeFrame(t, <-client.send)
+	if first["type"] != "bbo" || second["type"] != "bbo" {
+		t.Fatalf("unexpected frames: %#v %#v", first, second)
+	}
+	select {
+	case extra := <-client.send:
+		t.Fatalf("unexpected unsampled BBO: %s", extra)
+	default:
+	}
+}
 
 func decodeFrame(t *testing.T, payload []byte) map[string]any {
 	t.Helper()

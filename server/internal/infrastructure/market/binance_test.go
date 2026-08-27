@@ -57,6 +57,55 @@ func TestListClosedCandlesNormalizesAndFiltersProvisionalRows(t *testing.T) {
 	}
 }
 
+func TestBinanceProviderUsesSeparateTimeoutsForRESTAndWebSocket(t *testing.T) {
+	client := &http.Client{Timeout: 17 * time.Second}
+	provider := NewBinanceProviderWithURLs("http://rest.test", "ws://stream.test", client)
+
+	if provider.restClient != client || provider.restClient.Timeout != 17*time.Second {
+		t.Fatalf("REST client timeout changed: %s", provider.restClient.Timeout)
+	}
+	if provider.websocketClient == client {
+		t.Fatal("WebSocket must not share the REST client instance")
+	}
+	if provider.websocketClient.Timeout != 0 {
+		t.Fatalf("WebSocket client has a total timeout: %s", provider.websocketClient.Timeout)
+	}
+	if provider.websocketClient.Transport != client.Transport {
+		t.Fatal("WebSocket client did not preserve the configured transport")
+	}
+}
+
+func TestStreamMarketUsesSplitBinanceEndpoints(t *testing.T) {
+	provider := newBinanceProviderWithEndpoints(
+		"http://rest.test", "wss://stream.test/market/stream", "wss://stream.test/public/stream", nil,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	subscription, err := provider.StreamMarket(
+		ctx,
+		[]domainmarket.StreamKey{{
+			Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: common.Timeframe("1m"),
+		}},
+		func(domainmarket.KlineUpdate) {},
+		func(domainmarket.BBO) {},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	binanceStream := subscription.(*binanceSubscription)
+	if len(binanceStream.endpoints) != 2 {
+		t.Fatalf("expected market and public endpoints, got %d", len(binanceStream.endpoints))
+	}
+	if got := binanceStream.endpoints[0].url; got != "wss://stream.test/market/stream?streams=ethusdt@kline_1m" {
+		t.Fatalf("unexpected market endpoint: %s", got)
+	}
+	if got := binanceStream.endpoints[1].url; got != "wss://stream.test/public/stream?streams=ethusdt@bookTicker" {
+		t.Fatalf("unexpected public endpoint: %s", got)
+	}
+}
+
 func TestNormalizeKlinePreservesFinalState(t *testing.T) {
 	payload := []byte(`{"e":"kline","s":"BTCUSDT","k":{"t":1700000000000,"T":1700000059999,"s":"BTCUSDT","i":"1m","o":"100","c":"104","h":"105","l":"99","v":"42.5","n":7,"x":true}}`)
 	update, err := normalizeKlineEvent(payload)
@@ -83,6 +132,38 @@ func TestNormalizeBookTickerCarriesOrderingEvidence(t *testing.T) {
 	}
 	if quote.Symbol != "BTCUSDT" || quote.SourceSequence != 17 || quote.UpdateID == nil || *quote.UpdateID != 99 {
 		t.Fatalf("unexpected quote: %+v", quote)
+	}
+}
+
+func TestHandleMessageDistinguishesEventTypeFromEventTime(t *testing.T) {
+	payload := []byte(`{"stream":"ethusdt@bookTicker","data":{"e":"bookTicker","E":1700000000000,"T":1700000000001,"s":"ETHUSDT","u":99,"b":"100","B":"2","a":"101","A":"3"}}`)
+	var received domainmarket.BBO
+	subscription := binanceSubscription{
+		publishBBO: func(quote domainmarket.BBO) { received = quote },
+	}
+
+	if err := subscription.handleMessage(payload); err != nil {
+		t.Fatal(err)
+	}
+	if received.Symbol != "ETHUSDT" || !received.Bid.Equal(decimal.RequireFromString("100")) {
+		t.Fatalf("unexpected quote: %+v", received)
+	}
+}
+
+func TestHandleMessagePublishesRealisticCombinedKline(t *testing.T) {
+	payload := []byte(`{"stream":"ethusdt@kline_1m","data":{"e":"kline","E":1700000000001,"s":"ETHUSDT","k":{"t":1700000000000,"T":1700000059999,"s":"ETHUSDT","i":"1m","f":100,"L":200,"o":"100","c":"104","h":"105","l":"99","v":"42.5","n":7,"x":false,"V":"21.25"}}}`)
+	var received domainmarket.KlineUpdate
+	subscription := binanceSubscription{
+		publishKline: func(update domainmarket.KlineUpdate) { received = update },
+	}
+
+	if err := subscription.handleMessage(payload); err != nil {
+		t.Fatal(err)
+	}
+	if received.Market.Symbol != "ETHUSDT" ||
+		!received.Close.Equal(decimal.RequireFromString("104")) ||
+		!received.Volume.Equal(decimal.RequireFromString("42.5")) {
+		t.Fatalf("unexpected kline: %+v", received)
 	}
 }
 

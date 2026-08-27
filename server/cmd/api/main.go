@@ -68,14 +68,15 @@ func main() {
 		authservice.NewService(marketPool.Pool, targetSigner), cfg.CookieSecure,
 	)
 	hub := transportws.NewMemoryHub(cfg.CORSAllowedOrigins)
-	keys := []domainmarket.StreamKey{
-		{Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: common.Timeframe("1m")},
-		{Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: common.Timeframe("5m")},
-		{Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: common.Timeframe("15m")},
-		{Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: common.Timeframe("1h")},
-		{Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: common.Timeframe("4h")},
-		{Provider: "binance_usdm", Symbol: "BTCUSDT", Timeframe: common.Timeframe("5m")},
-		{Provider: "binance_usdm", Symbol: "SOLUSDT", Timeframe: common.Timeframe("1m")},
+	marketSymbols := []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}
+	marketTimeframes := []common.Timeframe{"1m", "5m", "15m", "1h", "4h", "1d"}
+	keys := make([]domainmarket.StreamKey, 0, len(marketSymbols)*len(marketTimeframes))
+	for _, symbol := range marketSymbols {
+		for _, timeframe := range marketTimeframes {
+			keys = append(keys, domainmarket.StreamKey{
+				Provider: "binance_usdm", Symbol: symbol, Timeframe: timeframe,
+			})
+		}
 	}
 	marketService, serviceErr := application.NewMarketService(
 		marketadapter.NewBinanceProvider(),

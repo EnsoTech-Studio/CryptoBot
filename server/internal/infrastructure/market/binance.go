@@ -24,37 +24,58 @@ import (
 )
 
 const (
-	defaultRESTBaseURL = "https://fapi.binance.com"
-	defaultWSBaseURL   = "wss://fstream.binance.com/stream"
-	maxRESTBodyBytes   = 4 << 20
-	maxWSMessageBytes  = 1 << 20
-	maxDatasetCandles  = 20_000
+	defaultRESTBaseURL     = "https://fapi.binance.com"
+	defaultWSMarketBaseURL = "wss://fstream.binance.com/market/stream"
+	defaultWSPublicBaseURL = "wss://fstream.binance.com/public/stream"
+	maxRESTBodyBytes       = 4 << 20
+	maxWSMessageBytes      = 1 << 20
+	maxDatasetCandles      = 20_000
+	streamReadIdleTimeout  = 90 * time.Second
 )
 
 var errInvalidMarketRequest = errors.New("invalid market request")
 
 type BinanceProvider struct {
-	restBaseURL string
-	wsBaseURL   string
-	client      *http.Client
-	limiter     *weightLimiter
-	now         func() time.Time
+	restBaseURL     string
+	wsMarketBaseURL string
+	wsPublicBaseURL string
+	restClient      *http.Client
+	websocketClient *http.Client
+	limiter         *weightLimiter
+	now             func() time.Time
 }
 
 func NewBinanceProvider() *BinanceProvider {
-	return NewBinanceProviderWithURLs(defaultRESTBaseURL, defaultWSBaseURL, nil)
+	return newBinanceProviderWithEndpoints(
+		defaultRESTBaseURL, defaultWSMarketBaseURL, defaultWSPublicBaseURL, nil,
+	)
 }
 
 func NewBinanceProviderWithURLs(restBaseURL, wsBaseURL string, client *http.Client) *BinanceProvider {
+	return newBinanceProviderWithEndpoints(restBaseURL, wsBaseURL, wsBaseURL, client)
+}
+
+func newBinanceProviderWithEndpoints(
+	restBaseURL, wsMarketBaseURL, wsPublicBaseURL string,
+	client *http.Client,
+) *BinanceProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
+	// http.Client.Timeout covers the complete request lifetime. That is useful
+	// for finite REST calls, but it would cancel an upgraded WebSocket after the
+	// same timeout. Preserve the transport while removing the total timeout for
+	// the long-lived Binance market stream.
+	websocketClient := *client
+	websocketClient.Timeout = 0
 	return &BinanceProvider{
-		restBaseURL: strings.TrimRight(restBaseURL, "/"),
-		wsBaseURL:   strings.TrimRight(wsBaseURL, "/"),
-		client:      client,
-		limiter:     newWeightLimiter(4_800, time.Minute),
-		now:         time.Now,
+		restBaseURL:     strings.TrimRight(restBaseURL, "/"),
+		wsMarketBaseURL: strings.TrimRight(wsMarketBaseURL, "/"),
+		wsPublicBaseURL: strings.TrimRight(wsPublicBaseURL, "/"),
+		restClient:      client,
+		websocketClient: &websocketClient,
+		limiter:         newWeightLimiter(4_800, time.Minute),
+		now:             time.Now,
 	}
 }
 
@@ -126,7 +147,7 @@ func (p *BinanceProvider) listCandlePage(
 	if err != nil {
 		return nil, fmt.Errorf("build Binance request: %w", err)
 	}
-	resp, err := p.client.Do(req)
+	resp, err := p.restClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("Binance candles unavailable: %w", err)
 	}
@@ -175,29 +196,39 @@ func (p *BinanceProvider) StreamMarket(
 	if len(keys) == 0 || len(keys) > 512 {
 		return nil, fmt.Errorf("%w: stream key count must be 1..512", errInvalidMarketRequest)
 	}
-	streams := make([]string, 0, len(keys)*2)
+	marketStreams := make([]string, 0, len(keys))
+	publicStreams := make([]string, 0, len(keys))
 	seenBBO := make(map[string]struct{})
 	for _, key := range keys {
 		if err := validateMarketKey(key); err != nil {
 			return nil, err
 		}
 		symbol := strings.ToLower(key.Symbol)
-		streams = append(streams, symbol+"@kline_"+string(key.Timeframe))
+		marketStreams = append(marketStreams, symbol+"@kline_"+string(key.Timeframe))
 		if publishBBO != nil {
 			if _, exists := seenBBO[symbol]; !exists {
-				streams = append(streams, symbol+"@bookTicker")
+				publicStreams = append(publicStreams, symbol+"@bookTicker")
 				seenBBO[symbol] = struct{}{}
 			}
 		}
 	}
-	sort.Strings(streams)
-	streamURL := p.wsBaseURL + "?streams=" + strings.Join(streams, "/")
+	sort.Strings(marketStreams)
+	sort.Strings(publicStreams)
+	endpoints := []binanceStreamEndpoint{{
+		url:           p.wsMarketBaseURL + "?streams=" + strings.Join(marketStreams, "/"),
+		reportsStatus: true,
+	}}
+	if len(publicStreams) > 0 {
+		endpoints = append(endpoints, binanceStreamEndpoint{
+			url: p.wsPublicBaseURL + "?streams=" + strings.Join(publicStreams, "/"),
+		})
+	}
 	subscriptionCtx, cancel := context.WithCancel(ctx)
 	subscription := &binanceSubscription{
 		cancel:        cancel,
 		done:          make(chan struct{}),
 		provider:      p,
-		url:           streamURL,
+		endpoints:     endpoints,
 		publishKline:  publishKline,
 		publishBBO:    publishBBO,
 		publishStatus: publishStatus,
@@ -206,12 +237,17 @@ func (p *BinanceProvider) StreamMarket(
 	return subscription, nil
 }
 
+type binanceStreamEndpoint struct {
+	url           string
+	reportsStatus bool
+}
+
 type binanceSubscription struct {
 	cancel        context.CancelFunc
 	done          chan struct{}
 	closeOnce     sync.Once
 	provider      *BinanceProvider
-	url           string
+	endpoints     []binanceStreamEndpoint
 	publishKline  func(domainmarket.KlineUpdate)
 	publishBBO    func(domainmarket.BBO)
 	publishStatus func(domainmarket.StreamStatus)
@@ -226,18 +262,34 @@ func (s *binanceSubscription) Close() error {
 
 func (s *binanceSubscription) run(ctx context.Context) {
 	defer close(s.done)
+	var connections sync.WaitGroup
+	for _, endpoint := range s.endpoints {
+		connections.Add(1)
+		go func() {
+			defer connections.Done()
+			s.runEndpoint(ctx, endpoint)
+		}()
+	}
+	connections.Wait()
+}
+
+func (s *binanceSubscription) runEndpoint(ctx context.Context, endpoint binanceStreamEndpoint) {
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
 			return
 		}
-		s.publishState(domainmarket.StreamConnecting, attempt, "")
+		if endpoint.reportsStatus {
+			s.publishState(domainmarket.StreamConnecting, attempt, "")
+		}
 		connection, _, err := websocket.Dial(
 			ctx,
-			s.url,
-			&websocket.DialOptions{HTTPClient: s.provider.client},
+			endpoint.url,
+			&websocket.DialOptions{HTTPClient: s.provider.websocketClient},
 		)
 		if err == nil {
-			s.publishState(domainmarket.StreamConnected, attempt, "")
+			if endpoint.reportsStatus {
+				s.publishState(domainmarket.StreamConnected, attempt, "")
+			}
 			connection.SetReadLimit(maxWSMessageBytes)
 			err = s.readConnection(ctx, connection)
 			connection.CloseNow()
@@ -245,7 +297,9 @@ func (s *binanceSubscription) run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.publishState(domainmarket.StreamStale, attempt+1, "connection_lost")
+		if endpoint.reportsStatus {
+			s.publishState(domainmarket.StreamStale, attempt+1, "connection_lost")
+		}
 		backoff := reconnectBackoff(attempt)
 		timer := time.NewTimer(backoff)
 		select {
@@ -295,7 +349,9 @@ func (s *binanceSubscription) readConnection(ctx context.Context, connection *we
 		}
 	}()
 	for {
-		_, payload, err := connection.Read(sessionCtx)
+		readCtx, stopRead := context.WithTimeout(sessionCtx, streamReadIdleTimeout)
+		_, payload, err := connection.Read(readCtx)
+		stopRead()
 		if err != nil {
 			select {
 			case pingErr := <-pingErrors:
@@ -318,13 +374,19 @@ func (s *binanceSubscription) handleMessage(payload []byte) error {
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return err
 	}
-	var header struct {
-		Event string `json:"e"`
-	}
+	// Decode the discriminator by its exact JSON key. Binance also sends an
+	// uppercase "E" timestamp; decoding into a struct that only has `json:"e"`
+	// makes encoding/json match "E" case-insensitively and reject the number as
+	// a string, silently dropping every live frame.
+	var header map[string]json.RawMessage
 	if err := json.Unmarshal(envelope.Data, &header); err != nil {
 		return err
 	}
-	switch header.Event {
+	var event string
+	if err := json.Unmarshal(header["e"], &event); err != nil {
+		return err
+	}
+	switch event {
 	case "kline":
 		update, err := normalizeKlineEvent(envelope.Data)
 		if err != nil {
@@ -394,20 +456,24 @@ func normalizeRESTCandle(key domainmarket.MarketKey, row []json.RawMessage) (dom
 
 func normalizeKlineEvent(payload []byte) (domainmarket.KlineUpdate, error) {
 	var event struct {
-		Event  string `json:"e"`
-		Symbol string `json:"s"`
-		Kline  struct {
-			OpenTime  int64  `json:"t"`
-			CloseTime int64  `json:"T"`
-			Symbol    string `json:"s"`
-			Interval  string `json:"i"`
-			Open      string `json:"o"`
-			Close     string `json:"c"`
-			High      string `json:"h"`
-			Low       string `json:"l"`
-			Volume    string `json:"v"`
-			Trades    int    `json:"n"`
-			Final     bool   `json:"x"`
+		Event     string `json:"e"`
+		EventTime int64  `json:"E"`
+		Symbol    string `json:"s"`
+		Kline     struct {
+			OpenTime           int64  `json:"t"`
+			CloseTime          int64  `json:"T"`
+			Symbol             string `json:"s"`
+			Interval           string `json:"i"`
+			FirstTradeID       int64  `json:"f"`
+			LastTradeID        int64  `json:"L"`
+			Open               string `json:"o"`
+			Close              string `json:"c"`
+			High               string `json:"h"`
+			Low                string `json:"l"`
+			Volume             string `json:"v"`
+			TakerBuyBaseVolume string `json:"V"`
+			Trades             int    `json:"n"`
+			Final              bool   `json:"x"`
 		} `json:"k"`
 	}
 	if err := json.Unmarshal(payload, &event); err != nil {

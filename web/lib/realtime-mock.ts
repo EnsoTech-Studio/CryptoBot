@@ -20,14 +20,14 @@ export const MOCK_MARKET_PAIRS: MarketPair[] = [
     symbol: "BTCUSDT",
     base_asset: "BTC",
     quote_asset: "USDT",
-    timeframes: ["1m", "5m", "15m", "1h", "4h"],
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"],
   },
   {
     provider: "binance_usdm",
     symbol: "ETHUSDT",
     base_asset: "ETH",
     quote_asset: "USDT",
-    timeframes: ["1m", "5m", "15m", "1h", "4h"],
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"],
   },
 ];
 
@@ -37,6 +37,7 @@ const timeframeMinutes: Record<string, number> = {
   "15m": 15,
   "1h": 60,
   "4h": 240,
+  "1d": 1_440,
 };
 
 const referenceClose: Record<string, number> = {
@@ -45,6 +46,7 @@ const referenceClose: Record<string, number> = {
   "15m": 69_342.18,
   "1h": 69_342.18,
   "4h": 69_214.82,
+  "1d": 69_214.82,
 };
 
 const referenceMovingAverage: Record<string, number> = {
@@ -70,6 +72,7 @@ export function createMockPanelData(
     "15m": 3_350,
     "1h": 8_200,
     "4h": 10_400,
+    "1d": 18_000,
   };
   const marketScale = isBitcoin ? 1 : 0.055;
   const displayRange = (displayRangeByTimeframe[timeframe] ?? 520) * marketScale;

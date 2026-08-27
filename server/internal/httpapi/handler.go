@@ -472,9 +472,10 @@ func (h *Handler) chartOverlays(w http.ResponseWriter, r *http.Request) {
 	if checkpoint.LastSourceSequence != nil {
 		sequence = *checkpoint.LastSourceSequence
 	}
+	key := marketKey(q(r, "provider", defaultProvider), q(r, "symbol", defaultSymbol), q(r, "timeframe", "5m"))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"series": []any{}, "markers": []any{}, "seq": sequence,
-		"last_closed_at": checkpoint.LastClosedAt, "is_stale": checkpoint.IsStale,
+		"last_closed_at": checkpoint.LastClosedAt, "is_stale": marketCheckpointStale(checkpoint, string(key.Timeframe), time.Now().UTC()),
 	})
 }
 
@@ -494,9 +495,17 @@ func (h *Handler) marketStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"provider": key.Provider, "symbol": key.Symbol, "timeframe": key.Timeframe,
-		"stale": checkpoint.IsStale, "last_closed_at": checkpoint.LastClosedAt,
+		"stale": marketCheckpointStale(checkpoint, string(key.Timeframe), time.Now().UTC()), "last_closed_at": checkpoint.LastClosedAt,
 		"last_sequence": checkpoint.LastSourceSequence, "reconnect_count": checkpoint.ReconnectCount,
 	})
+}
+
+func marketCheckpointStale(checkpoint domainmarket.Checkpoint, timeframe string, now time.Time) bool {
+	if checkpoint.IsStale || checkpoint.LastClosedAt == nil {
+		return true
+	}
+	interval := marketTimeframeDuration(timeframe)
+	return now.Sub(*checkpoint.LastClosedAt) > 2*interval+time.Minute
 }
 
 func marketKey(provider, symbol, timeframe string) domainmarket.MarketKey {

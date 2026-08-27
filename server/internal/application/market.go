@@ -87,18 +87,42 @@ func (s *MarketService) Start(ctx context.Context) (domainmarket.Subscription, e
 	runtime := &marketRuntime{cancel: cancel, provider: providerSubscription, done: make(chan struct{})}
 	go func() {
 		defer close(runtime.done)
-		for {
-			select {
-			case <-runtimeCtx.Done():
-				return
-			case update := <-updates:
-				s.handleKline(runtimeCtx, update)
-			case quote := <-quotes:
-				s.handleBBO(quote)
-			case status := <-statuses:
-				s.handleStatus(runtimeCtx, status)
+		var handlers sync.WaitGroup
+		handlers.Add(3)
+		go func() {
+			defer handlers.Done()
+			for {
+				select {
+				case <-runtimeCtx.Done():
+					return
+				case update := <-updates:
+					s.handleKline(runtimeCtx, update)
+				}
 			}
-		}
+		}()
+		go func() {
+			defer handlers.Done()
+			for {
+				select {
+				case <-runtimeCtx.Done():
+					return
+				case quote := <-quotes:
+					s.handleBBO(quote)
+				}
+			}
+		}()
+		go func() {
+			defer handlers.Done()
+			for {
+				select {
+				case <-runtimeCtx.Done():
+					return
+				case status := <-statuses:
+					s.handleStatus(runtimeCtx, status)
+				}
+			}
+		}()
+		handlers.Wait()
 	}()
 	return runtime, nil
 }
@@ -132,8 +156,7 @@ func (s *MarketService) handleBBO(quote domainmarket.BBO) {
 	s.mu.Lock()
 	history := append(s.quoteByPair[pair], quote)
 	if len(history) > s.quoteLimit {
-		copy(history, history[len(history)-s.quoteLimit:])
-		history = history[:s.quoteLimit]
+		history = history[len(history)-s.quoteLimit:]
 	}
 	s.quoteByPair[pair] = history
 	s.mu.Unlock()

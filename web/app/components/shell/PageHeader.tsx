@@ -42,7 +42,7 @@ export function PageHeader({ navigationOpen, onOpenNavigation, menuButtonRef }: 
           <summary aria-label="Trợ giúp"><Icon name="help" /></summary>
           <div>
             <strong>Trạng thái dữ liệu</strong>
-            <p>Dữ liệu thật được ưu tiên. Khi market backend không khả dụng, giao diện chuyển sang bộ dữ liệu mô phỏng xác định và luôn hiển thị nhãn Mock.</p>
+            <p>Biểu đồ dùng dữ liệu thật từ market backend. Nếu nguồn không khả dụng, giao diện báo lỗi rõ ràng và không tự thay bằng dữ liệu mô phỏng.</p>
           </div>
         </details>
         <span className={styles.headerIcon} role="img" aria-label="Không có thông báo mới" title="Không có thông báo mới">

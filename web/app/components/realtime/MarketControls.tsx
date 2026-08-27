@@ -14,29 +14,15 @@ export function MarketControls() {
     selectMarket,
     retryMarketPairs,
     availableTimeframes,
-    panels,
-    focusIndex,
-    setFocusIndex,
-    panelHandlers,
     realtimeEnabled,
     setRealtimeEnabled,
     streamLabel,
     dataMode,
   } = useWorkspace();
   const selectedKey = marketKey(selectedMarket);
-  const activeTimeframe = panels[focusIndex]?.timeframe ?? availableTimeframes[0];
   const pairOptions = marketPairs.length > 0
     ? marketPairs
     : [{ ...selectedMarket, base_asset: selectedMarket.symbol, quote_asset: "", timeframes: availableTimeframes }];
-
-  function chooseTimeframe(timeframe: string) {
-    const existingIndex = panels.findIndex((panel) => panel.timeframe === timeframe);
-    if (existingIndex >= 0) {
-      setFocusIndex(existingIndex);
-      return;
-    }
-    panelHandlers(focusIndex).onTimeframe(timeframe);
-  }
 
   return (
     <div className={styles.controls}>
@@ -61,23 +47,6 @@ export function MarketControls() {
         </span>
       </label>
 
-      <div className={`${styles.controlGroup} ${styles.timeframeGroup}`}>
-        <span className={styles.controlLabel}>Khung thời gian</span>
-        <div className={styles.timeframes} role="group" aria-label="Chọn khung thời gian đang tập trung">
-          {availableTimeframes.map((timeframe) => (
-            <button
-              key={timeframe}
-              type="button"
-              className={activeTimeframe === timeframe ? styles.timeframeActive : ""}
-              aria-pressed={activeTimeframe === timeframe}
-              onClick={() => chooseTimeframe(timeframe)}
-            >
-              {timeframe}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className={`${styles.controlGroup} ${styles.realtimeControl}`}>
         <span className={styles.controlLabel}>Realtime</span>
         <div className={styles.realtimeRow}>
@@ -91,7 +60,7 @@ export function MarketControls() {
             title={dataMode === "mock" ? "Thử kết nối lại market backend" : undefined}
           >
             <StatusDot tone={streamLabel === "Live" || streamLabel === "Mock" ? "live" : streamLabel === "Syncing" ? "syncing" : streamLabel === "Paused" ? "neutral" : "error"} />
-            {marketPairsState === "loading" ? "Đang thử kết nối" : !realtimeEnabled ? "Đã tạm dừng" : dataMode === "mock" ? "Đang nhận dữ liệu" : streamLabel === "Live" ? "Đang nhận dữ liệu" : streamLabel}
+            {marketPairsState === "loading" ? "Đang thử kết nối" : !realtimeEnabled ? "Đã tạm dừng" : dataMode === "mock" ? "Mock" : streamLabel === "Live" ? "Đang nhận dữ liệu" : streamLabel}
           </button>
         </div>
       </div>

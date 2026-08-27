@@ -8,7 +8,16 @@ import { Icon } from "../ui/Icon";
 import styles from "./realtime.module.css";
 
 export function RealtimeChartCard({ panel, index }: { panel: Panel; index: number }) {
-  const { selectedMarket, focusIndex, setFocusIndex, loadHistory, realtimeEnabled, dataMode } = useWorkspace();
+  const {
+    selectedMarket,
+    availableTimeframes,
+    panelHandlers,
+    focusIndex,
+    setFocusIndex,
+    loadHistory,
+    realtimeEnabled,
+    dataMode,
+  } = useWorkspace();
   const lastCandle = panel.candles.at(-1);
   const priceChange = dataMode === "mock"
     ? panel.timeframe === "1h" ? -0.15 : 0.28
@@ -25,21 +34,36 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
   return (
     <article className={`${styles.chartCard} ${focusIndex === index ? styles.chartCardFocused : ""}`}>
       <header className={styles.chartHeader}>
-        <button
-          type="button"
-          className={styles.chartIdentity}
-          onClick={() => setFocusIndex(index)}
-          aria-label={`Tập trung biểu đồ ${selectedMarket.symbol} ${panel.timeframe}`}
-          aria-pressed={focusIndex === index}
-        >
-          <span className={styles.symbol}>{selectedMarket.symbol}</span>
-          <span className={styles.chartSeparator}>·</span>
-          <span className={styles.timeframeText}>{panel.timeframe}</span>
-          <span className={styles.liveState} data-state={panel.liveState}>
-            <i aria-hidden="true" />
-            <span className={styles.srStatus}>{panel.liveState === "live" ? "Live" : panel.liveState === "connecting" ? "Syncing" : panel.liveState === "paused" ? "Paused" : "Stale"}</span>
-          </span>
-        </button>
+        <div className={styles.chartIdentityBlock}>
+          <button
+            type="button"
+            className={styles.chartIdentity}
+            onClick={() => setFocusIndex(index)}
+            aria-label={`Tập trung biểu đồ ${selectedMarket.symbol} ${panel.timeframe}`}
+            aria-pressed={focusIndex === index}
+          >
+            <span className={styles.symbol}>{selectedMarket.symbol}</span>
+            <span className={styles.liveState} data-state={panel.liveState}>
+              <i aria-hidden="true" />
+              <span className={styles.srStatus}>{panel.liveState === "live" ? "Live" : panel.liveState === "connecting" ? "Syncing" : panel.liveState === "paused" ? "Paused" : "Stale"}</span>
+            </span>
+          </button>
+          <label className={styles.chartTimeframeControl}>
+            <span>Timeframe</span>
+            <select
+              value={panel.timeframe}
+              aria-label={`Timeframe biểu đồ ${index + 1}`}
+              onChange={(event) => {
+                setFocusIndex(index);
+                panelHandlers(index).onTimeframe(event.target.value);
+              }}
+            >
+              {availableTimeframes.map((timeframe) => (
+                <option key={timeframe} value={timeframe}>{timeframe}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className={styles.quote}>
           <strong>{lastCandle ? formatPrice(lastCandle.close) : "—"}</strong>
           <span className={priceChange == null || priceChange >= 0 ? styles.positive : styles.negative}>

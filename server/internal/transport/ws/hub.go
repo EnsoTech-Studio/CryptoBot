@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	clientBuffer = 256
-	historyLimit = 512
-	maxFrameSize = 1 << 20
+	clientBuffer       = 256
+	historyLimit       = 512
+	maxFrameSize       = 1 << 20
+	bboPublishInterval = 100 * time.Millisecond
 )
 
 type outboundFrame struct {
@@ -37,6 +38,7 @@ type MemoryHub struct {
 	clients        map[string]*hubClient
 	history        map[string][]outboundFrame
 	sequences      map[string]uint64
+	lastBBOPublish map[string]time.Time
 	allowedOrigins map[string]struct{}
 }
 
@@ -50,7 +52,8 @@ func NewMemoryHub(allowedOrigins []string) *MemoryHub {
 	}
 	return &MemoryHub{
 		clients: make(map[string]*hubClient), history: make(map[string][]outboundFrame),
-		sequences: make(map[string]uint64), allowedOrigins: origins,
+		sequences: make(map[string]uint64), lastBBOPublish: make(map[string]time.Time),
+		allowedOrigins: origins,
 	}
 }
 
@@ -200,6 +203,15 @@ func (h *MemoryHub) PublishBBO(quote domainmarket.BBO) {
 	keys := h.matchingKeys(quote.Provider, quote.Symbol, "")
 	h.mu.RUnlock()
 	for _, key := range keys {
+		h.mu.Lock()
+		lastPublished := h.lastBBOPublish[key]
+		if !lastPublished.IsZero() && !quote.EventTime.Before(lastPublished) &&
+			quote.EventTime.Sub(lastPublished) < bboPublishInterval {
+			h.mu.Unlock()
+			continue
+		}
+		h.lastBBOPublish[key] = quote.EventTime
+		h.mu.Unlock()
 		h.publish(key, map[string]any{
 			"type": "bbo", "key": key, "event_time": quote.EventTime,
 			"bid": quote.Bid.String(), "bid_qty": quote.BidQty.String(),

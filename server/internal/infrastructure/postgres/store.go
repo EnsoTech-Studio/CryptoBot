@@ -31,12 +31,9 @@ func (s *Store) ListPairs(ctx context.Context) ([]domainmarket.Pair, error) {
 	rows, err := s.pool.Query(
 		ctx,
 		`SELECT p.provider,p.symbol,p.base,p.quote,
-		        COALESCE(array_agg(DISTINCT c.timeframe::text ORDER BY c.timeframe::text)
-		                 FILTER (WHERE c.timeframe IS NOT NULL),ARRAY[]::text[])
+		        ARRAY['1m','5m','15m','1h','4h','1d']::text[]
 		 FROM market_pairs p
-		 LEFT JOIN candles c ON c.provider=p.provider AND c.symbol=p.symbol
 		 WHERE p.is_active
-		 GROUP BY p.provider,p.symbol,p.base,p.quote
 		 ORDER BY p.provider,p.symbol`,
 	)
 	if err != nil {
