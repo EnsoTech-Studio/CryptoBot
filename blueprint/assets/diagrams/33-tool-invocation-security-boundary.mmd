@@ -1,0 +1,29 @@
+flowchart TB
+    Agent["Logical Agent<br/>untrusted model proposal"]
+    Request["ToolInvocation v1<br/>tool/version/input schema<br/>principal/run/correlation/deadline<br/>idempotency key and remaining budget"]
+    Registry["ToolRegistry<br/>resolve declared typed handler"]
+    Permission["AgentPermissionPolicy<br/>agent role + current state + principal scope"]
+    Budget["BudgetManager<br/>calls, tokens, time, repair attempts"]
+    Schema["Schema validator<br/>input/output contracts"]
+    Domain["Python application port<br/>deterministic domain service"]
+    Write["Idempotent domain write<br/>or read-only query"]
+    Evidence["Result envelope v1<br/>data/error/evidence_ref/tool version"]
+    Audit["Audit log, metrics and trace<br/>redacted input/output hashes"]
+
+    Forbidden["Never exposed to an agent<br/>generic shell, SQL, HTTP, filesystem,<br/>Docker, secrets, fixture mutation,<br/>policy/budget mutation, approve/publish"]
+
+    Agent --> Request --> Registry --> Permission --> Budget --> Schema --> Domain --> Write --> Evidence
+    Registry --> Audit
+    Permission --> Audit
+    Budget --> Audit
+    Domain --> Audit
+    Forbidden -.- Agent
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef control fill:#e8f0f4,stroke:#315f7d,color:#2a251f,stroke-width:1.5px;
+    classDef domain fill:#faf9f6,stroke:#6b6258,color:#2a251f;
+    classDef denied fill:#f5e8e6,stroke:#8a4545,color:#2a251f,stroke-width:1.5px;
+    class Agent agent;
+    class Request,Registry,Permission,Budget,Schema,Evidence,Audit control;
+    class Domain,Write domain;
+    class Forbidden denied;

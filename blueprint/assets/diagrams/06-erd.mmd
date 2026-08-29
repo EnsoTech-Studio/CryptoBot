@@ -1,10 +1,17 @@
 erDiagram
     USERS ||--|| USER_QUOTAS : limited_by
     USERS ||--o{ STRATEGY_DRAFTS : authors
+    USERS ||--o{ AGENT_RUNS : starts
     USERS ||--o{ SEARCH_RUNS : owns
     USERS ||--o{ EXPERIMENTS : owns
 
     STRATEGY_DRAFTS ||--o| STRATEGY_VERSIONS : approved_as
+    STRATEGY_DRAFTS ||--o{ AGENT_RUNS : progresses_through
+    AGENT_RUNS ||--o{ AGENT_ATTEMPTS : records
+    AGENT_RUNS ||--o{ STRATEGY_ARTIFACTS : creates
+    STRATEGY_ARTIFACTS ||--o{ SANDBOX_RUNS : tested_by
+    SANDBOX_RUNS ||--o{ SANDBOX_REPORTS : emits
+    STRATEGY_ARTIFACTS ||--o| STRATEGY_VERSIONS : approved_as
     STRATEGY_DEFINITIONS ||--o{ STRATEGY_VERSIONS : versions
     STRATEGY_VERSIONS ||--o{ STRATEGY_COMPONENTS : contains
     AI_MODEL_VERSIONS ||--o{ STRATEGY_DRAFTS : generated_with

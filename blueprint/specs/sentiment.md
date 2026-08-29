@@ -1,5 +1,8 @@
 # Đặc tả: Sentiment Analysis (Model Adapter, Provenance, Degradation)
 
+**Canonical ownership:** Python `research` orchestration validate/persist sentiment;
+internal AI Adapter chỉ structured inference, không ghi domain database. Go chỉ edge proxy.
+
 ## Mô tả
 
 Module bọc mô hình phân tích cảm xúc thành một port, ghi kết quả vào `sentiment_results`, và **kết thúc ở đó**. Nó không gọi strategy, không biết Leaderboard tồn tại, không biết ai sẽ đọc kết quả của nó. Consumer duy nhất là `NewsService` — qua database, qua repository port.
@@ -186,7 +189,7 @@ Rule khớp đề bài §30: avg sentiment 1 giờ > 0.7 → BUY, < −0.7 → S
 
 `w.model_version` đi vào `evidence` → được ghi vào `run_signals.child_signals` → trả lời được "tín hiệu BUY này do model nào sinh ra" ba tháng sau, cùng cơ chế provenance với strategy version (`design.md` §11.8).
 
-Bốn thứ strategy này **không** có: DB session, HTTP client, nến sau `index`, và giá trị indicator sau `index` (`ctx.indicators` là `IndicatorView` — `design.md` §5.2.1). Hệ quả kiểm chứng được: Go plugin `news_sentiment.go` build và test được trong môi trường không có PostgreSQL và không có network — cùng tiêu chuẩn với `rsi.go` (`design.md` §5.2, `server/tests/architecture/strategy_purity_test.go`).
+Bốn thứ strategy này **không** có: DB session, HTTP client, nến sau `index`, và giá trị indicator sau `index` (`ctx.indicators` là `IndicatorView` — `design.md` §5.2.1). Hệ quả kiểm chứng được: Python plugin `app/domain/strategy/plugins/news_sentiment.py` import và chạy fixture test trong môi trường không có PostgreSQL/network — cùng purity gate với RSI (`tests/test_news_sentiment.py`, `tests/test_indicators_plugins.py`).
 
 ### E. Đổi model — vì sao kết quả cũ không bị ghi đè
 
@@ -210,7 +213,7 @@ Không có `UPDATE` nào trong module này. Quy trình đổi model:
 
 ### F. `POST /api/v1/ai/predict` — endpoint tương thích scaffold
 
-Hiện tại `ai/app/services/predictor.py` là stub của Python AI adapter: `Predictor.predict` bỏ argument và trả cứng `Prediction(label="neutral", score=0.5, model="stub-v0")`. Phase 5 thay bằng adapter thật; Go domain contract không đổi (`design.md` §12.1).
+Hiện tại `ai/app/services/predictor.py` là stub của internal AI adapter: `Predictor.predict` bỏ argument và trả cứng `Prediction(label="neutral", score=0.5, model="stub-v0")`. Phase 5 thay bằng adapter thật; Python News/Sentiment application contract không đổi và model không ghi domain database (`design.md` §12.1).
 
 Contract giữ nguyên để không phá client đang có: `PredictRequest.text` 1–10.000 ký tự, whitespace-only → `422`. Go proxy cap body 1 MiB, timeout 30 s, **auth bắt buộc**, rate limit **20/phút/principal** — vì mỗi call là một model inference, và endpoint inference không auth là DoS vector hiển nhiên (`design.md` §7.3, §8.2).
 
@@ -316,7 +319,7 @@ Dùng index `idx_sentiment_agg (model_version, analyzed_at DESC)`.
 - [ ] AC-09: 1 tin `POSITIVE score=0.95` trong cửa sổ, `min_items=3` → `Signal.action = 'HOLD'`, `evidence.reason='insufficient_sentiment_data'`.
 - [ ] AC-10: `item_count=0` → `ctx.news_sentiment is None` (không phải window `avg_score=0`); strategy trả HOLD.
 - [ ] AC-11: Fixture 6 tin (4 POSITIVE 0.8, 1 NEGATIVE 0.6, 1 NEUTRAL 0.9) → `avg_score = (4×0.8 − 0.6 + 0)/6 = 0.4333`; `buy_above=0.7` → HOLD; `buy_above=0.4` → BUY. Kết quả tính tay khớp chính xác.
-- [ ] AC-12: build/test Go plugin `server/internal/domain/strategy/plugins/news_sentiment.go` trong môi trường **không có** PostgreSQL và **không có** network → pass (`strategy_purity_test.go`).
+- [ ] AC-12: build/test Python plugin `app/domain/strategy/plugins/news_sentiment.py` trong môi trường **không có** PostgreSQL và **không có** network -> pass (`strategy_purity_test.py`).
 - [ ] AC-13: Backtest 20.000 nến với `NewsSentimentStrategy` → đếm số query tới `sentiment_results` **≤ 2** (precompute), không phải 20.000.
 - [ ] AC-14: Anonymous gọi `POST /api/v1/ai/predict` → `401`; RESEARCHER gọi 21 lần/phút → lần 21 trả `429` + `Retry-After`; model down → `502 sentiment_unavailable`, response **không** chứa tên file model hay stack trace.
 - [ ] AC-15: Thay `SentimentModelAdapter` bằng fixture adapter trả nhãn từ file JSON → toàn bộ `NewsSentimentStrategy`, backtest, evaluation, leaderboard chạy với **0 dòng** thay đổi ngoài dòng wiring adapter (`design.md` §11.6).

@@ -1,0 +1,37 @@
+flowchart TB
+    Trigger["Domain trigger<br/>authoring, extraction, discovery or insight"]
+    Orchestrator["AgentOrchestrator<br/>persisted state machine, idempotency,<br/>resume, cancellation and event progress"]
+
+    subgraph Control["Shared deterministic control plane"]
+        Permission["AgentPermissionPolicy<br/>principal + role + state allowlist"]
+        Budget["AgentBudgetManager<br/>tool, token, time and repair budgets"]
+        Tools["ToolRegistry<br/>declared name/version/schema/handler only"]
+        Audit["Audit, metrics and trace<br/>every model/tool invocation"]
+        Permission --> Budget --> Tools --> Audit
+    end
+
+    Roles["Six logical role profiles in Python research<br/><br/>P0 StrategyDesignerAgent<br/>P0 StrategyImplementationAgent<br/>P0 StrategyRepairAgent<br/>P1 NewsExtractionAgent<br/>P2 CandidateDiscoveryAgent - optional/default-off<br/>P2 MarketInsightAgent - optional/default-off"]
+    Services["Typed deterministic backing services<br/><br/>Safe source/document service<br/>Spec validator, Registry, compiler, policy checker<br/>Isolated Sandbox Runner + approval/publisher<br/>Search queue, evaluator, ranking, cost estimator<br/>Readability, Quality Gate, news validation/cache<br/>Market/indicator/news/experiment query ports"]
+    State[("Python state/evidence store<br/>drafts, runs, attempts, artifacts,<br/>sandbox reports and approvals")]
+    ModelGateway["ModelGateway<br/>versioned structured inference"]
+    AI["Internal AI/LLM Adapter<br/>no workflow state or domain writes"]
+    Reviewer["Human reviewer"]
+    Approval["ApprovalService + StrategyPublisher<br/>exact reviewed hashes only"]
+    Registry["Python Strategy Registry<br/>approved immutable version only"]
+
+    Trigger --> Orchestrator --> Permission
+    Tools --> Roles --> Services --> State
+    Orchestrator --> ModelGateway --> AI
+    Orchestrator --> State
+    State --> Reviewer --> Approval --> Registry
+
+    classDef control fill:#e8f0f4,stroke:#315f7d,color:#2a251f,stroke-width:1.5px;
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef service fill:#faf9f6,stroke:#6b6258,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f,stroke-width:1.5px;
+    classDef human fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Orchestrator,Permission,Budget,Tools,Audit,ModelGateway control;
+    class Roles agent;
+    class Services,State service;
+    class Approval,Registry gate;
+    class Reviewer human;

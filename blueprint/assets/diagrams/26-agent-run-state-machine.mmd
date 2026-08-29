@@ -1,0 +1,38 @@
+flowchart TB
+    Draft["DRAFT_CREATED<br/>owner and idempotency key persisted"]
+    Source["SOURCE_READY<br/>text or safe-fetched document hashed"]
+    SpecGen["SPEC_GENERATING<br/>StrategyDesignerAgent"]
+    SpecValid["SPEC_VALIDATING<br/>schema, semantic and causal gates"]
+    CodeGen["CODE_GENERATING<br/>StrategyImplementationAgent"]
+    Policy["POLICY_CHECKING<br/>AST/import/API allowlist"]
+    Sandbox["SANDBOX_TESTING<br/>isolated fixtures and contract tests"]
+    Pass{"Tests pass?"}
+    Budget{"Repair budget remains?"}
+    Repair["REPAIRING<br/>StrategyRepairAgent creates bounded patch"]
+    Failed["FAILED<br/>terminal reason and evidence persisted"]
+    Review["REVIEW_REQUIRED<br/>reviewed spec/artifact/report hashes frozen"]
+    Human{"Human decision"}
+    Approved["APPROVED<br/>decision bound to exact hashes"]
+    Rejected["REJECTED<br/>Registry visibility denied"]
+    Published["PUBLISHED<br/>immutable StrategyVersion<br/>idempotent Registry admission"]
+
+    Draft --> Source --> SpecGen --> SpecValid
+    SpecValid -->|valid| CodeGen --> Policy
+    SpecValid -->|invalid, repairable| Budget
+    Policy -->|pass| Sandbox --> Pass
+    Policy -->|fail| Budget
+    Pass -->|yes| Review --> Human
+    Pass -->|no| Budget
+    Budget -->|yes| Repair --> CodeGen
+    Budget -->|no| Failed
+    Human -->|approve| Approved --> Published
+    Human -->|reject| Rejected
+
+    classDef work fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f,stroke-width:1.5px;
+    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Draft,Source,SpecValid,Policy,Sandbox,Review,Approved,Published work;
+    class SpecGen,CodeGen,Repair agent;
+    class Pass,Budget,Human gate;
+    class Failed,Rejected stop;

@@ -1,6 +1,27 @@
 # Crypto Strategy Lab — Project Proposal
 
-> Phần 1 / Blueprint • Tài liệu đề xuất • Phiên bản 1.3
+> Phần 1 / Blueprint • Tài liệu đề xuất • Phiên bản 1.5
+
+## Quyết định kiến trúc canonical v1.5
+
+Blueprint chỉ có một đường ownership:
+
+```text
+Browser -> Go Public API / Market Gateway
+  -> signed internal command/query + normalized market data
+Python Research API / Worker
+  -> Strategy, Backtest, Search, Ranking, News, Agent Platform
+  -> internal AI Adapter for structured inference only
+
+Python persisted outbox -> Go internal event endpoint -> Browser WSS
+```
+
+- Go chỉ sở hữu API/Edge/Auth/Quota và Market Data.
+- Python `research` sở hữu toàn bộ research domain và domain tables.
+- AI Adapter không giữ workflow state, không ghi database, không approve/publish.
+- Sáu agent là logical role trong Python, không phải microservice.
+- DSL-backed authoring là MVP; custom Python/SMC đầy đủ/Candidate Discovery/Market Insight
+  là advanced/default-off theo các default ở `specs/agent-architecture.md`.
 
 ## 1. Vấn đề
 
@@ -91,7 +112,7 @@ Ba nhãn này quan trọng vì trộn chúng lại sẽ làm sai ý nghĩa của
 
 | Chỉ tiêu | Nguồn | Mục tiêu | Điều kiện đo riêng |
 | --- | --- | --- | --- |
-| Số file phải sửa khi thêm `MACDStrategy` | **[SRC]** §41 | **≤ 2 file mới + 0 file core** | `git diff --stat` giữa hai commit; "core" = Go `StrategyRegistry`, backtest/evaluator/ranking, Go API, schema, UI |
+| Số file phải sửa khi thêm `MACDStrategy` | **[SRC]** §41 | **≤ 2 file mới + 0 file core** | `git diff --stat` giữa hai commit; "core" = Python `Registry`, backtest/evaluator/ranking, Go API, schema, UI |
 | Số file phải sửa khi đổi Random → Domain-Guided Search | **[SRC]** §42 | **1 file mới implement `CandidateGenerator`**, 0 file Backtester | `git diff --stat`; config đổi 1 dòng không tính là file core |
 | Số file frontend phải sửa khi thêm `OKXAdapter` | **[SRC]** §40.3 | **0** | `git diff --stat -- web/` rỗng |
 | Độ trễ Binance candle → UI (p95) | **[NFR]** cho §32.3 | **< 1.5 s** | Đo từ `kline.T` (close time trong payload Binance) tới timestamp client nhận frame WS; đồng hồ client và server sync qua NTP, sai số ghi nhận < 50 ms; 20 nến `1m` liên tiếp |
@@ -161,13 +182,28 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 
 **News & Sentiment**
 
-- News provider adapter (RSS + News API) trả về `Item` chuẩn hoá; crawler **không** biết gì về ML.
-- Sentiment service riêng (FastAPI hiện có): `POSITIVE | NEUTRAL | NEGATIVE` + score + `model_version`.
+- Python News provider adapter (RSS/API/HTML) trả `Item` chuẩn hoá; Go không parse article.
+- HTML path: Safe Fetch -> Readability -> Quality Gate -> conditional `NewsExtractionAgent`
+  trên sanitized HTML -> validate/cache -> tagging -> sentiment.
+- Sentiment orchestration ở Python `research`; AI Adapter trả `POSITIVE | NEUTRAL | NEGATIVE`
+  + score + `model_version`, không ghi DB.
+
+**AI Strategy Authoring `[SRC-ADD]`**
+
+- Natural language hoặc approved URL tạo draft `StrategySpec` để user review trước code.
+- Deterministic Python compiler là MVP; artifact qua AST/import policy và isolated sandbox.
+- Structured failure đi vào `StrategyRepairAgent`, tối đa 3 attempt; pass chỉ đến
+  `REVIEW_REQUIRED`, human mới approve/publish.
+- Exact source/spec/artifact/compiler/model/prompt/policy/sandbox/approval provenance.
 
 **Nền tảng & Vận hành**
 
-- **Code artifacts — 3 image**: Next.js web, Go Strategy Service, Python AI inference. **Runtime workloads — 4 loại**: `web`, `api`, `worker` (dùng lại image Go, khác entrypoint), và `ai`. Thêm PostgreSQL. Phân biệt artifact/workload ở `design.md` §1.3.1.
-- **Backtest Worker là kiến trúc bắt buộc**, không phải tính năng tuỳ chọn: `POST /experiments` **luôn** async (ADR-006) nên phải có worker consume job. Có từ **Phase 3** với 1 replica; scale lên N replica ở Phase 6 chỉ là lúc **đo để chứng minh** (demo S10), không phải lúc mới được phép scale.
+- **Code artifacts — 4 image**: Next.js web, Go API/Market, Python Research, internal AI inference.
+  **Runtime workloads — 5 loại**: `web`, `api`, `research-api`, `research-worker` (cùng
+  Research image/package), `ai`. Thêm PostgreSQL.
+- **Python Research Worker là kiến trúc bắt buộc**, không phải tính năng tuỳ chọn:
+  `POST /experiments` luôn async nên phải có worker consume job. Có từ Phase 3 với 1 replica;
+  scale N replica không đổi API/schema/runtime contract.
 - **Redis là tuỳ chọn có điều kiện**: chỉ thêm ở Phase 6 nếu benchmark thoả điều kiện ở `design.md` §12.0. Không thêm cũng là một kết quả hợp lệ.
 - Job queue cho backtest: bảng `backtest_jobs` trong PostgreSQL + `SELECT ... FOR UPDATE SKIP LOCKED` + `lease_token`, không cần broker.
 - Transactional outbox (`domain_events` + `event_consumptions`) cho event cross-process giữa Worker và Evaluator/Ranking (`design.md` §5.7).
@@ -180,7 +216,7 @@ Phân vai trò này là lý do có **RBAC 3 role** (§6) chứ không phải h�
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | **Giao dịch tiền thật, đặt lệnh, lưu API key sàn**    | Ranh giới nhóm tự đặt (**[PD]**, §4.3): hệ thống là simulation-only. Không có custody, không có order. |
 | Tư vấn đầu tư / khuyến nghị mua bán                   | Không phải mục tiêu đồ án; mọi output là kết quả mô phỏng.                                       |
-| Genetic Algorithm, Bayesian Optimization, RL, LLM-generated strategy | Phần mở rộng của đề bài. Kiến trúc *cho phép* cắm vào (`CandidateGenerator`) nhưng không implement. |
+| Genetic Algorithm, Bayesian Optimization, RL, Agent-based Candidate Discovery | Extension. Random Search vẫn là MVP; Agent Discovery là P2/default-off. DSL-backed LLM authoring không nằm ở dòng out-of-scope này vì `[SRC-ADD]` đã đưa nó vào scope. |
 | SMC, Wyckoff đầy đủ                                   | Đề bài không bắt buộc. Chỉ cần chứng minh kiến trúc admit được — có `strategy family: structure` sẵn. |
 | Kafka, RabbitMQ, CQRS, Event Sourcing, microservice per module | Đề bài nói rõ: **không cộng điểm vì dùng công nghệ phức tạp**. Chỉ thêm khi có vấn đề kiến trúc cụ thể. |
 | Multi-exchange (OKX/Bybit) thật                       | Chỉ chứng minh bằng port `MarketDataProvider` + 1 adapter fixture trong test.                     |
@@ -230,6 +266,13 @@ Bảng này để không ai — kể cả nhóm — nhầm điều nhóm tự qu
 | **`code_fingerprint` fail-fast** | **[PD]** | §36 yêu cầu version; fingerprint là cơ chế nhóm chọn để version không chỉ là quy ước (ADR-009) |
 | **Không fake dữ liệu khi dependency down** | **[PD]** | ADR-013. Đề bài không nói; nhóm chọn vì nhãn giả đi vào kết quả Leaderboard mà không có triệu chứng |
 | **Python Strategy Platform (canonical, float64)** | **[PD]** | Strategy, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging và sentiment/AI orchestration thuộc backend FastAPI riêng (service `research`, codebase `app/` ở repo root), dùng `float64`; Go giữ realtime market/edge/auth/quota. Đảo ngược ADR-011 — không phải yêu cầu đề bài. Chi tiết `specs/python-research.md` |
+| Natural language/URL -> draft StrategySpec trước code | **[SRC-ADD]** | `note.txt`; `specs/strategy-authoring.md`, sơ đồ 21, 27 |
+| Generate Python strategy artifact + repair loop | **[SRC-ADD]** | `note.txt`; deterministic compiler, sandbox, max 3 repair attempts, human approval |
+| Exact per-trade notional/SL/TP/fee/spread/slippage/profit fields | **[SRC-ADD]** | `note.txt`; `specs/backtest.md`, `specs/visualization.md`, sơ đồ 23-24 |
+| News tự thích nghi khi HTML tree đổi bằng LLM fallback | **[SRC-ADD]** | `note.txt`; deterministic Quality Gate trước `NewsExtractionAgent`, sơ đồ 13, 30 |
+| Bootstrap 1.000 closed candles + provisional merge | **[SRC-ADD]** | `note.txt`; `specs/market-data.md`, sơ đồ 05 |
+| Advanced LLM market analysis | **[SRC-ADD]**, P2 | `MarketInsightAgent` read-only/default-off; không tạo order |
+| SMC và thêm strategy | **[SRC-ADD]** | Architecture admit SMC family; full SMC implementation chưa là MVP nếu chưa có xác nhận |
 | Ngưỡng **p95 < 1.5 s** cho candle → UI | **[NFR]** | §32.3 chỉ nói "độ trễ thấp". Con số là của nhóm |
 | Ngưỡng **p95 < 300 ms** cho `GET /candles` | **[NFR]** | Không có căn cứ trong đề bài |
 | Ngưỡng **p95 < 500 ms** cho `POST /experiments` | **[NFR]** | Suy ra từ ADR-006 (phải trả nhanh vì async), con số là của nhóm |
@@ -250,7 +293,7 @@ Cách dùng bảng này khi trình bày: với mọi thứ **[SRC]** nhóm chỉ
 | R4  | **Search space nổ tổ hợp** (4 strategy × nhiều param → hàng vạn candidate)        | Chạy vô hạn, đốt CPU, treo hệ thống                             | Stop condition bắt buộc (candidate/duration/no-improvement) + dedup theo `candidate_hash` + quota per-principal | `specs/search-loop.md`          |
 | R5  | **Backtest chiếm HTTP request** (10.000 nến × 3 strategy có thể mất > 30 s)        | Timeout, connection pool cạn, UI treo                           | `POST /experiments` trả `202 + run_id` ngay; thực thi qua job record; UI polling/stream tiến trình           | `specs/experiment.md`           |
 | R6  | **Kết quả Leaderboard không tái lập được**                                        | Không bảo vệ được đồ án: "+18.2% từ đâu ra?"                    | Snapshot bất biến append-only: strategy version + params + dataset version + fee/slippage + evaluator version | `specs/leaderboard.md`          |
-| R7  | **Strategy plugin lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết                                        | Trusted Go plugin boundary + context cancellation + worker lease 120 s. Exception/look-ahead → `candidate.status = failed` + `failure_reason`, run tiếp | `specs/strategy-registry.md`    |
+| R7  | **Strategy/generated code lỗi làm sập worker** (chia cho 0, index out of range, vòng lặp vô hạn) | Cả search run chết | Python purity + causal view; generated code qua AST/import policy + isolated sandbox; candidate failure isolated; worker lease fences stale write | `specs/strategy-registry.md`, `specs/agent-architecture.md` |
 | R8  | **News provider chết hoặc trả HTML rác**                                          | Pipeline news dừng                                              | Job news độc lập; failure chỉ ảnh hưởng job đó; chart/backtest technical không phụ thuộc                     | `specs/news.md`                 |
 | R9  | **SSRF qua news source** (nếu cho phép nhập URL)                                  | Đọc được metadata service nội bộ / port scan                    | `ApprovedSource` là **server config**, không nhận URL từ browser; allowlist HTTPS origin + chặn private/loopback IP sau mỗi redirect/DNS | `specs/news.md` §Bảo mật        |
 | R10 | **Sentiment model đổi version** → kết quả cũ không so được với mới                | Backtest có sentiment mất tính so sánh                          | `model_version` là phần của snapshot; đổi model = dataset mới, không ghi đè kết quả cũ                        | `specs/sentiment.md`            |

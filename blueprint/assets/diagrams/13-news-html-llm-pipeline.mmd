@@ -1,50 +1,64 @@
 sequenceDiagram
     autonumber
     participant SCH as Python Scheduler
-    participant NC as News Intelligence Service
+    participant NC as Python News Service
     participant CFG as Approved Source Registry
     participant RSS as RSS Adapter
-    participant WEB as Safe HTML Fetcher
+    participant FETCH as Safe Fetcher
     participant EXT as External Source
-    participant EXTCT as Content Extractor
-    participant TAG as LLM Tagger
-    participant SENT as SentimentAnalyzer
-    participant DB as PostgreSQL/Object Storage
-    participant STR as StrategyRuntime
+    participant READ as Readability Extractor
+    participant GATE as Content Quality Gate
+    participant AGT as NewsExtractionAgent
+    participant AI as Internal AI Adapter
+    participant TAG as News Tagger
+    participant SENT as Sentiment Orchestrator
+    participant DB as Python-owned PostgreSQL/Object Storage
 
     SCH->>NC: collect_all(since checkpoint)
     NC->>CFG: active allowlisted sources
-    CFG-->>NC: RSS feeds + article origin rules
+    CFG-->>NC: RSS feeds and article-origin rules
 
     alt RSS source
-        NC->>RSS: collect metadata
-        RSS->>EXT: GET RSS with timeout/size limit
+        NC->>RSS: collect metadata with bounded request
+        RSS->>EXT: GET RSS
         EXT-->>RSS: RSS XML
         RSS-->>NC: title, URL, summary, published_at
     else approved article URL
-        NC->>WEB: fetch URL
-        WEB->>WEB: HTTPS + DNS/IP + redirect + size guards
-        WEB->>EXT: GET article
-        EXT-->>WEB: HTML
-        WEB->>EXTCT: sanitize + readability extraction
-        EXTCT-->>NC: canonical text + content_hash
+        NC->>FETCH: fetch URL
+        FETCH->>FETCH: HTTPS, DNS/IP, redirect, size and type guards
+        FETCH->>EXT: GET article
+        EXT-->>FETCH: HTML
+        FETCH->>READ: sanitize then deterministic extraction
+        READ-->>NC: document_id, canonical text, content_hash, diagnostics
     end
 
-    NC->>DB: UPSERT NewsDocument by url_hash/content_hash<br/>store raw_html_uri optionally
-    NC->>TAG: structured tag request<br/>coin/entity/topic/event + model/prompt version
-    TAG-->>NC: validated tags + confidence + evidence spans
-    NC->>DB: UPSERT NewsTags(document,tagger_model,prompt_version)
+    NC->>GATE: validate text/content/provenance quality
+    alt quality passes
+        GATE-->>NC: normalized document
+    else quality fails
+        GATE-->>NC: persisted extraction failure reference
+        NC->>AGT: run with document_id and failure reference
+        AGT->>AGT: typed tools read sanitized HTML, diagnostics and schema
+        AGT->>AI: structured extraction request only
+        AI-->>AGT: proposed structured document
+        AGT->>GATE: schema + quality + provenance validation
+        alt fallback valid
+            GATE-->>NC: recovered normalized document
+        else fallback invalid
+            GATE-->>NC: terminal extraction failure, do not fabricate content
+        end
+    end
 
+    NC->>DB: UPSERT NewsDocument by url_hash/content_hash
+    NC->>TAG: structured tags with model/prompt version
+    TAG-->>NC: validated tags and evidence spans
+    NC->>DB: UPSERT NewsTags by content/model/prompt hash
     NC->>SENT: classify canonical text
-    alt model available and output valid
-        SENT-->>NC: label + score + model_version
-        NC->>DB: UPSERT SentimentResult by document/model/version
-    else model unavailable
-        NC->>DB: record analysis_attempt failed + alert metadata
-        Note over NC,DB: Không tạo sentiment giả NEUTRAL.<br/>Document và tags vẫn tái sử dụng được.
+    alt model output valid
+        SENT-->>NC: label, score, model_version
+        NC->>DB: UPSERT SentimentResult
+    else model unavailable or invalid
+        NC->>DB: persist failed analysis, sentiment remains null/unavailable
     end
 
-    STR->>DB: read versioned SentimentSnapshot by coin/window/as_of
-    DB-->>STR: aggregate + item hashes + model versions
-
-    Note over TAG,DB: LLM tagging chỉ chạy lại khi content hash,<br/>model hoặc prompt version thay đổi. Tag đã lưu được tái sử dụng.
+    Note over AGT,AI: Agent has no fetch, arbitrary HTTP, SQL or direct DB-write tool.

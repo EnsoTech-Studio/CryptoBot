@@ -98,5 +98,41 @@
   {
     "slug": "24-trade-result-provenance",
     "origin": "target"
+  },
+  {
+    "slug": "25-agent-platform-components",
+    "origin": "target"
+  },
+  {
+    "slug": "26-agent-run-state-machine",
+    "origin": "target"
+  },
+  {
+    "slug": "27-strategy-designer-agent",
+    "origin": "target"
+  },
+  {
+    "slug": "28-strategy-implementation-agent",
+    "origin": "target"
+  },
+  {
+    "slug": "29-strategy-repair-agent",
+    "origin": "target"
+  },
+  {
+    "slug": "30-news-extraction-agent",
+    "origin": "target"
+  },
+  {
+    "slug": "31-candidate-discovery-agent",
+    "origin": "target"
+  },
+  {
+    "slug": "32-market-insight-agent",
+    "origin": "target"
+  },
+  {
+    "slug": "33-tool-invocation-security-boundary",
+    "origin": "target"
   }
 ]

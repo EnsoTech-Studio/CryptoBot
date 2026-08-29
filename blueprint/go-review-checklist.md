@@ -1,99 +1,68 @@
-# Quick Reference Checklist
-Use this checklist as a quick reference during code review. 
+# Go API & Market Data Review Checklist
 
-# Blueprint Handoff Gates
+> Canonical v1.5: checklist này chỉ áp dụng cho `server/`. Strategy, indicator/composite, experiment, backtest, evaluation, search, ranking/Leaderboard, news/sentiment và Agent Platform thuộc Python `app/`.
 
-The active implementation contracts are the Go domain contracts in
-`specs/market-data.md`, `specs/strategy-registry.md`, `specs/backtest.md`,
-`specs/evaluation.md`, and `specs/experiment.md`.
+## 1. Boundary gate
 
-- Marketdata: canonical `Candle` is closed and keyed by `(provider,symbol,timeframe,open_time)`; `KlineUpdate` stays provisional; BBO uses optional live `updateID` and fixture `sourceSequence`.
-- Strategy: `StrategyRegistry` resolves `(strategy_id,version)`; `AnalysisContext` has causal candles/indicators and no DB/network; plugin code is trusted compiled Go.
-- Backtest: merge BBO before `CandleClosed`; LIMIT BUY crosses ask, LIMIT SELL crosses bid; one net LONG/SHORT; fixed `10 USDT`, initial `100 USDT`, leverage `1x`.
-- Persistence: Go owns migrations, repositories, `api_reader`/`read.*` projections, market dataset snapshots and transactional outbox; the Python platform (`research`) owns strategy/backtest/news domain tables; `ai` is sentiment inference only.
-- Fixture: verify the shape/evidence recorded in the `blueprint/` specs against
-  `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; never commit guessed PnL
-  or result hashes.
+- [ ] `server/` không chứa package/runtime cho strategy, indicator, composite, experiment, backtest, evaluation, search, ranking, news, sentiment hoặc agent.
+- [ ] Browser chỉ gọi public Go REST/WSS; Go proxy Python-domain command/query qua versioned internal client.
+- [ ] Signed internal request có principal ID, role/scopes, correlation ID, deadline và contract version; Python vẫn re-check ownership.
+- [ ] Go không đọc/ghi bảng gốc thuộc Python; không tính signal, indicator, fill, PnL, metric, score hoặc provenance join.
+- [ ] Python event được persist/outbox trước khi `POST /internal/events`; Go chỉ de-duplicate, map subscription và WebSocket fan-out.
+- [ ] `ai` không có public route do Go expose; mọi inference đi từ Python `research`.
 
-## Architecture Consistency Gates
+## 2. Public API / edge
 
-Use the `blueprint/specs/*.md` contracts as the execution reference; do not copy
-their rules into a second checklist. Before merge, verify:
+- [ ] Middleware order được test: request ID → CORS allowlist → rate limit/quota → auth → RBAC → body/schema validation → handler.
+- [ ] CORS dùng exact allowlist, không echo `Origin`; cookie write route có CSRF + strict Origin.
+- [ ] Auth dùng RS256/audience/issuer/expiry; refresh token hash + rotation/reuse detection; log không chứa token/secret.
+- [ ] Error envelope ổn định, không lộ stack/internal URL; `X-Request-ID` được trả về.
+- [ ] State-changing request hỗ trợ idempotency hoặc trả conflict rõ ràng.
+- [ ] Body, page, timeframe/range và WebSocket subscription đều bounded; `429` có `Retry-After`.
+- [ ] Public Python-domain DTO chỉ được transport-map; OpenAPI/contract test phát hiện breaking change.
 
-- WebSocket infrastructure is `github.com/coder/websocket` only; domain and
-  ports expose normalized values, never `Conn`, Binance envelopes, or raw `Read`.
-- One reader owns inbound frames and one writer serializes outbound/control
-  frames; `Events`/ingress channels are bounded and their overflow policy is
-  observable.
-- `Run(ctx)` has a terminal, idempotent `Close()`/`CloseNow()` path; shutdown
-  unblocks I/O, waits for goroutines, and never reconnects after close.
-- Combined Binance public stream, desired-subscription restore, control ACK,
-  REST backfill, and `StreamRecovered` ordering match `specs/market-data.md`.
-- BBO remains memory/replay input; closed Candle persistence uses the DB writer;
-  `o.X` (current status) and `o.x` (execution type) are not conflated.
-- No duplicate public route/hub or second canonical rule is introduced when
-  adding the logical `/api/v1/realtime` facade.
+## 3. Market Data correctness
 
-# Concurrency & Synchronization
+- [ ] Raw Binance payload chỉ tồn tại trong provider adapter; domain/transport dùng normalized `Candle`, `KlineUpdate`, `BBO`.
+- [ ] `Candle` canonical luôn closed; `Final=false` chỉ là provisional memory/UI state, không persist và không vào Strategy Runtime.
+- [ ] Closed candle de-duplicate theo `(provider, symbol, timeframe, open_time)`.
+- [ ] Mỗi panel bootstrap đúng 1.000 closed candles mới nhất; provisional cùng `open_time` thì replace, mới hơn thì append.
+- [ ] Đổi một panel chỉ cancel/replace history request + subscription của panel đó.
+- [ ] BBO có executable bid/ask semantics, sequence/update ID và bounded memory/replay path; không ghi nhầm vào candle table.
+- [ ] REST backfill chạy sau reconnect từ checkpoint/last closed time; overlap an toàn và chỉ emit recovery sau persistence/ACK boundary.
+- [ ] Provider REST weight limiter dùng weight thật + deadline/backoff; `429/418` không tạo retry storm.
 
-Goroutines have clear lifecycle and termination paths
-Shared state protected by sync.Mutex or sync.RWMutex
-Channels closed by sender, never by receiver
-Select statements have default case or timeout to prevent deadlocks
-sync.WaitGroup used for goroutine coordination, not sleep statements
-Context passed as first parameter: func Process(ctx context.Context, ...)
-Context cancellation checked in loops: case <-ctx.Done():
-No data races detected by go run -race
+## 4. WebSocket lifecycle
 
-# Error Handling
+- [ ] Chỉ dùng một WebSocket library/adaptor; raw connection không rò vào domain ports.
+- [ ] Một reader sở hữu inbound frames; một writer serialize control/data writes.
+- [ ] Desired subscriptions được lưu và restore sau reconnect; control ACK/timeout được theo dõi.
+- [ ] Ingress/fan-out channels bounded, overflow policy có metric/log và không block toàn hub.
+- [ ] `Run(ctx)` có terminal path; `Close` idempotent; shutdown unblock I/O, đợi goroutine và không reconnect lại.
+- [ ] Subscription key đủ `provider/symbol/timeframe` và overlay key đủ `strategy_version/config_hash` khi fan-out Python event.
+- [ ] Client gap được phát hiện bằng sequence/event ID và có REST refetch path.
 
-Errors checked immediately after function calls, not deferred
-Error wrapping uses fmt.Errorf with %w verb: fmt.Errorf("failed: %w", err)
-Sentinel errors defined as package-level variables: var ErrNotFound = errors.New("not found")
-Custom error types implement Error() string method
-Functions return errors as last return value
-panic only used for truly unrecoverable errors
-recover only in deferred functions at package boundaries
-Error messages lowercase, no punctuation: errors.New("connection failed")
-Idiomatic Go Patterns
+## 5. Concurrency and resource safety
 
-Receiver names consistent and short (1-2 letters): func (u *User) Save()
-Pointer receivers for methods that modify state or large structs
-Interface definitions small and focused (1-3 methods)
-Interfaces defined by consumer, not producer
-Zero values are useful: structs work without explicit initialization
-defer used for cleanup: defer file.Close()
-Variable names short in small scopes, descriptive in larger scopes
-Early returns reduce nesting: avoid else after if err != nil { return err }
+- [ ] Goroutine ownership/lifecycle rõ; sender đóng channel; shared state có mutex/actor ownership.
+- [ ] Context là tham số đầu của I/O path; loop kiểm tra cancellation; mọi outbound call có deadline.
+- [ ] Không dùng sleep để đồng bộ test; race test không phát hiện data race.
+- [ ] DB/HTTP/WS body được close; pool, buffer, slice và payload size có giới hạn.
+- [ ] Error wrap bằng `%w`; panic chỉ cho startup invariant không thể phục hồi.
 
-# Memory & Resource Management
+## 6. Persistence ownership
 
-defer statements close resources: files, connections, locks
-Contexts with deadlines prevent resource leaks: ctx, cancel := context.WithTimeout()
-Defer cancel() immediately after creating contexts
-Slices pre-allocated when size known: make([]int, 0, expectedSize)
-Maps not accessed concurrently without synchronization
-Pointer usage intentional: use pointers for large structs or when sharing
-Nil pointer checks before dereferencing
-String concatenation in loops uses strings.Builder
+- [ ] Go migration chỉ tạo market/auth/edge schema và grants tương ứng.
+- [ ] Runtime role Go không có quyền trên Python research/agent tables.
+- [ ] Closed-candle write + checkpoint ordering không tạo checkpoint vượt quá dữ liệu đã commit.
+- [ ] Market cache revision không làm thay đổi immutable dataset/version mà experiment đã tham chiếu.
+- [ ] Internal event de-dup key và retention policy được test.
 
-# Testing & Tooling
+## 7. Verification before merge
 
-Table-driven tests for multiple similar cases
-Test names describe scenario: TestUserSave_WithInvalidEmail_ReturnsError
-Subtests use t.Run() for grouping
-Tests clean up resources with t.Cleanup()
-Benchmarks exist for performance-critical code
-go vet passes without warnings
-golangci-lint configured and passing
-Test coverage focused on critical paths, not 100% coverage
-
-# Package Organization
-
-Package names lowercase, single word, no underscores: package user
-main package minimal, delegates to library packages
-Internal packages (internal/) for unexported code
-Exported names start with uppercase: type User struct
-Package-level documentation on package declaration: // Package user handles...
-No circular dependencies between packages
-Test files in same package: package user not package user_test (except for integration tests)
+- [ ] Unit/contract tests: provider mapping, kline final boundary, BBO, history limit=1000, provisional merge, API proxy/signature, auth/RBAC/quota/error mapping.
+- [ ] Integration tests: reconnect + REST backfill + de-dup; Python unavailable; duplicate `/internal/events`; browser cannot reach Python/AI directly.
+- [ ] Lifecycle/race tests: close during read/write/backoff, slow client, queue overflow, shutdown.
+- [ ] `go test ./...`, race suite, vet/lint and architecture-boundary test pass.
+- [ ] Logs/metrics carry `request_id`/`correlation_id`; no secret, raw article HTML hoặc model prompt bị log.
+- [ ] Không claim performance/reliability complete nếu chưa có benchmark/demo evidence liên kết trong `traceability.md`.

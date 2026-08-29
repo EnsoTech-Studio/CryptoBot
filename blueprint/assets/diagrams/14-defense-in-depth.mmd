@@ -1,57 +1,55 @@
 flowchart TB
-    REQ["External request / URL / model output"] --> L1
+    Req["External request, URL or model proposal"] --> L1
 
-    subgraph L1["L1 — Go Edge"]
-        A1["request/correlation ID + structured log"]
-        A2["CORS/security headers/body limit/rate limit"]
-        A3["JWT verify + active principal"]
+    subgraph L1["L1 - Go public edge"]
+        A1["request/correlation ID and structured log"]
+        A2["exact CORS, security headers,<br/>body/rate limit"]
+        A3["JWT, active principal, RBAC and quota"]
         A1 --> A2 --> A3
     end
 
     L1 --> L2
-    subgraph L2["L2 — Authorization & resource control"]
-        B1["RBAC + ownership, deny by default"]
-        B2["quota: concurrent runs/candidates/candles/AI tokens"]
-        B3["idempotency key + bounded stop conditions"]
+    subgraph L2["L2 - Signed Python domain boundary"]
+        B1["signed principal/scopes, deadline,<br/>contract version and idempotency key"]
+        B2["Python rechecks ownership and semantic input"]
+        B3["Go cannot access Python base tables;<br/>Browser cannot access Python/AI directly"]
         B1 --> B2 --> B3
     end
 
     L2 --> L3
-    subgraph L3["L3 — URL and AI input boundary"]
-        C1["URL allowlist + HTTPS + DNS/IP/redirect/size guard"]
-        C2["prompt injection treated as untrusted document text"]
-        C3["PII/secrets filtering before remote model"]
+    subgraph L3["L3 - Safe source and model boundary"]
+        C1["URL allowlist, HTTPS, DNS/IP/redirect/<br/>size/type/time guard"]
+        C2["document/prompt is untrusted data,<br/>not instruction or authority"]
+        C3["redact secrets and use structured,<br/>versioned model output"]
         C1 --> C2 --> C3
     end
 
     L3 --> L4
-    subgraph L4["L4 — StrategySpec/Model output guard"]
-        D1["schema-constrained output; reject extra fields/code"]
-        D2["supported DSL only: indicators/operators/bounded lookback"]
-        D3["static cost/causality checks + bounded preview sandbox"]
-        D4["human approval before immutable version publish"]
-        D1 --> D2 --> D3 --> D4
+    subgraph L4["L4 - Agent tool enforcement"]
+        D1["role + state + principal tool allowlist"]
+        D2["schema, deadline, idempotency and budget gate"]
+        D3["no generic shell, SQL, HTTP, filesystem,<br/>Docker, secret, fixture/policy/budget mutation"]
+        D1 --> D2 --> D3
     end
 
     L4 --> L5
-    subgraph L5["L5 — Runtime/data/process isolation"]
-        E1["Go market role vs Python domain role vs migration role"]
-        E2["internal service auth + short deadline + circuit breaker"]
-        E3["worker CPU/memory/time limit + no arbitrary network/DB"]
-        E4["fingerprint/model/prompt/evidence audit + immutable provenance"]
+    subgraph L5["L5 - Strategy artifact and process isolation"]
+        E1["StrategySpec semantic/causality check"]
+        E2["deterministic compiler or custom-code policy check"]
+        E3["non-root no-network/no-DB sandbox with resource limits"]
+        E4["human review before immutable publish;<br/>hash/evidence/model provenance audit"]
         E1 --> E2 --> E3 --> E4
     end
 
-    L5 --> SAFE["Approved deterministic StrategySpec / safe domain command"]
+    L5 --> Safe["Approved deterministic domain command<br/>or reviewed immutable StrategyVersion"]
 
-    classDef edge fill:#fee2e2,stroke:#dc2626,color:#111
-    classDef auth fill:#ffedd5,stroke:#ea580c,color:#111
-    classDef input fill:#fef9c3,stroke:#ca8a04,color:#111
-    classDef model fill:#dbeafe,stroke:#2563eb,color:#111
-    classDef runtime fill:#dcfce7,stroke:#16a34a,color:#111
-    class A1,A2,A3 edge
-    class B1,B2,B3 auth
-    class C1,C2,C3 input
-    class D1,D2,D3,D4 model
-    class E1,E2,E3,E4 runtime
-
+    classDef edge fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef boundary fill:#e9f1eb,stroke:#426b55,color:#2a251f;
+    classDef input fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef tool fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    classDef runtime fill:#faf9f6,stroke:#6b6258,color:#2a251f;
+    class A1,A2,A3 edge;
+    class B1,B2,B3 boundary;
+    class C1,C2,C3 input;
+    class D1,D2,D3 tool;
+    class E1,E2,E3,E4 runtime;

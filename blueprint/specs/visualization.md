@@ -1,5 +1,8 @@
 # Đặc tả: Visualization kết quả backtest (marker, trade table, equity curve)
 
+**Canonical ownership:** Python `research` sở hữu result facts, projections và authorized
+internal queries. Browser gọi Go; Go auth/proxy response nhưng không join/tính Python domain data.
+
 ## Mô tả
 
 Đặc tả này mô tả trang `web/app/experiments/[id]/page.tsx` — nơi một backtest run đã hoàn thành được **giải thích**, không chỉ được báo điểm. Câu hỏi mà trang này phải trả lời được mà không cần chạy lại gì: *"Strategy đã vào lệnh ở đâu, ra ở đâu, vì sao ra (signal / stop loss / take profit / hết dataset), lệnh đó lãi lỗ bao nhiêu, và tại nến đó các strategy con nói gì?"* Đề bài §25 yêu cầu người dùng hiểu được strategy đã làm gì; đó là yêu cầu về **dữ liệu được ghi lại**, không phải về giao diện.
@@ -8,10 +11,10 @@ Bốn bề mặt hiển thị, bốn nguồn dữ liệu tách biệt:
 
 | Bề mặt | Endpoint | Bảng nguồn |
 | --- | --- | --- |
-| Price candles trên chart | `GET /api/v1/experiments/{id}/candles` | `read.dataset_candles_v1` (immutable snapshot + `content_hash`) |
-| Marker trên chart | `GET /api/v1/experiments/{id}/overlays` | `read.run_signals_v1` + `read.trades_v1` |
-| Trade table | `GET /api/v1/experiments/{id}/trades` | `read.trades_v1` (fact thô + `signal_t`) |
-| Equity curve + metric | `GET /api/v1/experiments/{id}/equity` + `/{id}` | `read.equity_v1`, `read.experiment_summary_v1` |
+| Price candles trên chart | `GET /api/v1/experiments/{id}/candles` | Python dataset query (immutable snapshot + `content_hash`) |
+| Marker trên chart | `GET /api/v1/experiments/{id}/overlays` | Python result query từ run signals + trades |
+| Trade table | `GET /api/v1/experiments/{id}/trades` | Python trade fact query + `signal_t` |
+| Equity curve + metric | `GET /api/v1/experiments/{id}/equity` + `/{id}` | Python equity/evaluation query |
 
 Sự tách biệt này phản chiếu đúng ranh giới trong `design.md` §4.2: `BacktestEngine` ghi **fact** (`trades`, `run_signals`, `equity_points`), `Evaluator` ghi **metric dẫn xuất** (`evaluations`). Đổi công thức `sharpe_ratio` không đụng một byte nào trong `trades`, và UI vẫn hiển thị đúng lệnh cũ với metric mới bên cạnh `evaluator_version` đã dùng.
 
@@ -30,8 +33,8 @@ Marker ở đây khác marker của `specs/chart-overlay.md`. Live overlay có `
 
 ### `GET /api/v1/experiments/{id}/candles` (Owner, ≤ 1000/window)
 
-Endpoint này resolve `experiments.market_dataset_id` sau ownership check rồi chỉ đọc
-`read.dataset_candles_v1`. Query `from`/`to` theo viewport (`from` inclusive, `to`
+Endpoint này được Go proxy sang Python; Python resolve `experiments.market_dataset_id` sau
+ownership check rồi đọc immutable dataset projection. Query `from`/`to` theo viewport (`from` inclusive, `to`
 exclusive); nếu cửa sổ chứa hơn 1000 nến thì trả `422 range_too_large` kèm
 `suggested_ranges`. Không được fallback sang operational cache `candles`.
 
@@ -119,12 +122,14 @@ thầm cắt dữ liệu.
 ```json
 {
   "items": [
-    { "id": 141, "sequence_no": 1, "side": "LONG",
+    { "id": 141, "sequence_no": 1, "symbol": "ETHUSDT", "quote_currency": "USDT", "side": "LONG",
       "entry_time": "2026-06-02T03:40:00Z", "entry_price": 117950.25,
       "exit_time":  "2026-06-02T09:15:00Z", "exit_price":  115533.45,
-      "quantity": 0.0847, "fee_paid": 19.98, "slippage_cost": 9.99,
+      "quantity": 0.0847, "entry_notional": 9990.39, "exit_notional": 9785.68,
+      "fee_paid": 19.98, "spread_cost": 4.90, "slippage_cost": 9.99,
       "sl_price": 115591.25, "tp_price": 123847.76,
-      "pnl_absolute": -230.71, "pnl_percent": -2.05, "exit_reason": "stop_loss",
+      "gross_pnl": -204.71, "net_pnl": -239.58,
+      "pnl_absolute": -239.58, "pnl_percent": -2.40, "exit_reason": "stop_loss",
       "signal_t": "2026-06-02T03:35:00Z" }
   ],
   "page": { "cursor": "eyJzZXEiOjIwMH0", "next_cursor": "eyJzZXEiOjQwMH0",
@@ -161,10 +166,14 @@ export type ExitReason = 'signal' | 'stop_loss' | 'take_profit' | 'end_of_sample
 export type ExecutionOverlayType = 'entry' | 'exit' | 'stop_loss' | 'take_profit';
 
 export interface Trade {
-  id: number; sequence_no: number; side: 'LONG' | 'SHORT';
+  id: number; sequence_no: number;
+  symbol: string; quote_currency: string; side: 'LONG' | 'SHORT';
   entry_time: string; entry_price: number;
   exit_time: string | null; exit_price: number | null;   // null = còn mở
-  quantity: number; fee_paid: number; slippage_cost: number;
+  quantity: number; entry_notional: number; exit_notional: number | null;
+  sl_price: number | null; tp_price: number | null;
+  fee_paid: number; spread_cost: number; slippage_cost: number;
+  gross_pnl: number | null; net_pnl: number | null;
   pnl_absolute: number | null; pnl_percent: number | null;
   exit_reason: ExitReason | null; signal_t: string | null;
 }
@@ -209,13 +218,16 @@ sequenceDiagram
     actor U as Researcher
     participant PG as Experiment Page
     participant API as Go API
+    participant PY as Python Research API
     participant DB as PostgreSQL
 
     U->>PG: mở /experiments/a3f1
     PG->>API: GET /experiments/a3f1
-    API->>API: RBAC owner check
-    API->>DB: SELECT FROM read.experiment_summary_v1
-    API-->>PG: status completed + metrics + provenance
+    API->>API: JWT + route RBAC + signed principal
+    API->>PY: authorized internal result query
+    PY->>DB: owner check + Python result projection
+    PY-->>API: status completed + metrics + provenance
+    API-->>PG: public result envelope
 
     par ba fetch song song, không waterfall
         PG->>API: GET /experiments/a3f1/overlays
@@ -226,16 +238,17 @@ sequenceDiagram
     and
         PG->>API: GET /experiments/a3f1/candles
     end
-    API->>DB: SELECT FROM read.dataset_candles_v1 WHERE market_dataset_id = dataset.id
+    API->>PY: authorized candles/trades/equity/overlay queries
+    PY->>DB: SELECT immutable Python-owned result projections
     Note over PG: Nến lấy từ snapshot bất biến của dataset.<br/>Không đọc operational cache `candles` cho trang result.
     PG->>PG: render chart + equity + table
 ```
 
-Bốn fetch song song là có lý do đo được: tuần tự chúng cộng dồn 4 round-trip và làm trang vượt ngân sách 1.5 s cho lần vẽ đầu. Nến lấy từ snapshot `read.dataset_candles_v1` theo đúng `market_dataset_id` — nếu trang result đọc operational cache `candles`, một lần provider revise sẽ làm nến trên chart khác nến mà backtest đã chạy.
+Bốn fetch song song là có lý do đo được: tuần tự chúng cộng dồn 4 round-trip và làm trang vượt ngân sách 1.5 s cho lần vẽ đầu. Python lấy nến từ immutable dataset snapshot theo đúng `market_dataset_id`; nếu trang result đọc operational Go candle cache, một lần provider revise sẽ làm nến trên chart khác nến mà backtest đã chạy.
 
-`read.experiment_summary_v1` có một row cho mỗi `evaluation_version` của cùng run.
-Go chọn row có `computed_at` mới nhất cho màn hình mặc định; khi UI chọn một evaluator
-version khác, Go thêm điều kiện `evaluation_version = $version`. Vì vậy rerun Evaluator
+Python experiment result projection có một row cho mỗi `evaluation_version` của cùng run.
+Python result query chọn row có `computed_at` mới nhất cho màn hình mặc định; khi UI chọn một evaluator
+version khác, query thêm điều kiện `evaluation_version = $version`. Go chỉ proxy authorized payload. Vì vậy rerun Evaluator
 không bị mất khỏi projection và provenance luôn chỉ rõ metric đang xem được tính bởi
 version nào.
 
@@ -320,7 +333,7 @@ Phân biệt `trade_count = 0` với `NULL` là điều quan trọng nhất tron
 | Số trade > 200 | Cursor pagination; chart chỉ vẽ marker của các trade đã tải + hint "còn N trade ở trang sau" |
 | Range dataset > 1000 nến | Chart tải theo cửa sổ (`from`/`to` theo viewport), lazy-load khi pan. `422 range_too_large` nếu client bỏ qua giới hạn |
 | `evaluations` chưa có (Evaluator chậm hơn worker) | `status=completed` nhưng `metrics=null` → UI hiện "đang tính metric" cho khối metric, chart + table **vẫn render đầy đủ** (chúng đến từ fact, không phụ thuộc Evaluator) |
-| Chạy lại Evaluator với `evaluator_version` mới | Hai row `evaluations` cho cùng run; `read.experiment_summary_v1` giữ cả hai row. UI có dropdown chọn version, mặc định version mới nhất, và hiện tường minh version đang xem |
+| Chạy lại Evaluator với `evaluator_version` mới | Python result projection giữ hai evaluation version cho cùng run. UI có dropdown chọn version, mặc định version mới nhất, và hiện tường minh version đang xem |
 | Click trade khi chart đang lazy-load nến của cửa sổ khác | Đợi fetch xong mới pan; nút hiện trạng thái loading. Không pan tới vùng chưa có nến rồi nhảy lại |
 | Hai trade cùng `entry_time` sau khi làm tròn hiển thị | Highlight theo `trade_id` → đúng lệnh. Marker vẽ lệch nhẹ theo trục y để không đè nhau |
 | `equity_points` chỉ có 1 điểm (không trade) | Vẽ đường phẳng tại `initial_equity`, `max_drawdown = {dd: 0}`; không chia cho 0 |

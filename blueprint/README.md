@@ -4,13 +4,13 @@ Tài liệu thiết kế kiến trúc cho đồ án cuối kỳ môn Thiết k�
 
 **Chủ đề**: Nền tảng phân tích, kết hợp và đánh giá chiến lược giao dịch Crypto.
 
-**Cập nhật kiến trúc 2026-08-14**: Marketdata, Strategy, Backtest, Evaluation và
-DB contract đã được reconciled. Blueprint này giữ yêu cầu sản phẩm, thiết kế và
-contract ở mức product; execution detail của bốn domain nằm trong `design.md`
-§5–§6, các `specs/*.md` và Go skeleton ở `server/` trong cùng repo. Đọc chúng
-cùng nhau; khi cần một rule thực thi cụ thể, contract trong `specs/` và code
-trong `server/` là canonical. Không ghi nhận PnL fixture trước khi
-engine/evaluator thực sự tồn tại.
+**Cập nhật kiến trúc 2026-08-27 - v1.5**: Blueprint dùng một ownership model duy nhất.
+Go chỉ sở hữu Public API/Edge/Auth/Quota và Market Data. Python `research` sở hữu Strategy
+Runtime/Registry, Composite, Backtest, Evaluation, Search, Ranking/Leaderboard,
+News/Sentiment orchestration và Agent Platform. AI Adapter là internal inference-only.
+Browser chỉ gọi Go; Go proxy signed domain command/query tới Python và fan-out event đã được
+Python persist. Không ghi nhận PnL, agent hoặc sandbox là đã implement trước khi có code/test/demo
+evidence thật.
 
 **Ranh giới của nhóm** *(product safety / scope decision — không phải câu trích từ đề bài)*: hệ thống là **simulation-only**. Nó không đặt lệnh, không giữ credential sàn giao dịch, không đưa ra khuyến nghị đầu tư. Binance chỉ được truy cập qua adapter read-only trên public market data endpoint. Đề bài nói trọng tâm là kiến trúc và backtest là *giả lập* (§2, §19, §47) nhưng không phát biểu ranh giới này thành yêu cầu — nhóm chọn biến nó thành ranh giới cứng để loại attack surface (không có API key thì không có gì để rò rỉ) và chống scope creep. Lập luận đầy đủ ở `proposal.md` §4.3; phân loại nguồn gốc mọi yêu cầu khác ở `proposal.md` §4.4.
 
@@ -23,8 +23,10 @@ blueprint/
 ├── design.md                      # Tài liệu trung tâm: 13 section
 ├── traceability.md                # Yêu cầu đích → sơ đồ → verification gate
 ├── jira-backlog.md                # Epic/task backlog (gap-derived + roadmap)
+├── agent-architecture-update-plan.md # Kế hoạch đã duyệt để cập nhật v1.5
+├── agent-architecture-diagrams.html  # Reference HTML cho toàn bộ agent/tool
 ├── assets/                        # Sơ đồ render sẵn — đọc offline / export PDF được
-│   ├── README.md                  # Danh mục 24 sơ đồ + cách render lại
+│   ├── README.md                  # Danh mục 33 sơ đồ + cách render lại
 │   ├── diagrams/                  # Mermaid source (.mmd) + SVG vector + index.json
 │   └── diagrams-png/              # PNG 2× cho Word/PowerPoint
 ├── scripts/
@@ -35,6 +37,7 @@ blueprint/
     ├── chart-overlay.md           # Overlay live, subscription per panel, multi-timeframe
     ├── strategy-registry.md       # Plugin Architecture — lõi khả năng mở rộng
     ├── strategy-authoring.md      # Text/URL → StrategySpec (AI), approval, SSRF/sandbox
+    ├── agent-architecture.md      # Orchestrator, 6 agent role, tool, state, sandbox, approval
     ├── composite-strategy.md      # Kết hợp tín hiệu, combination policy
     ├── experiment.md              # ExperimentSnapshot bất biến, job queue, lease token
     ├── backtest.md                # Backtest engine, fill policy, chống look-ahead, frozen BBO
@@ -49,14 +52,14 @@ blueprint/
     └── observability.md           # Metrics, correlation ID, structured log, progress panel, scale gate
 ```
 
-**Canonical implementation handoff**: parity và execution contract không được
-copy thành một cây `blueprint/verification/` thứ hai. `specs/*.md` giữ contract;
-Go skeleton ở `server/` giữ chi tiết triển khai, lifecycle và evidence protocol;
-backlog (`jira-backlog.md`) giữ task/AC.
+**Canonical implementation handoff**: `specs/*.md` giữ contract; `server/` chỉ là Go
+API/Market implementation; `app/` là Python Research domain/runtime; `ai/` chỉ là inference
+adapter. Không copy Strategy/Backtest/Search/News sang Go để tạo runtime thứ hai. Backlog giữ
+task/AC; implementation claim phải trỏ code/test/evidence thật.
 
 ## Sơ đồ render sẵn
 
-Mọi sơ đồ đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×) — tổng cộng **24 sơ đồ** đánh số thống nhất. Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
+Mọi sơ đồ đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×) — tổng cộng **33 sơ đồ** đánh số thống nhất. Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
 
 Bảy góc nhìn kiến trúc bắt buộc đều có sơ đồ tương ứng:
 
@@ -68,10 +71,10 @@ Bảy góc nhìn kiến trúc bắt buộc đều có sơ đồ tương ứng:
 | ERD | `06-erd` | §4.3 |
 | Data Flow | `05-market-realtime-candle-bbo`, `07-outbox-retry-order`, `13-news-html-llm-pipeline` | §3.2, §5.7.5, §6.4 |
 | Realtime / Reconnect Flow | `09-realtime-reconnect-backfill-flow`, `05-market-realtime-candle-bbo` | §6.1 |
-| Strategy Flow | `10-strategy-flow`, `22-strategy-runtime-parity`, `21-ai-strategy-authoring` | §6.2 |
+| Strategy/Agent Flow | `10-strategy-flow`, `21-ai-strategy-authoring`, `22-strategy-runtime-parity`, `25`–`33` | §6.2, `specs/agent-architecture.md` |
 | Search / Backtest Flow | `11-search-backtest-pipeline`, `15-job-queue-scale`, `16`–`19`, `23`, `24` | §6.3, §8.3, `specs/experiment.md` |
 
-Danh mục đầy đủ 24 sơ đồ và hướng dẫn render lại: **`assets/README.md`**. Mapping yêu cầu → sơ đồ → verification gate: **`traceability.md`**.
+Danh mục đầy đủ 33 sơ đồ và hướng dẫn render lại: **`assets/README.md`**. Mapping yêu cầu -> sơ đồ -> verification gate: **`traceability.md`**.
 
 ## Cách đọc
 
@@ -91,7 +94,7 @@ Danh mục đầy đủ 24 sơ đồ và hướng dẫn render lại: **`assets/
    | 9   | 5 anti-pattern đề bài + 3 bổ sung, kèm test kiểm chứng |
    | 10  | **17 ADR**                                     |
    | 11  | **Trả lời 8 câu hỏi kiến trúc trung tâm**      |
-   | 12  | **Target Architecture vs Delivery Roadmap** (§12.0) + 7 phase + Demo script 18 bước + Truy vết yêu cầu + **10 target gap & bất biến xuyên sơ đồ (§12.4)** |
+   | 12  | **Target Architecture vs Delivery Roadmap** (§12.0) + 7 phase + Demo script 18 bước + Truy vết yêu cầu + gap/invariant xuyên sơ đồ (§12.4) + Agent Architecture (§12.5) |
    | 13  | Phụ lục: cấu trúc thư mục source code          |
 
 3. **`specs/*.md`** — đặc tả chi tiết từng tính năng. Mỗi file có cấu trúc thống nhất:
@@ -101,6 +104,9 @@ Danh mục đầy đủ 24 sơ đồ và hướng dẫn render lại: **`assets/
    - **Kịch bản lỗi** — bảng tình huống → phản ứng (12–18 dòng, gồm race condition)
    - **Ràng buộc** — tính đúng đắn / hiệu năng / bảo mật / mở rộng / quan sát được, có số cụ thể
    - **Tiêu chí chấp nhận** — checklist AC kiểm chứng được
+
+   Đọc `specs/agent-architecture.md` trước `strategy-authoring.md`: orchestrator/tool/security
+   là platform contract; authoring là một workflow chạy trên platform đó.
 
 4. **Fixture/evidence** — dữ liệu fixture và acceptance protocol chỉ được công bố
    cùng implementation thật. Không đưa số PnL hoặc result hash suy đoán vào
@@ -179,7 +185,7 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 
 | Vấn đề                                             | Giải pháp                                                              | Tài liệu                     |
 | -------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------- |
-| Thêm strategy phải sửa 20 module                   | Go `StrategyRegistry` + plugin self-registration                       | `specs/strategy-registry.md` |
+| Thêm strategy phải sửa 20 module                   | Python `Registry` + package plugin/DSL admission seam                  | `specs/strategy-registry.md` |
 | Hard-coded `if MA && RSI ...`                      | Composite là **dữ liệu JSON**, policy lưu trong snapshot               | `specs/composite-strategy.md` |
 | Frontend phụ thuộc payload Binance                 | Adapter chuẩn hoá về `Candle`; frontend không thấy field Binance        | `specs/market-data.md`       |
 | Frontend tính RSI (2 nguồn chân lý)                | Overlay **do backend tính**, frontend chỉ render                       | `specs/chart-overlay.md`     |
@@ -194,10 +200,10 @@ Toàn bộ blueprint được tổ chức để trả lời dứt điểm 3 câu
 | Worker cũ (lease đã mất) ghi đè kết quả worker mới | Mọi UPDATE guard bằng `AND lease_token = $token` → khớp 0 row → worker cũ tự dừng | `design.md` §8.3.1 |
 | Event từ Worker mất vì in-process dispatcher       | **Transactional outbox**: state + event cùng transaction; dispatcher claim/retry; consumer idempotent | `design.md` §5.7 |
 | Go WS Hub down → mất frame realtime                | `POST /internal/events` best-effort + retry/backoff + circuit breaker; state đã persist nên client refetch theo `seq` | `design.md` §5.8, ADR-016 |
-| Ownership DB chồng chéo giữa Go và Python          | Go sở hữu domain write + migration; Python AI không có quyền DB | `design.md` §1.2.4, §1.2.5 |
+| Ownership DB chồng chéo giữa Go và Python          | Table write ownership tách: Go auth/market; Python research domain; AI không DB | `design.md` §1.2.4, §1.2.5 |
 | Duplicate event tạo entry trùng                    | `event_consumptions` + `UNIQUE (backtest_run_id, evaluator_version)`   | `specs/leaderboard.md`       |
 | Kết quả Leaderboard không truy nguồn được          | Snapshot append-only 6 bảng + `code_fingerprint` + `content_hash`      | `specs/leaderboard.md`, ADR-009, ADR-012 |
-| Strategy plugin lỗi giết cả worker                 | Trusted Go plugin boundary + context cancellation + lease 120 s      | `specs/strategy-registry.md` |
+| Strategy/generated code lỗi giết cả worker         | Python purity + policy check + isolated sandbox + worker lease       | `specs/strategy-registry.md`, `specs/agent-architecture.md` |
 | Plugin đọc `indicators[t+1]` (look-ahead ẩn)        | `IndicatorView` causal — chặn `[t+1]`, `[-1]`, `len()`, `slice`         | `design.md` §5.2.1           |
 | Đổi công thức score phải chạy lại backtest         | Tách trade facts (thô) khỏi metrics (dẫn xuất)                         | `specs/evaluation.md`        |
 | SSRF qua news source                               | `ApprovedSource` là **server config**; validate sau mỗi redirect/DNS | `specs/news.md`              |
@@ -223,6 +229,10 @@ Năm nguyên tắc được áp dụng nhất quán trong toàn bộ blueprint, 
 
 ## Phiên bản
 
+- **v1.5** — 2026-08-27 — Khóa Go = API/Edge/Market, Python `research` = toàn bộ Research
+  Domain; thêm Agent Platform 6 logical role, typed tools, durable state, generated-artifact
+  policy/sandbox/bounded repair/human approval; thêm adaptive news extraction; đóng contract
+  1.000 closed candles và exact trade notional/cost/gross/net fields; cập nhật sơ đồ 01–33.
 - **v1.4** — 2026-08-22 — Hợp nhất bộ tài liệu về **một phiên bản duy nhất**: chốt ownership thống nhất (Go = realtime market + edge/auth/quota; Python platform `research` = strategy runtime/backtest/search/ranking + news extraction/tagging + sentiment orchestration; `ai` = inference adapter — ADR-011/015 cập nhật); gộp bộ sơ đồ đích vào đánh số 01–24 (index + catalog mới ở `assets/README.md`); thêm `traceability.md`, `specs/strategy-authoring.md`, mục "Target additions" cho 7 spec, §12.4 "10 gap + bất biến xuyên sơ đồ" trong `design.md`; service Python chuyển từ thư mục riêng về repo root (`app/`, service `research`, `RESEARCH_PORT`).
 - **v1.3** — 2026-08-12 — Đóng contract read projection bằng schema/view/role/grant DDL; thêm DB guard cho artifact bất biến; version dataset `revision_no` + advisory lock; làm rõ ML integration seam, giới hạn public/internal và cách đếm domain port.
 - **v1.2** — 2026-08-12 — Đồng bộ provenance với `risk_policy`; làm rõ SL/TP trigger so với execution fill; thêm virtual composite root cho FK; khóa causal `IndicatorView` và family constraint; xác nhận `requirements.html` là nguồn yêu cầu chính.

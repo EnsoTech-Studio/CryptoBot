@@ -24,7 +24,7 @@ Execution marker (`entry`, `exit`, `stop_loss`, `take_profit`) **không** thuộ
 ### Khoá subscription và `config_hash`
 
 ```go
-# server/internal/domain/strategy/config_hash.go
+# app/domain/strategy/config_hash.py
 func ConfigHash(strategyID, version string, validatedParams json.RawMessage) string {
     payload := CanonicalJSON(struct {
         StrategyID string          `json:"strategy_id"`
@@ -202,7 +202,7 @@ sequenceDiagram
     participant P as ChartPanel
     participant API as Go API
     participant WS as WS Hub
-    participant LAB as Strategy Lab
+    participant LAB as Python Research API
     participant DB as PostgreSQL
 
     P->>API: GET /strategies
@@ -214,8 +214,10 @@ sequenceDiagram
     API-->>P: tối đa 1000 nến đã đóng
 
     P->>API: GET /markets/chart-overlays provider=binance_usdm strategy=rsi@1.0.0 config_hash=4d1f
-    API->>LAB: compute_overlay snapshot
-    LAB->>DB: SELECT candles cùng range
+    API->>LAB: signed compute_overlay query
+    LAB->>API: request normalized candles for range
+    API->>DB: SELECT Go-owned closed candles cùng range
+    API-->>LAB: canonical Candle[]
     LAB->>LAB: indicator + strategy.analyze cho từng nến đã đóng
     LAB-->>API: series + markers + warmup_candles + seq
     API-->>P: overlay đã tính

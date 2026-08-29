@@ -1,0 +1,33 @@
+flowchart TB
+    URL["Approved source URL"]
+    Fetch["Deterministic Safe Fetcher<br/>allowlist, SSRF, redirect, size/type/time limits"]
+    Readability["Deterministic Readability Extractor"]
+    Quality{"Content Quality Gate passes?"}
+    Normal["Normalize deterministic result"]
+    Trigger["Fallback trigger<br/>document ID and extraction failure ID"]
+    Html["document.get_sanitized_html<br/>read already-fetched sanitized HTML"]
+    Errors["document.get_extraction_errors<br/>quality diagnostics and failure evidence"]
+    Schema["news.get_item_schema<br/>versioned structured news contract"]
+    Agent["NewsExtractionAgent<br/>recover title, body, author,<br/>published time and source evidence"]
+    Validate["news.validate_extraction<br/>schema, quality and provenance"]
+    Valid{"Valid?"}
+    Save["news.save_extraction<br/>content/model/prompt/schema hash cache"]
+    Next["Deterministic next stages<br/>tagging then sentiment"]
+    Fail["Persist extraction failure<br/>never fabricate content or refetch"]
+
+    URL --> Fetch --> Readability --> Quality
+    Quality -->|yes| Normal --> Next
+    Quality -->|no| Trigger --> Html --> Errors --> Schema --> Agent --> Validate --> Valid
+    Valid -->|yes| Save --> Next
+    Valid -->|no| Fail
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef deterministic fill:#faf9f6,stroke:#6b6258,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Agent agent;
+    class Html,Errors,Schema,Validate,Save tool;
+    class Fetch,Readability,Normal,Next deterministic;
+    class Quality,Valid gate;
+    class Fail stop;

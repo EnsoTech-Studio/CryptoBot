@@ -1,6 +1,8 @@
 # Crypto Strategy Lab — Technical Design
 
-> Phần 1 / Blueprint • Tài liệu thiết kế kỹ thuật • Phiên bản 1.3
+> Phần 1 / Blueprint • Tài liệu thiết kế kỹ thuật • Phiên bản 1.5
+
+> **Canonical v1.5.** Go chỉ sở hữu public API/edge/auth/quota/WebSocket fan-out và Market Data. Python `research` là domain runtime duy nhất cho strategy, indicator/composite, experiment, backtest, evaluation, search, ranking/Leaderboard, news/sentiment orchestration và Agent Platform. `ai` chỉ là internal structured-inference adapter. Nếu một đoạn lịch sử/archived trong tài liệu này mâu thuẫn với ranh giới trên thì canonical v1.5 được ưu tiên.
 
 **Mục lục**
 
@@ -35,8 +37,8 @@ Hệ thống **không** có một style duy nhất. Nó là một **polyglot mul
 | **Web Dashboard** (Next.js) | **Presentation layer** — client-side rendering + SSR   | Render, không tính toán domain                          |
 | **Go API** (Go edge & market gateway) | **Modular Monolith + Hexagonal** (Ports & Adapters)      | Public edge/API, auth/RBAC/quota, realtime market (chuẩn hoá Candle/BBO, WSS reconnect/backfill, internal stream tới Python), observability |
 | **Backtest Worker** (Python) | Cùng codebase với Python platform, khác entrypoint        | Consume job queue, chạy `BacktestEngine`                |
-| **Python Strategy Platform** (Python, FastAPI — service `research`) | **Modular Monolith + Hexagonal** (domain core) | Strategy runtime, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging, sentiment/AI orchestration |
-| **AI Inference** (Python, service `ai`) | Adapter service | Chỉ phân loại sentiment; không sở hữu strategy/backtest |
+| **Python Strategy Platform** (Python, FastAPI — service `research`) | **Modular Monolith + Hexagonal** (domain core) | Strategy runtime, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging, sentiment/AI orchestration, Agent Platform |
+| **AI Inference** (Python, service `ai`) | Internal adapter service | Structured inference theo schema; không sở hữu workflow, strategy/backtest hoặc domain DB |
 
 Cách gọi đúng: **"Python Strategy Platform là Modular Monolith / Hexagonal domain core của chuỗi strategy→backtest→ranking + news/sentiment orchestration"**, còn **"Go API là Modular Monolith / Hexagonal edge của realtime market + auth/quota"** — không phải "toàn hệ thống là một modular monolith". Toàn hệ thống là nhiều deployable; mỗi domain core là modular monolith.
 
@@ -60,7 +62,7 @@ Chi tiết ranh giới và ownership giữa Go và Python ở **§1.2 Service Bo
 
 **Vì sao Plugin Architecture cho strategy, không Factory-with-switch**
 
-Kiến trúc phải chịu được scenario đánh giá của đề bài (§41): giảng viên yêu cầu thêm MACD tại chỗ. Với `if strategy == "MA" ... else if ...` thì phải sửa Controller + Backtester + UI + Database + Combination Engine + Evaluator. Với Go `StrategyRegistry` và self-registration của plugin, thêm MACD là **1 file mới, 0 dòng sửa core**. Chi tiết ở §8.1 và ADR-002.
+Kiến trúc phải chịu được scenario đánh giá của đề bài (§41): giảng viên yêu cầu thêm MACD tại chỗ. Với `if strategy == "MA" ... else if ...` thì phải sửa Controller + Backtester + UI + Database + Combination Engine + Evaluator. Với Python `StrategyRegistry` và registration qua catalog/plugin module, thêm MACD chỉ bổ sung plugin + test mà không sửa runtime core. Chi tiết ở §8.1 và ADR-002.
 
 **Vì sao Event-driven cho pipeline, không gọi trực tiếp**
 
@@ -112,12 +114,28 @@ Ranh giới này được chốt để không có ownership chồng chéo ngầm
 
 | Nhóm bảng | Owner (write + migration) | Bên còn lại |
 | --- | --- | --- |
-| **Domain + Edge**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `domain_events`, `event_consumptions`, `users`, `refresh_tokens`, `user_quotas` | **Go API** (+ Worker Go, cùng codebase) | Python đọc metadata dataset qua contract nội bộ; Python AI không có quyền DB. |
-| **Strategy/Backtest/Eval/Ranking + News**: `strategy_definitions`, `strategy_versions`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs` | **Python Strategy Platform** (`app/` ở repo root, service `research`) | Go không INSERT/UPDATE/DELETE trên các bảng này; đọc qua contract nội bộ và read views. |
+| **Market + Edge**: `market_pairs`, `candles`, `stream_checkpoints`, `market_datasets`, `market_dataset_candles`, `users`, `refresh_tokens`, `user_quotas` | **Go API/Market Gateway** | Python nhận market facts qua `MarketDataPort` và internal market contract; `ai` không có quyền DB. |
+| **Research + Agent**: `strategy_definitions`, `strategy_versions`, `strategy_drafts`, `agent_runs`, `agent_attempts`, `strategy_artifacts`, `sandbox_runs`, `search_runs`, `search_candidates`, `search_actions`, `experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`, `equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`, `news_sources`, `news_items`, `sentiment_results`, `news_collection_jobs` | **Python Strategy Platform** (`app/`, service `research`) | Go không đọc/ghi bảng gốc; Go proxy query/command qua internal API có version và signed principal context. |
 
 Migration của bảng market/auth nằm trong repo Go; migration của bảng strategy/backtest/eval/ranking/news nằm trong Python platform (`app/`). Python AI **không** có migration và **không bao giờ** INSERT/UPDATE/DELETE trên chúng.
 
-#### 1.2.5 Read projection — CQRS read path của Go
+#### 1.2.5 Internal query boundary — public Go API, Python-owned domain
+
+Browser chỉ gọi Go, nhưng Go không vì thế trở thành reader của toàn bộ schema Python. Target v1.5 dùng hai đường đọc rõ ràng:
+
+| Loại dữ liệu | Public route | Nguồn canonical |
+| --- | --- | --- |
+| Pair, candle history, BBO, market status | Go xử lý trực tiếp | Go-owned market store/cache |
+| Strategy catalog, experiment/result, trade/equity/overlay, search, Leaderboard, news/sentiment, agent-run status | Go xác thực/quota rồi proxy internal query | Versioned Python `research` API trên Python-owned repository |
+
+Internal request bắt buộc có signed principal, scopes, correlation ID, deadline và contract version. Python kiểm tra ownership lần cuối, thực hiện domain query, rồi trả DTO; Go chỉ map transport/error và không tính PnL, score, indicator hay provenance. Với update bất đồng bộ, Python commit domain state + outbox trước, sau đó gọi `POST /internal/events` để Go fan-out WebSocket. Agents chỉ gọi typed Python tools/ports, không gọi loopback public Go API.
+
+#### 1.2.6 Archived alternative — direct Go CQRS projections (không phải target v1.5)
+
+<details>
+<summary>Thiết kế projection cũ được giữ làm migration history; không dùng để triển khai target.</summary>
+
+> Các đoạn từ đây đến cuối khối mô tả phương án cũ nơi Go đọc trực tiếp nhiều `read.*` views và có `domain_writer`. Phương án này bị thay thế bởi §1.2.5 để bảo toàn single-owner Python domain.
 
 Các specs market, experiment, visualization, leaderboard, search và auth đều có read
 path đi qua Go. Các sequence diagram phải ghi rõ tên `read.*` view; đây **không**
@@ -428,15 +446,17 @@ transaction `search_candidates + experiments + backtest_jobs` của từng candi
 Phần bắt buộc của admission là row lock, idempotency lookup, active-count check và
 INSERT `search_runs` cùng một function call.
 
+</details>
+
 ### 1.3 Các thành phần chính
 
 | Thành phần                | Vai trò                                                                                              | Công nghệ                             | Không được sở hữu                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------- |
 | **Web Dashboard**         | 4 chart panel độc lập, strategy picker, search control panel, leaderboard, trade table, news view      | Next.js 16 App Router + React 19 + TypeScript | Logic trading, tính indicator, tính profit/ranking, parse payload Binance |
 | **Go API**       | REST + WebSocket boundary, validation, auth/RBAC, request ID, realtime market (Candle/BBO chuẩn hoá, WSS reconnect/backfill, internal stream tới Python) | Go 1.23 | Strategy/backtest/evaluation/ranking math, news extraction/tagging, sentiment orchestration (thuộc Python platform) |
-| **Python Strategy Platform** | Strategy runtime, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging, sentiment/AI orchestration | Python 3.12 + FastAPI, `float64` | Realtime market stream (nhận từ Go), sentiment inference (thuộc `ai`), auth/RBAC |
+| **Python Strategy Platform** | Strategy runtime, composite, indicator, backtest, evaluation, search, ranking/leaderboard, visualization, news extraction/tagging, sentiment/AI orchestration, Agent Platform | Python 3.12 + FastAPI, `float64` | Provider/Binance connection (nhận market contract từ Go), model hosting, auth/RBAC edge |
 | **Backtest Worker**       | Consume `backtest_jobs`, chạy backtest, publish `BacktestCompleted`                                  | **Cùng image Python**, entrypoint khác | Nhận request HTTP từ browser                             |
-| **Sentiment Model (`ai`)**       | Phân loại `POSITIVE/NEUTRAL/NEGATIVE` + score + `model_version`                                      | Service Python riêng (adapter) | Crawl news, orchestration, biết về strategy               |
+| **AI/LLM Adapter (`ai`)**       | Structured inference versioned cho sentiment, StrategySpec/repair, extraction/tagging và insight                                      | Service Python riêng, internal-only | Workflow state, tool execution, crawl/fetch, domain DB, approve/publish |
 | **PostgreSQL**            | Nguồn sự thật: candles, strategy versions, experiments, trades, evaluations, leaderboard, news, sentiment, jobs | PostgreSQL 16                | Logic quyết định của strategy                            |
 | **Redis** *(tuỳ chọn, có điều kiện — §12.0)* | Cache overlay đã tính, outbound rate-limit token bucket dùng chung khi có > 1 worker         | Redis 7                               | Nguồn sự thật cho bất kỳ dữ liệu nào                     |
 | **Binance**               | Nguồn market data (REST klines + WebSocket kline stream)                                             | Public API, read-only                 | —                                                        |
@@ -557,11 +577,11 @@ flowchart TB
 
         Web["<b>Web Dashboard</b><br/>[Container: Next.js 16 + React 19]<br/><br/>4 chart panel độc lập, strategy picker,<br/>search control, leaderboard, trades, news.<br/><i>Chỉ render — không tính toán domain</i>"]
 
-        API["<b>Public API</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Validation, RBAC, rate limit, request ID,<br/>error mapping, fan-out stream theo subscription."]
+        API["<b>Go API / Edge</b><br/>[Container: Go 1.23]<br/><br/>REST + WebSocket boundary.<br/>Auth/RBAC, quota, validation, request ID,<br/>error mapping và fan-out theo subscription."]
 
-        Lab["<b>Go API — edge & market gateway</b><br/>[Container: Go 1.23]<br/><br/>Market normalization + realtime candles/BBO,<br/>auth/RBAC, quota, observability."]
+        Lab["<b>Go Market Data</b><br/>[cùng Go deployable]<br/><br/>Provider REST/WSS, normalize Candle/BBO,<br/>history, provisional fan-out, closed persistence,<br/>checkpoint, reconnect và backfill."]
 
-        Py["<b>Python Strategy Platform</b><br/>[Container: Python FastAPI, float64]<br/><br/>Strategy registry + runtime, composite, indicator,<br/>backtest, evaluation, search, ranking/leaderboard,<br/>visualization-of-results, news extraction/tagging,<br/>sentiment/AI orchestration (gọi `ai`)."]
+        Py["<b>Python Research Platform</b><br/>[Container: Python FastAPI, float64]<br/><br/>Strategy runtime, experiment/backtest/search/ranking,<br/>news + sentiment orchestration, Agent Platform,<br/>artifacts, sandbox, approval và domain query API."]
 
         Worker["<b>Backtest Worker</b><br/>[Container: cùng image Python,<br/>entrypoint worker riêng]<br/><br/>Poll <code>backtest_jobs</code>, chạy BacktestEngine,<br/>publish BacktestCompleted.<br/><i>Replicas: 1 → N</i>"]
 
@@ -572,19 +592,23 @@ flowchart TB
 
     Binance["🌐 Binance<br/>REST + WSS"]
     NewsSrc["🌐 News Sources<br/>RSS / API"]
+    AI["<b>Internal AI/LLM Adapter</b><br/>structured inference only<br/>no workflow/domain writes"]
 
     Researcher -->|"HTTPS"| Web
     Web -->|"REST JSON + WebSocket<br/><code>/api/v1/*</code>"| API
-    Lab -->|"SQL"| DB
-    Py -->|"SQL: ghi trades/evaluations/leaderboard"| DB
+    API -->|"market commands/queries"| Lab
+    API -->|"signed internal command/query"| Py
+    Lab -->|"SQL: Go-owned market/auth"| DB
+    Lab -->|"normalized market contract"| Py
+    Py -->|"SQL: Python-owned research/agent"| DB
     Worker -->|"SQL: FOR UPDATE SKIP LOCKED<br/>+ ghi trades/evaluations"| DB
     Py -->|"INSERT backtest_jobs<br/><i>(job record = contract)</i>"| DB
     Py -.->|"cache overlay"| Cache
-    Worker -.->|"outbound rate-limit chung"| Cache
+    Py -->|"versioned inference request"| AI
 
     Lab -->|"HTTPS REST: klines"| Binance
     Lab <-->|"WSS: kline stream"| Binance
-    Lab -->|"HTTPS: fetch (allowlist)"| NewsSrc
+    Py -->|"Safe Fetch: allowlist + SSRF guard"| NewsSrc
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
     classDef container fill:#438dd5,stroke:#2e6295,color:#fff
@@ -606,19 +630,20 @@ flowchart TB
 
 ### 2.3 Level 3 — Component
 
-Bản render canonical của component view theo ownership thống nhất (§1.2) là **`03-c4-l3-python-strategy-platform`** — Python Strategy Platform theo ports/adapters, nơi chứa chuỗi driver strategy→backtest→ranking. Sơ đồ nhúng dưới đây là component view của **Go API** (edge & market gateway); hai view dùng cùng quy tắc phụ thuộc Application → Domain → Port → Infrastructure.
+Bản render canonical của component view theo ownership thống nhất (§1.2) là **`03-c4-l3-python-strategy-platform`** — Python Research Platform theo ports/adapters, nơi chứa chuỗi strategy→backtest→ranking, news và Agent Platform. Sơ đồ nhúng dưới đây dùng cùng boundary đó; Go chỉ xuất hiện sau `MarketDataPort`, còn `ai` chỉ xuất hiện sau `ModelGatewayPort`.
 
 ```mermaid
 flowchart TB
-    subgraph Lab["<b>Strategy Service</b> [Go]"]
+    subgraph Lab["<b>Python Research Platform</b> [FastAPI + Worker]"]
         direction TB
 
         subgraph AppLayer["Application Layer — điều phối, không tính toán domain"]
-            MarketSvc["MarketService"]
+            ResearchAPI["Research API<br/><i>signed internal commands/queries</i>"]
             ExpSvc["ExperimentService"]
             SearchSvc["SearchRunService"]
             NewsSvc["NewsService"]
             RankSvc["RankingService"]
+            AgentOrch["AgentOrchestrator<br/><i>deterministic state machine</i>"]
         end
 
         subgraph DomainLayer["Domain Layer — thuần, không I/O"]
@@ -628,6 +653,7 @@ flowchart TB
             Engine["<b>BacktestEngine</b><br/><i>BBO LIMIT replay, one-net position</i>"]
             Evaluator["<b>Evaluator</b><br/><i>Return · WinRate · MDD · Trades<br/>ProfitFactor · Sharpe</i>"]
             Indicators["IndicatorLibrary<br/><i>SMA/EMA · RSI · BB · S/R zone</i>"]
+            ToolRegistry["ToolRegistry + PermissionPolicy<br/><i>typed tools, budget, audit</i>"]
         end
 
         subgraph PortLayer["Ports — interface do domain định nghĩa"]
@@ -637,21 +663,25 @@ flowchart TB
             PSent["SentimentAnalyzer"]
             PJob["JobDispatcher"]
             PRepo["Repositories"]
+            PModel["ModelGatewayPort"]
         end
 
         subgraph InfraLayer["Infrastructure — adapter, chỉ dịch, không quyết định"]
-            ABinance["BinanceAdapter<br/><i>(OKXAdapter cắm cùng port)</i>"]
+            AGoMarket["Go MarketDataAdapter<br/><i>internal candles/BBO + stream</i>"]
             ARandom["RandomSearchGenerator"]
             ADomain["DomainGuidedGenerator"]
-            ARss["RssNewsAdapter · NewsApiAdapter"]
-            AModel["SentimentModelAdapter"]
+            ARss["SafeFetcher · ReadabilityExtractor<br/><i>allowlist + SSRF guard</i>"]
+            AModel["Internal AI/LLM Adapter Client<br/><i>structured inference only</i>"]
             APg["PostgresJobDispatcher<br/><i>(BrokerJobDispatcher nếu đo được cần)</i>"]
             ASql["PostgreSQL Repositories"]
         end
     end
 
-    MarketSvc --> PMarket --> ABinance
-    MarketSvc --> Indicators
+    ResearchAPI --> ExpSvc
+    ResearchAPI --> SearchSvc
+    ResearchAPI --> NewsSvc
+    ExpSvc --> PMarket --> AGoMarket
+    ExpSvc --> Indicators
     ExpSvc --> Registry --> Strategies
     ExpSvc --> Combiner
     ExpSvc --> Engine --> Evaluator
@@ -663,8 +693,12 @@ flowchart TB
     NewsSvc --> PNews
     PNews --> ARss
     NewsSvc --> PSent --> AModel
+    AgentOrch --> ToolRegistry
+    AgentOrch --> PModel --> AModel
+    ToolRegistry --> Registry
+    ToolRegistry --> PJob
+    ToolRegistry --> PRepo
     Evaluator --> RankSvc
-    MarketSvc --> PRepo
     ExpSvc --> PRepo
     RankSvc --> PRepo
     NewsSvc --> PRepo
@@ -674,10 +708,10 @@ flowchart TB
     classDef domain fill:#f5b041,stroke:#b9770e,color:#000
     classDef port fill:#d5dbdb,stroke:#839192,color:#000
     classDef infra fill:#a9dfbf,stroke:#5d8a6f,color:#000
-    class MarketSvc,ExpSvc,SearchSvc,NewsSvc,RankSvc app
-    class Registry,Strategies,Combiner,Engine,Evaluator,Indicators domain
-    class PMarket,PGen,PNews,PSent,PJob,PRepo port
-    class ABinance,ARandom,ADomain,ARss,AModel,APg,ASql infra
+    class ResearchAPI,ExpSvc,SearchSvc,NewsSvc,RankSvc,AgentOrch app
+    class Registry,Strategies,Combiner,Engine,Evaluator,Indicators,ToolRegistry domain
+    class PMarket,PGen,PNews,PSent,PJob,PRepo,PModel port
+    class AGoMarket,ARandom,ADomain,ARss,AModel,APg,ASql infra
 ```
 
 **Quy tắc phụ thuộc (đọc theo màu)**
@@ -721,43 +755,44 @@ flowchart LR
         WSHUB["WebSocket Hub<br/><i>subscription registry:<br/>(provider,symbol,timeframe,strategy,config_hash)</i>"]
     end
 
-    subgraph LabBox["STRATEGY SERVICE — Go"]
+    subgraph LabBox["DOMAIN TOPOLOGY — Go Market + Python Research"]
         direction TB
 
-        subgraph MD["① Market Data Module"]
+        subgraph MD["① Go Market Data + Python overlay consumer"]
             MDA["BinanceAdapter<br/>normalize → Candle"]
             MDS["MarketService<br/>reconnect · backfill · de-dup"]
-            OVL["OverlayCalculator<br/><i>indicator + signal</i>"]
+            OVL["Python OverlayCalculator<br/><i>indicator + signal</i>"]
         end
 
-        subgraph SE["② Strategy Engine"]
+        subgraph SE["② Python Strategy Engine"]
             REG["StrategyRegistry"]
             STR["Strategy plugins"]
             CMB["SignalCombiner"]
         end
 
-        subgraph EX["③ Experiment Module"]
+        subgraph EX["③ Python Experiment Module"]
             EXS["ExperimentService<br/><i>tạo snapshot bất biến</i>"]
             BTE["BacktestEngine"]
             EVA["Evaluator"]
         end
 
-        subgraph SS["④ Search Module"]
+        subgraph SS["④ Python Search Module"]
             GEN["CandidateGenerator<br/><i>Random | DomainGuided</i>"]
             SRS["SearchRunService<br/><i>stop condition · pause/resume</i>"]
         end
 
-        subgraph RK["⑤ Ranking Module"]
+        subgraph RK["⑤ Python Ranking Module"]
             RNK["RankingService<br/><i>score policy v1</i>"]
             TOPK["Leaderboard Top-K"]
         end
 
-        subgraph NS["⑥ News Module"]
-            NWC["NewsCollector<br/><i>chỉ collect</i>"]
-            SNT["SentimentAnalyzer<br/><i>chỉ classify</i>"]
+        subgraph NS["⑥ Python News + Agent Module"]
+            NWC["SafeFetcher + Extractor<br/><i>quality gate + LLM fallback</i>"]
+            SNT["SentimentOrchestrator<br/><i>gọi internal AI adapter</i>"]
+            AGT["AgentOrchestrator<br/><i>designer · implementation · repair<br/>news extraction · optional discovery/insight</i>"]
         end
 
-        BUS{{"In-process Event Dispatcher<br/><i>CandleClosed · StrategyGenerated<br/>BacktestQueued/Started/Completed/Failed<br/>StrategyEvaluated · LeaderboardUpdated<br/>NewsCollected · SentimentAnalyzed</i>"}}
+        BUS{{"Python domain events + transactional outbox<br/><i>AgentRunChanged · StrategyPublished<br/>BacktestQueued/Started/Completed/Failed<br/>StrategyEvaluated · LeaderboardUpdated<br/>NewsCollected · SentimentAnalyzed</i>"}}
     end
 
     subgraph WK["BACKTEST WORKER × N"]
@@ -780,12 +815,12 @@ flowchart LR
     WSHUB --> P4
 
     SR_UI -->|"POST /search-runs"| MW --> REST
-    REST --> SRS
+    REST -->|"signed internal command"| SRS
     SRS --> GEN
     GEN -->|"CandidateStrategy<br/><i>bất biến</i>"| SRS
     SRS -->|"dedup theo candidate_hash"| EXS
     P1 -->|"POST /experiments"| MW
-    REST --> EXS
+    REST -->|"signed internal command"| EXS
     EXS -->|"snapshot + INSERT backtest_jobs"| DB
     EXS --> REG --> STR
     STR --> CMB
@@ -804,8 +839,10 @@ flowchart LR
     NWC -->|"NewsCollected"| BUS
     BUS --> SNT
     SNT -->|"sentiment + model_version"| DB
-    DB --> NW_UI
-    DB -->|"aggregate theo giờ"| STR
+    NWC -->|"quality-gate failure"| AGT
+    AGT -->|"validated extraction"| SNT
+    REST -->|"proxy Python domain query"| NW_UI
+    DB -->|"Python repository aggregate theo giờ"| STR
 
     classDef ext fill:#e8e8e8,stroke:#999,color:#000
     classDef client fill:#dbeafe,stroke:#3b82f6,color:#000
@@ -816,7 +853,7 @@ flowchart LR
     class BN_R,BN_W,NEWS ext
     class P1,P2,P3,P4,LB_UI,SR_UI,NW_UI client
     class MW,REST,WSHUB go
-    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,BUS domain
+    class MDA,MDS,OVL,REG,STR,CMB,EXS,BTE,EVA,GEN,SRS,RNK,TOPK,NWC,SNT,AGT,BUS domain
     class W1 wk
     class DB db
 ```
@@ -916,10 +953,10 @@ sequenceDiagram
 MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,open_time) DO UPDATE
     Note over DB: candles là operational cache<br/>backtest đọc immutable dataset snapshot
     MS->>MS: cập nhật last_closed_at (dùng cho backfill)
-    MS->>EV: publish CandleClosed (in-process, Go API)
-    EV->>OC: CandleClosed
+    MS->>EV: normalized closed-candle event (Go → Python MarketDataPort)
+    EV->>OC: CandleClosed after Python ingestion boundary
     OC->>OC: tính overlay cho các config_hash đang được subscribe
-    OC->>HUB: ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)<br/>qua POST /internal/events
+    OC->>HUB: persist outbox, then POST /internal/events<br/>ChartOverlayUpdated(provider,symbol,timeframe,strategy@ver,config_hash, delta)
     HUB->>P1: chỉ overlay của config_hash mà Panel 1 đã subscribe
 ```
 
@@ -933,9 +970,9 @@ MS->>DB: INSERT ... ON CONFLICT (provider,symbol,timeframe,open_time) DO UPDATE
 
 Đề bài coi "Frontend chứa business logic" là anti-pattern (§44). Nhưng lý do thực tế mạnh hơn lý do hình thức:
 
-1. Nếu React tự tính RSI, và backtest tính RSI ở Go, thì **hai chỗ có thể lệch nhau** — user thấy tín hiệu BUY trên chart nhưng backtest không sinh trade. Không debug được.
+1. Nếu React tự tính RSI, và Python backtest tính RSI theo runtime canonical, thì **hai chỗ có thể lệch nhau** — user thấy tín hiệu BUY trên chart nhưng backtest không sinh trade. Không debug được.
 2. Overlay cho backtest result (entry/exit/SL/TP) **bắt buộc** phải từ backend vì nó phụ thuộc fill policy và position state đã ghi lại. Nếu overlay live tính ở client mà overlay result tính ở server thì hai loại marker cùng chart nhưng khác nguồn chân lý.
-3. Thêm strategy mới sẽ phải implement **2 lần** (Go cho backtest, TypeScript cho chart) → vi phạm trực tiếp mục tiêu "thêm strategy = 1 file".
+3. Thêm strategy mới sẽ phải implement **2 lần** (Python cho backtest, TypeScript cho chart) → vi phạm trực tiếp mục tiêu chỉ có một Strategy Runtime canonical.
 
 Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; frontend chỉ vẽ. Xem `specs/chart-overlay.md`.
 
@@ -963,6 +1000,7 @@ Vì vậy: `GET /api/v1/markets/chart-overlays` trả về series đã tính; fr
 | **Candles**              | Cache vận hành của nến đã đóng, đọc range query `WHERE provider,symbol,timeframe AND open_time BETWEEN` | **PostgreSQL** (partition theo tháng nếu số row đòi hỏi) | Range query trên B-tree index đủ nhanh; UNIQUE constraint là cơ chế de-dup backfill. Row có thể được cập nhật khi provider revise dữ liệu; nó **không** là nguồn đọc của backtest. |
 | **Market dataset candles** | Ghi một lần theo `market_dataset_id`, đọc tuần tự cho backtest | **PostgreSQL** | Bản sao vật lý bất biến của đúng tập nến đã hash. Backtest chỉ đọc bảng này, nên việc refresh cache `candles` không làm thay đổi kết quả cũ. |
 | **Strategy definitions / versions** | Ghi rất ít, đọc nhiều, **bất biến sau khi dùng**                    | **PostgreSQL**                  | Cần FK từ `experiments` để đảm bảo referential integrity của provenance. Đây là lý do không dùng file JSON. |
+| **Agent drafts / runs / attempts / artifacts / sandbox reports** | Workflow có restart/retry, cần evidence và immutable hash | **PostgreSQL + artifact storage abstraction** | Persist mọi transition, model/prompt/tool/compiler/sandbox provenance; binary/large report có thể nằm object store nhưng DB giữ hash + evidence reference. |
 | **Experiments (snapshot)** | Ghi 1 lần, đọc lại nhiều, schema cố tình mở rộng được                      | **PostgreSQL + JSONB**          | Cột chuẩn hoá cho field cần query/index (`symbol`, `timeframe`, `status`); `JSONB` cho `candidate_definition` vì cấu trúc composite lồng nhau và sẽ tiến hoá. |
 | **Backtest jobs**        | Ghi/đọc/update trạng thái tần suất cao, cần lock để nhiều worker không tranh nhau | **PostgreSQL** (`FOR UPDATE SKIP LOCKED`) | Cho đúng semantics của queue **và** transaction chung với việc ghi kết quả. Broker riêng không cho được điều thứ hai. Xem ADR-005. |
 | **Trades / equity points** | Ghi bulk theo run, đọc phân trang, **bất biến**                            | **PostgreSQL**                  | Là *fact* dùng để tính lại metric khi đổi scoring policy. Không được mất, không được sửa.                  |
@@ -2895,10 +2933,10 @@ flowchart TB
 
     L3 --> L4
 
-    subgraph L4["Lớp 4 — Validation & Domain guard (Go)"]
-        D1["Go: schema, range, enum, symbol, timeframe"]
-        D2["Go: validate domain input"]
-        D3["Go: parameters_schema per strategy version"]
+    subgraph L4["Lớp 4 — Edge validation + Python domain guard"]
+        D1["Go: body size, schema, range, enum, symbol, timeframe"]
+        D2["Python: ownership + domain semantic validation"]
+        D3["Python: StrategySpec/parameters schema + policy"]
         D4["DB: CHECK constraint + FK + UNIQUE"]
         D1 --> D2 --> D3 --> D4
     end
@@ -2953,60 +2991,52 @@ Chi tiết đầy đủ về middleware chain, refresh rotation với reuse dete
 
 **Vấn đề**: kiến trúc coupling cao khiến thêm 1 strategy phải sửa Controller, Backtester, UI, Database, Combination Engine, Evaluator (đề bài §41). Giảng viên sẽ kiểm tra điều này **tại chỗ**.
 
-**Giải pháp**: Registry Go tự đăng ký bằng package `init()` + metadata khai báo.
+**Giải pháp**: Python Registry map immutable `strategy_id@version` tới factory và metadata khai báo; plugin registration nằm trong `app/domain/strategy/plugins/catalog.py`.
 
-```go
-// server/internal/domain/strategy/registry.go
-type Registry struct {
-	strategies map[Key]StrategyFactory
-}
+```python
+# app/domain/strategy/registry.py
+class StrategyRegistry:
+    def __init__(self) -> None:
+        self._factories: dict[StrategyKey, StrategyFactory] = {}
 
-func (r *Registry) Register(def Definition, factory StrategyFactory) error {
-	key := Key{ID: def.StrategyID, Version: def.Version}
-	if _, exists := r.strategies[key]; exists {
-		return fmt.Errorf("duplicate strategy %s@%s", key.ID, key.Version)
-	}
-	r.strategies[key] = factory
-	return nil
-}
+    def register(self, definition: StrategyDefinition, factory: StrategyFactory) -> None:
+        key = StrategyKey(definition.strategy_id, definition.version)
+        if key in self._factories:
+            raise DuplicateStrategyError(key)
+        self._factories[key] = factory
 
-func (r *Registry) Resolve(id, version string) (Strategy, error) {
-	factory, ok := r.strategies[Key{ID: id, Version: version}]
-	if !ok {
-		return nil, UnknownStrategyError{ID: id, Version: version}
-	}
-	return factory(), nil
-}
+    def resolve(self, strategy_id: str, version: str) -> Strategy:
+        key = StrategyKey(strategy_id, version)
+        try:
+            return self._factories[key]()
+        except KeyError as exc:
+            raise UnknownStrategyError(key) from exc
 ```
 
 Thêm MACD — **toàn bộ diff**:
 
-```go
-// server/internal/domain/strategy/plugins/macd.go — FILE MỚI DUY NHẤT
-func RegisterMACD(r *strategy.Registry) error {
-	return r.Register(strategy.Definition{
-		StrategyID: "macd", Version: "1.0.0", Family: "trend",
-		ParametersSchema: json.RawMessage(`{
-			"fast_period":{"type":"integer","minimum":2,"default":12},
-			"slow_period":{"type":"integer","minimum":3,"default":26},
-			"signal_period":{"type":"integer","minimum":2,"default":9}
-		}`),
-		InputRequirements: []string{"candles.close", "indicator.ema"},
-		OverlayTypes: []string{"macd_line", "macd_signal", "buy_signal", "sell_signal"},
-		WarmUpCandles: func(p Params) int { return p.Int("slow_period") + p.Int("signal_period") },
-	}, func() strategy.Strategy { return MACD{} })
-}
+```python
+# app/domain/strategy/plugins/macd.py
+class MACDStrategy:
+    definition = StrategyDefinition(
+        strategy_id="macd",
+        version="1.0.0",
+        family="trend",
+        parameters_schema=MACD_PARAMETERS_SCHEMA,
+        input_requirements=("candles.close", "indicator.ema"),
+        overlay_types=("macd_line", "macd_signal", "buy_signal", "sell_signal"),
+    )
 
-func (MACD) Analyze(ctx strategy.AnalysisContext) (strategy.Signal, error) {
-	macd, ok1 := ctx.Indicators.At("macd_line", ctx.Index)
-	sig, ok2 := ctx.Indicators.At("macd_signal", ctx.Index)
-	prevMACD, ok3 := ctx.Indicators.At("macd_line", ctx.Index-1)
-	prevSig, ok4 := ctx.Indicators.At("macd_signal", ctx.Index-1)
-	if !(ok1 && ok2 && ok3 && ok4) { return strategy.Hold(), nil }
-	if prevMACD.LessThanOrEqual(prevSig) && macd.GreaterThan(sig) { return strategy.Buy(), nil }
-	if prevMACD.GreaterThanOrEqual(prevSig) && macd.LessThan(sig) { return strategy.Sell(), nil }
-	return strategy.Hold(), nil
-}
+    def analyze(self, ctx: AnalysisContext) -> Signal:
+        current = ctx.indicators.at("macd_line", ctx.index)
+        signal = ctx.indicators.at("macd_signal", ctx.index)
+        previous = ctx.indicators.at("macd_line", ctx.index - 1)
+        previous_signal = ctx.indicators.at("macd_signal", ctx.index - 1)
+        if previous <= previous_signal and current > signal:
+            return Signal.buy()
+        if previous >= previous_signal and current < signal:
+            return Signal.sell()
+        return Signal.hold()
 ```
 
 **Không phải sửa gì** — và đây là danh sách cụ thể để kiểm chứng bằng `git diff --stat`:
@@ -3018,14 +3048,14 @@ func (MACD) Analyze(ctx strategy.AnalysisContext) (strategy.Signal, error) {
 | `BacktestEngine`     | Nó gọi `strategy.analyze(ctx)` qua Protocol, không biết concrete type         |
 | `Evaluator`          | Nó nhận `BacktestResult`, không biết strategy nào sinh ra                     |
 | `RankingService`     | Nó nhận `Evaluation`                                                          |
-| Go API `/strategies` | Nó trả `all_definitions()` — MACD tự xuất hiện                                |
+| Public Go API `/strategies` | Proxy Python `all_definitions()` — MACD tự xuất hiện                                |
 | DB schema            | `strategy_definitions` + `strategy_versions` là **dữ liệu**, không phải cột mới. Startup tự upsert metadata |
 | UI                   | Form param sinh từ `parameters_schema` (JSON Schema → form). MACD tự có form đúng |
 | Search space         | `RandomSearchGenerator` đọc `all_definitions()`; MACD tự vào không gian tìm kiếm |
 
 **Năm ràng buộc để plugin không phá hệ thống** (R7):
 
-1. **Trusted compiled plugin boundary.** Strategy thêm bằng commit + deploy, không upload qua UI. Go worker gọi strategy qua context deadline/cooperative cancellation; worker lease là lớp phục hồi process. Không mô tả Python signal/sandbox trong Go runtime.
+1. **Hai admission mode.** DSL-backed StrategySpec được compiler deterministic sinh artifact allowlisted; custom Python chỉ đi qua policy + sandbox + human review + PR/build/deploy, không hot-load vào Registry production.
 2. **Exception isolation.** Error từ plugin bị catch ở biên gọi, log kèm `strategy_id@version`, candidate đánh fail. Không propagate lên làm crash worker.
 3. **Causal context là lỗi riêng.** Plugin đọc indicator/candle ngoài index bị reject, log mức ERROR, candidate fail. `strategy_lookahead_total` phải luôn bằng 0 (§5.2.1).
 4. **`warm_up_candles` bắt buộc khai báo.** Engine dùng nó để biết bắt đầu vòng lặp từ đâu. Không khai báo → registry reject lúc startup.
@@ -3041,7 +3071,7 @@ func (MACD) Analyze(ctx strategy.AnalysisContext) (strategy.Signal, error) {
 | --------------------------- | ----------------------------------------------------- | ----------------------------------------------- |
 | Rate limit per-IP (public reads) | 120 req/phút, burst 30                           | `429` + `Retry-After`                           |
 | Rate limit per-principal (writes) | `POST /experiments`: 30/phút; `POST /search-runs`: 5/phút | `429` + `Retry-After`                  |
-| Rate limit `POST /ai/predict` | 20/phút/principal                                    | `429`                                           |
+| Agent authoring admission | 20 run/phút/principal + model/tool/repair budget do Python enforce | `429` hoặc `422 budget_exceeded`; không có public `/ai/predict` |
 | WebSocket subscription      | ≤ 8 (anonymous) / ≤ 16 (auth) mỗi connection          | Frame `{"error":"subscription_limit"}`, không đóng conn |
 | WebSocket connection        | ≤ 4 mỗi IP                                            | `429` khi handshake                             |
 | **Concurrent search run**   | `user_quotas.max_concurrent_runs` (default **2**)     | `409 concurrent_run_limit`                      |
@@ -3325,20 +3355,17 @@ Bốn con số ở đây không có trong metric Prometheus nhưng quan trọng 
 **Sai**: một `TradingService` vừa lấy Binance data, tính indicator, crawl news,
 chạy sentiment, backtest, rank, ghi DB và gửi WebSocket.
 
-**Chặn bằng**: Go application modules có boundary rõ; domain package thuần, port
-do consumer định nghĩa, adapter chỉ dịch payload. Không có class nào chạm cả
-market data lẫn ranking.
+**Chặn bằng**: Go chỉ có edge/market modules; Python `research` có domain package thuần và ports do consumer định nghĩa. Contract test chặn Go nhập strategy/backtest/search/news và chặn Python domain nhập transport/infrastructure/AI client.
 
 **Kiểm chứng**:
 
-```go
-// server/tests/architecture/module_boundaries_test.go
-func TestDomainDoesNotImportInfrastructure(t *testing.T) {
-	assertNoImports(t, "server/internal/domain/strategy",
-		"repository", "transport", "infrastructure", "http")
-	assertNoImports(t, "server/internal/domain/backtest",
-		"transport", "repository", "http")
-}
+```python
+# tests/architecture/test_module_boundaries.py
+def test_go_owns_only_edge_and_market() -> None:
+    assert_no_packages("server/internal", {"strategy", "backtest", "search", "ranking", "news", "agent"})
+
+def test_python_domain_is_infrastructure_free() -> None:
+    assert_no_imports("app/domain", {"fastapi", "sqlalchemy", "requests", "httpx", "app.infrastructure"})
 ```
 
 Vi phạm ranh giới fail CI, không chờ code review.
@@ -3350,11 +3377,11 @@ Vi phạm ranh giới fail CI, không chờ code review.
 **Chặn bằng**: Registry lookup và composite là JSON snapshot, không phải nhánh
 code. Số tổ hợp không bị giới hạn bởi số branch.
 
-```go
-func TestNoStrategyNameBranching(t *testing.T) {
-	assertNoLiteralStrategySwitch(t, "server/internal",
-		[]string{"strategy_id ==", "switch strategyID"})
-}
+```python
+def test_no_strategy_name_branching() -> None:
+    assert_no_literal_strategy_switch(
+        "app", ["strategy_id ==", "match strategy_id", "if strategy_name"]
+    )
 ```
 
 Plugin được phép khai báo metadata của chính nó; application, engine,
@@ -3364,7 +3391,7 @@ evaluator và API không được branch theo literal strategy ID.
 
 **Sai**: React tự tính strategy, backtest, profit hoặc ranking.
 
-**Chặn bằng**: Go trả overlay, trade facts và metrics; frontend chỉ render.
+**Chặn bằng**: Go proxy DTO do Python domain tạo cho overlay, trade facts và metrics; frontend chỉ render.
 
 ```typescript
 // web/__tests__/no-domain-logic.test.ts
@@ -3385,14 +3412,14 @@ test("web không chứa domain calculation", () => {
 **Chặn bằng**: `AnalysisContext` không chứa repository, SQL connection,
 HTTP client, credential hoặc system time. Strategy compiled code chạy offline.
 
-```go
-func TestStrategyPurity(t *testing.T) {
-	assertNoImports(t, "server/internal/domain/strategy/plugins",
-		"database/sql", "repository", "net/http", "binance")
-	ctx := strategy.AnalysisContext{Symbol: "ETHUSDT", Index: 100}
-	_, err := strategy.NewRSI().Analyze(ctx)
-	if err != nil { t.Fatal(err) }
-}
+```python
+def test_strategy_purity() -> None:
+    assert_no_imports(
+        "app/domain/strategy/plugins",
+        {"sqlalchemy", "psycopg", "requests", "httpx", "app.infrastructure"},
+    )
+    signal = RSI().analyze(fixture_analysis_context(index=100))
+    assert signal.action in {"BUY", "SELL", "HOLD"}
 ```
 
 ### 9.5 Crawler phụ thuộc chặt vào ML
@@ -3401,7 +3428,7 @@ func TestStrategyPurity(t *testing.T) {
 
 **Chặn bằng**: `NewsCollector` publish `NewsCollected` và kết thúc. `SentimentAnalyzer` là consumer riêng, chạy sau, có thể chết mà không ảnh hưởng crawler (§6.4).
 
-**Kiểm chứng**: đã có trong Go module-boundary test (§9.1) — `server/internal/infrastructure/news` không được import strategy hoặc Python model internals. Cộng thêm một integration test: stop sentiment service, chạy news collection, assert `news_items` có row mới và `sentiment_results` không có row nào (chứ không phải có row `NEUTRAL`).
+**Kiểm chứng**: Python module-boundary test chặn `app/infrastructure/news` import model implementation; integration test dừng `ai`, chạy news collection, assert `news_items` có row mới và `sentiment_results` không có row nào (không giả `NEUTRAL`).
 
 ### 9.6 Ba anti-pattern bổ sung mà đề bài không nêu nhưng dự án này dễ mắc
 
@@ -3433,9 +3460,9 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 ### ADR-002: Plugin Registry cho Strategy (Strategy Pattern + Registry + auto-discovery)
 
 - **Bối cảnh**: Scenario đánh giá §41 — giảng viên yêu cầu thêm MACD tại chỗ.
-- **Quyết định**: Go `Strategy` interface + `StrategyRegistry.Register(Definition, Factory)` + plugin package self-registration + metadata khai báo trong `Definition()`.
+- **Quyết định**: Python `Strategy` Protocol + `StrategyRegistry.register(StrategyDefinition, factory)` + registration trong plugin catalog + metadata khai báo tường minh.
 - **Vì sao không Factory với switch**: switch là chính xác cái mà §41 kiểm tra. Mỗi strategy mới thêm một nhánh, và nhánh đó phải thêm ở mọi nơi có switch.
-- **Vì sao không plugin động (upload source qua UI)**: compile/execute code do user upload là RCE. Strategy được thêm bằng Go code + deploy. Đây là lý do `Strategy Developer` ở C4 Level 1 nối bằng nét đứt và không đi qua UI.
+- **Vì sao không hot-load arbitrary Python**: compile/execute code do user upload là RCE. DSL-backed StrategySpec chỉ đi qua compiler allowlisted; custom Python phải policy-check, sandbox, human review, PR/build/deploy rồi Registry mới load lúc startup.
 - **Vì sao metadata khai báo (không introspection)**: UI cần `parameters_schema` để sinh form, engine cần `input_requirements` để precompute indicator, generator cần `family` để phân nhóm domain-guided. Suy ra những thứ này từ signature hàm là mong manh; khai báo tường minh là hợp đồng.
 - **Đánh đổi**: mỗi plugin phải viết metadata (khoảng 10 dòng boilerplate). Bù lại được: form UI tự sinh, indicator tự precompute, tự vào search space, tự xuất hiện ở `GET /strategies`.
 
@@ -3579,6 +3606,31 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 - **Thứ tự kiểm tra trong nến**: SL/TP kiểm **trước** khi gọi strategy. Lệnh chờ đã tồn tại trên sàn nên một signal mới không hủy được lệnh đã khớp. Đảo thứ tự cho phép `SELL` ở nến `t` che mất SL đã chạm ở chính nến đó, và trade đóng ở `open(t+1)` với giá tốt hơn mức SL.
 - **Đánh đổi còn lại**: gap qua đêm nhảy qua `sl_price` vẫn được fill tại `sl_price` (thực tế khớp ở giá xấu hơn). Đây là giả định lạc quan duy nhất còn lại, đếm bằng `diagnostics.gapped_exits` để không ai tưởng con số là chính xác. Sửa đúng cần dữ liệu tick — ngoài phạm vi.
 
+### ADR-018: Agent là logical role trong Python, không phải microservice
+
+- **Quyết định**: một deterministic `AgentOrchestrator` điều khiển sáu role profile trong `research`: Designer, Implementation, Repair, News Extraction; Candidate Discovery và Market Insight là optional/default-off. Các role dùng chung ModelGateway, ToolRegistry, state store, budget, policy và observability.
+- **Vì sao**: workflow cần transition/idempotency nhất quán hơn là sáu network boundary. Tách container chỉ nhân auth, retry và state coordination mà không tạo isolation có ích; isolation thực sự nằm ở typed tool boundary và Sandbox Runner.
+
+### ADR-019: Agent chỉ gọi typed domain tools
+
+- **Quyết định**: tool có name/version, JSON schema, principal + agent-run context, deadline, idempotency key, permission, structured error, evidence reference và audit metric. Không agent nào có generic shell, SQL, arbitrary HTTP, filesystem, secret, Docker, publish hoặc policy/budget mutation.
+- **Vì sao**: prompt/model output không phải authority. `ToolRegistry` và `AgentPermissionPolicy` là enforcement point deterministic; danh sách tool từng role nằm trong `specs/agent-architecture.md`.
+
+### ADR-020: DSL-backed authoring là MVP; custom Python là advanced
+
+- **Quyết định**: MVP sinh declarative StrategySpec rồi compiler deterministic tạo Python allowlisted. Custom Python chỉ dùng khi DSL không biểu diễn được, phải policy-check + sandbox + human review + PR/build/deploy; không hot-load.
+- **Vì sao**: DSL path cho reproducibility và realtime/backtest parity mà không mở RCE. Custom Python giữ extensibility cho SMC phức tạp nhưng đặt trust boundary đúng chỗ.
+
+### ADR-021: Persisted agent state machine và bounded repair
+
+- **Quyết định**: mọi transition từ draft/source/spec/code/policy/sandbox/review/approval/publish được persist và idempotent; repair mặc định tối đa 3 attempt do orchestrator enforce. Pass test chỉ tới `REVIEW_REQUIRED`; chỉ human approval mới tạo immutable StrategyVersion đúng artifact hash đã review.
+- **Vì sao**: model call và worker có thể timeout/retry/restart. Không persist attempt/evidence sẽ sinh double-repair, vượt budget hoặc publish nhầm artifact.
+
+### ADR-022: Adaptive news extraction chỉ sau safe deterministic failure
+
+- **Quyết định**: Safe Fetch → Readability → Quality Gate; chỉ khi fail mới gọi NewsExtractionAgent với sanitized HTML đã fetch, sau đó schema/quality validation + content-hash cache rồi mới tagging/sentiment.
+- **Vì sao**: model fallback giúp chịu thay đổi DOM nhưng không được biến LLM thành browser có arbitrary network/SSRF surface.
+
 ---
 
 ## 11. Trả lời 8 câu hỏi kiến trúc trung tâm (đề bài §40)
@@ -3590,13 +3642,13 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 **Thêm 1 file Python plugin. Sửa 0 component core.**
 
 ```text
-server/internal/domain/strategy/plugins/macd.go        ← MỚI
-server/internal/domain/strategy/plugins/macd_test.go   ← MỚI (test đơn vị)
+app/domain/strategy/plugins/macd.py                    ← MỚI
+tests/test_indicators_plugins.py                       ← BỔ SUNG fixture/test MACD
 ```
 
 Không sửa: Registry, Combiner, BacktestEngine, Evaluator, RankingService, Go API,
 DB schema, UI hoặc CandidateGenerator. Plugin gọi
-`StrategyRegistry.Register(Definition, Factory)`; startup kiểm tra metadata,
+`StrategyRegistry.register(StrategyDefinition, factory)`; startup kiểm tra metadata,
 fingerprint và upsert version vào DB. `GET /strategies`, form UI và generator
 đọc registry nên MACD tự xuất hiện sau deploy.
 
@@ -3605,19 +3657,17 @@ fingerprint và upsert version vào DB. `GET /strategies`, form UI và generator
 
 ### 11.2 Search algorithm mới được thêm như thế nào? Có ảnh hưởng Backtesting Engine không?
 
-**Không ảnh hưởng.** Thêm một Go implementation của `CandidateGenerator` và
+**Không ảnh hưởng.** Thêm một Python implementation của `CandidateGenerator` và
 một dòng cấu hình. `BacktestEngine.Run(ctx, snapshot, candles, bbo)` chỉ nhận
 snapshot bất biến; nó không biết candidate được Random, Domain-guided hay
 Genetic sinh ra.
 
-```go
-type GeneticGenerator struct{}
-
-func (GeneticGenerator) Generate(ctx context.Context, space search.Space,
-	limit int, seed *int64, history search.History) ([]search.Candidate, error) {
-	// đọc history.TopK, tạo candidate bounded và deterministic theo seed
-	return nil, nil
-}
+```python
+class GeneticGenerator(CandidateGenerator):
+    def generate(self, space: SearchSpace, limit: int, seed: int | None,
+                 history: SearchHistory) -> list[CandidateStrategy]:
+        # đọc history.top_k; tạo batch bounded, deterministic theo seed
+        return generate_bounded_population(space, limit, seed, history)
 ```
 
 → Kiểm chứng: demo S4. Backtest/Evaluator/Leaderboard không đổi dòng nào.
@@ -3864,25 +3914,29 @@ Bước 16–18 là phần quan trọng nhất của demo. Bước 1–15 chứn
 | §45 Deliverables                              | §13 (cấu trúc repo), `README.md`                           | —                     |
 | §46 Demo scenario                             | §12.2                                                      | —                     |
 
-### 12.4 Target requirements — mười gap phải đóng và bất biến xuyên sơ đồ
+### 12.4 Target requirements — gap phải đóng và bất biến xuyên sơ đồ
 
-Bộ sơ đồ thống nhất ở `assets/diagrams/` (24 hình) mô tả **kiến trúc đích**; các gap
+Bộ sơ đồ thống nhất ở `assets/diagrams/` (33 hình) mô tả **kiến trúc đích**; các gap
 dưới đây là yêu cầu đích mà runtime hiện tại **chưa** đáp ứng đầy đủ. Sơ đồ chỉ là
 design evidence — bằng chứng hoàn thành phải đến từ test, benchmark, demo và
 provenance record thật (cột "verification gate" ở `traceability.md`).
 
-**Mười gap phải đóng**
+**Gap phải đóng**
 
 1. Strategy mới đi qua Registry/`StrategySpec`, không thêm `switch`/`if` trong core (§8.1, ADR-002).
-2. Text hoặc URL được AI chuyển thành declarative `StrategySpec` có validation, preview và human approval; **không** chạy code LLM sinh trực tiếp (`specs/strategy-authoring.md`).
+2. Text/URL/DSL tạo draft `StrategySpec`; Designer → Implementation → bounded Repair → policy → isolated sandbox → `REVIEW_REQUIRED` → human approval. DSL-backed compiler là MVP; custom Python là advanced PR/build/deploy (`specs/strategy-authoring.md`, `specs/agent-architecture.md`).
 3. Search algorithm được resolve qua `GeneratorRegistry`/`CandidateGenerator` port (§11.2).
 4. Market provider được resolve qua `MarketProviderRegistry` với DTO Candle/BBO chuẩn hoá (§11.3).
 5. Realtime dùng exchange WSS với reconnect/backoff, checkpoint và REST backfill (§6.1, sơ đồ 05/20).
 6. Execution state hỗ trợ FLAT/LONG/SHORT (sơ đồ 23).
 7. `TradeFact` ghi đủ pair, thời gian, side, notional, giá, SL/TP, fee, spread, slippage, gross/net PnL (sơ đồ 24).
 8. BBO được lưu và **đóng băng cùng dataset** để mô phỏng fill; fallback 5 bps phải được đánh dấu trong provenance nếu BBO thiếu (`specs/backtest.md`).
-9. News hỗ trợ RSS và article HTML; LLM tagging có model/prompt version và lưu DB theo content-hash cache (`specs/news.md`).
+9. News hỗ trợ RSS/article HTML theo Safe Fetch → Readability → Quality Gate → NewsExtractionAgent fallback trên sanitized HTML → validation/cache → tagging/sentiment (`specs/news.md`).
 10. Queue có lease, retry, dedup, ordering, dead-letter; leaderboard truy tới immutable strategy/dataset/execution/model versions và có benchmark scale (§8.3, `specs/observability.md`).
+11. Mỗi chart panel bootstrap đúng 1.000 nến đã đóng và merge provisional candle theo `open_time`; đổi panel nào chỉ thay request/subscription của panel đó.
+12. Agent runs/attempts/artifacts/sandbox evidence và mọi transition được persist/idempotent; repair mặc định tối đa 3 lần và không tự approve/publish.
+13. CandidateDiscoveryAgent và MarketInsightAgent là optional/default-off; Random Search vẫn là MVP, insight luôn read-only và không phải lệnh giao dịch.
+14. SMC được architecture-admit qua plugin/custom-code review path nhưng không được ghi là đã implement nếu chưa có code/test/demo evidence.
 
 **Bất biến xuyên sơ đồ (cross-diagram invariants)**
 
@@ -3894,14 +3948,54 @@ provenance record thật (cột "verification gate" ở `traceability.md`).
 6. Candidate, experiment snapshot, job và outbox event được tạo atomically.
 7. Job/event delivery là at-least-once; logical side effect phải idempotent.
 8. Event ordering chỉ được hứa theo aggregate sequence, không hứa global order.
-9. LLM output không phải executable code; chỉ declarative DSL đã validate/approve.
+9. Model output không mang authority: chỉ typed tools được policy cho phép; generic shell/SQL/HTTP/filesystem/secret/publish không bao giờ được expose.
 10. Target scale chỉ được công bố khi benchmark/metric chứng minh.
+
+### 12.5 Agent Architecture — logical roles, tools và state
+
+Agent Platform nằm **bên trong Python `research`**, không phải sáu service. `AgentOrchestrator` là state machine deterministic; sáu logical role chỉ là handler + model/prompt profile dùng chung `ModelGateway`, `ToolRegistry`, permission/budget middleware, repositories và event publisher.
+
+| Ưu tiên | Agent | Kết quả | Tool family chính |
+| --- | --- | --- | --- |
+| P0 | `StrategyDesignerAgent` | Draft StrategySpec hợp lệ | `source.*`, `strategy.get_*`, `strategy.validate_spec`, `strategy.save_draft_spec` |
+| P0 | `StrategyImplementationAgent` | Artifact + policy/sandbox evidence | `artifact.*`, `sandbox.*`, `draft.mark_review_required` |
+| P0 | `StrategyRepairAgent` | Spec/code patch trong budget | `agent.get_attempt_context`, validation/policy/sandbox tools, `draft.mark_failed` |
+| P1 | `NewsExtractionAgent` | Structured article sau deterministic failure | `document.*`, `news.get_item_schema`, `news.validate_extraction`, `news.save_extraction` |
+| P2 optional | `CandidateDiscoveryAgent` | Validated candidate batch vào queue chuẩn | `search.*`, `leaderboard.get_summary`, `candidate.*` |
+| P2 optional | `MarketInsightAgent` | Read-only research draft | `market.*`, `indicator.*`, `news.*`, `experiment.*`, `insight.save_draft` |
+
+State chính: `DRAFT_CREATED → SOURCE_READY → SPEC_GENERATING → SPEC_VALIDATING → CODE_GENERATING → POLICY_CHECKING → SANDBOX_TESTING`; fail còn budget thì `REPAIRING → CODE_GENERATING`, hết budget thì `FAILED`; pass thì `REVIEW_REQUIRED → APPROVED → PUBLISHED` hoặc `REJECTED`. Mọi transition có compare-and-set/idempotency, artifact hash và evidence reference. Chi tiết canonical, exact tool list, error taxonomy, persistence, sandbox policy, API/events/metrics và acceptance gates nằm tại `specs/agent-architecture.md`; sơ đồ 25–33 là visual contract tương ứng.
 
 ---
 
 ## 13. Phụ lục — Cấu trúc thư mục source code đề xuất
 
-Cấu trúc dưới đây **giữ nguyên** 3 code artifact đã có trong repo (`web/`, `server/`, `ai/`) và mở rộng vào bên trong, không phải viết lại từ đầu. Workload `worker` dùng lại artifact Go `server/` với entrypoint khác (§1.3.1). `ai/` chỉ giữ inference sentiment.
+Cấu trúc target giữ `web/`, `server/`, `app/`, `ai/`: `server/` chỉ là Go API/Market; `app/` là Python Research API + Worker và chứa toàn bộ domain/Agent Platform; `ai/` là internal structured-inference adapter.
+
+```text
+CryptoBot/
+├── web/                         # Next.js presentation; no domain calculations
+├── server/                      # Go API/edge/auth/quota + Market Data only
+│   ├── cmd/api/
+│   └── internal/{auth,application/market,httpapi,infrastructure/market,transport/ws}/
+├── app/                         # Python Research Platform
+│   ├── main.py                  # signed internal API
+│   ├── worker.py                # same image/package, different workload
+│   ├── domain/{strategy,indicator,backtest,evaluation,search,ranking,news,agent}/
+│   ├── services/{experiment,backtest_engine,evaluator,search,ranking,news,agent_orchestrator}.py
+│   ├── agents/{strategy_designer,strategy_implementation,strategy_repair,news_extraction,candidate_discovery,market_insight}.py
+│   ├── tools/                   # registry, schemas, permission/budget/audit middleware
+│   ├── ports/                   # market, model, persistence, jobs, artifacts, sandbox
+│   └── infrastructure/{postgres,market,ai,news,artifacts,sandbox}/
+├── ai/                          # internal structured inference only
+├── migrations/                 # Python-owned research/agent schema
+└── blueprint/                  # canonical specs + diagrams
+```
+
+<details>
+<summary>Archived expanded scaffold tree trước canonical v1.5</summary>
+
+> Khối dưới đây chỉ dùng để nhận diện file cần migrate; các package strategy/backtest/news cũ dưới `server/` không thuộc target.
 
 ```text
 CryptoBot/
@@ -3943,7 +4037,7 @@ CryptoBot/
 │   └── __tests__/
 │       └── no-domain-logic.test.ts      # §9.3 — chặn business logic ở FE
 │
-├── server/                       # Go 1.23 — Strategy Service, public API, worker
+├── server/                       # ARCHIVED SCAFFOLD: cần thu về Go API/Market only
 │   ├── cmd/
 │   │   ├── api/main.go            # HTTP + WebSocket public entrypoint
 │   │   └── worker/main.go         # poll job + BacktestEngine.Run entrypoint
@@ -4113,11 +4207,13 @@ CryptoBot/
     └── bench/scale_workers.sh    # S10 — đo 1 vs 4 worker
 ```
 
+</details>
+
 ### 13.1 Ba quy tắc về cấu trúc này
 
 **1. `domain/` không import `infrastructure/`.** Đây là quy tắc quan trọng nhất và là quy tắc duy nhất được kiểm tra bằng test tự động (`server/tests/architecture/module_boundaries_test.go`). Mọi ranh giới khác có thể tranh luận; ranh giới này thì không.
 
-**2. `strategy/plugins` tự đăng ký.** Mỗi module trong `plugins` tự đăng ký qua `register_all` (Python `app/`, mirror `server/internal/domain/strategy/plugins`). Thêm `MACDStrategy` là một file mới, không sửa registry hay danh sách trung tâm.
+**2. Python `strategy/plugins` đăng ký qua catalog.** Mỗi plugin implement cùng Protocol/Definition; thêm `MACDStrategy` trong `app/domain/strategy/plugins/` và test, không thêm strategy runtime vào Go.
 
 **3. Worker nằm cùng codebase Python với backend.** Không phải một service hay repo riêng. Cùng image, cùng dependency, cùng `BacktestEngine`. Đây là điều làm §11.4 (scale 100 → 100.000) thành một thay đổi deployment thay vì một dự án.
 

@@ -1,0 +1,19 @@
+flowchart TB
+    Trigger["Optional insight request<br/>symbol, timeframe and as-of time"]
+    Market["market.get_snapshot<br/>normalized Candle/BBO via Python MarketDataPort"]
+    Indicator["indicator.get_snapshot<br/>causal indicator values only"]
+    News["news.get_recent_summary<br/>authorized news and sentiment window"]
+    Results["experiment.get_recent_results<br/>evaluation summary, no raw DB access"]
+    Agent["MarketInsightAgent<br/>regime, observations, risks<br/>and confidence"]
+    Save["insight.save_draft<br/>read-only insight with data time,<br/>evidence and model version"]
+    Output["Read-only research insight<br/>not an executable BUY/SELL/order"]
+    Authoring["To become a strategy:<br/>normal authoring -> test -> human approval"]
+
+    Trigger --> Market --> Indicator --> News --> Results --> Agent --> Save --> Output --> Authoring
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    class Agent agent;
+    class Market,Indicator,News,Results,Save tool;
+    class Output,Authoring gate;

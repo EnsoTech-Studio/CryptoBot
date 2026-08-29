@@ -24,17 +24,15 @@ Skeleton verification ghi nhận hai điểm compatibility còn tồn tại: hà
 
 ## Contract
 
-- Browser chỉ gọi public Go API. Go xác thực, RBAC, ownership, quota và validate
-  payload; Python AI không có public auth surface.
-- `POST /api/v1/search-runs` chạy `SearchAdmission` ngay trong Go transaction:
-  `SELECT user_quotas FOR UPDATE` + đếm run active + INSERT `search_runs`.
-- `read.search_run_quota_v1` chỉ là projection phục vụ diagnostics. Nó **không** là
-  nguồn quyết định admission và không được dùng để pass/fail request.
-- Ownership lookup trong Go nhận `resourceKind` từ allowlist cố định và chỉ query
-  `read.experiment_summary_v1` hoặc `read.search_run_v1`; không nhận tên bảng từ
-  request và không query domain base table.
-- Python AI chỉ được gọi qua sentiment port với internal token hợp lệ. Go sở hữu
-  toàn bộ domain INSERT/UPDATE và migration; AI không ghi DB.
+- Browser chỉ gọi public Go API. Go xác thực JWT, RBAC route, edge quota, body/schema
+  validation và ký principal delegation; Python/AI không có public auth surface.
+- `POST /api/v1/search-runs` được Go coarse-admit rồi proxy tới Python `research`.
+  Python chạy authoritative `SearchAdmission` và INSERT `search_runs` trong cùng
+  Python-owned transaction để tránh race.
+- Ownership của experiment/search/news/agent resource được Python re-authorize qua
+  signed principal context. Go không query trực tiếp Python domain tables/projections.
+- Go chỉ sở hữu auth/session/edge/market writes. Python sở hữu strategy/backtest/search/
+  ranking/news/agent writes. AI Adapter không ghi database.
 
 ## Luồng chính
 
@@ -87,7 +85,7 @@ sequenceDiagram
     participant M as Middleware chain
     participant AU as Auth layer
     participant AZ as Authz layer
-    participant PY as Python AI Sentiment
+    participant PY as Python Research API
     participant DB as PostgreSQL
 
     B->>M: POST /api/v1/search-runs
@@ -100,7 +98,8 @@ sequenceDiagram
     AU->>AZ: principal user_id, role
     AZ->>AZ: L3 RBAC route cho phép RESEARCHER
     AZ->>AZ: L4a validate schema, enum, range, symbol
-    AZ->>DB: SearchAdmission: lock user_quotas + count active + INSERT run trong 1 transaction
+    AZ->>PY: signed principal + idempotency + validated command
+    PY->>DB: authoritative SearchAdmission + INSERT run trong 1 transaction
     alt quota vượt hoặc candidate limit vượt
         DB-->>PY: rollback → concurrent_run_limit/candidate_limit_exceeded
         PY-->>AZ: 409/422 error
@@ -156,10 +155,28 @@ COMMIT;
 
 ### D. Ownership check và OPERATOR override
 
-RBAC một mình không đủ: hai `RESEARCHER` cùng role nhưng A không được đọc experiment của B. Ownership là quyền theo **quan hệ sở hữu**, nên là một lớp kiểm tra riêng (`design.md` §7.1).
+RBAC một mình không đủ: hai `RESEARCHER` cùng role nhưng A không được đọc experiment của B.
+Ownership là quyền theo **quan hệ sở hữu**, nên là một lớp kiểm tra riêng (`design.md` §7.1).
+
+Target v1.5: Go kiểm RBAC route và ký principal delegation; Python domain service re-authorize
+`owner_id` trong chính transaction/query của resource. Response vẫn dùng `404` cho resource
+không tồn tại hoặc không thuộc principal. Go không có DB grant để đọc Python experiment/search
+table.
+
+```text
+Browser -> Go RequireRole
+  -> signed principal delegation {sub,role,request_id,exp,nonce}
+  -> Python RequireResourceAccess(resource_kind, resource_id, principal)
+  -> owner/operator/admin decision + audit
+```
+
+#### Archived direct-projection alternative - không còn là target
+
+Đoạn Go SQL dưới đây chỉ ghi lại thiết kế v1.3 đã bị thay thế. Không implement hoặc dùng nó làm
+canonical ownership path:
 
 ```go
-// server/internal/authz/ownership.go
+// ARCHIVED v1.3 - server/internal/authz/ownership.go - DO NOT IMPLEMENT
 // ponytail: một hàm cho mọi resource có owner_id. Không cần interface
 // per-resource khi câu SQL chỉ khác tên bảng.
 func (a *Authz) RequireOwnership(
@@ -330,7 +347,7 @@ services:
 
 - Cookie: `HttpOnly` + `Secure` + `SameSite=Strict`; `Path=/api/v1` cho access token, `Path=/api/v1/auth/refresh` cho refresh token — thu hẹp phạm vi gửi refresh token xuống đúng một endpoint.
 - Security header cố định: `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`.
-- Access token TTL **15 phút**, refresh **7 ngày**, JWT **RS256** với `kid` trong header để rotate được key. Public key phân phối cho Go Worker khi cần; **private key chỉ Go API giữ**.
+- Access token TTL **15 phút**, refresh **7 ngày**, JWT **RS256** với `kid` trong header để rotate được key. Go API xác thực public token; Python `research` chỉ nhận signed principal delegation có TTL/nonce ngắn và verify bằng service public key. **Private signing key chỉ Go API/edge giữ**.
 - **0 secret trong log/metric label**: không log `password`, `token`, `token_hash`, `Cookie`, `Authorization`. Label metric không bao giờ chứa `user_id` hay email (vừa là PII, vừa là cardinality explosion).
 - Rate limit: 120 req/phút per-IP cho public read; per-principal 30/phút `POST /experiments`, 5/phút `POST /search-runs`, 20/phút `POST /ai/predict`.
 - Cửa sổ revoke của access token là **≤ 15 phút** — đánh đổi có ý thức, không phải sơ suất (Luồng E).
@@ -340,7 +357,7 @@ services:
 
 - `http_requests_total{route,status}` cho phép đếm `401`/`403`/`429` theo route mà không cần parse log.
 - Log ERROR bắt buộc kèm `error_code` cho: `refresh_reuse`, `ownership_denied`, `csrf_failed`, `origin_not_allowed`, `quota_exceeded`.
-- Mọi response lỗi mang `request_id` khớp `X-Request-ID`, truy vết được xuyên Go API → Go Worker; AI sentiment nhận correlation ID khi được gọi (`specs/observability.md`).
+- Mọi response lỗi mang `request_id` khớp `X-Request-ID`, truy vết được xuyên Go API -> Python Research API/Worker -> tool/model/sandbox; AI inference nhận correlation ID khi được Python gọi (`specs/observability.md`).
 - Mọi hành động `pause/resume/cancel` ghi `search_actions.actor_id` — audit trail cho quyền override của OPERATOR.
 
 **UX**

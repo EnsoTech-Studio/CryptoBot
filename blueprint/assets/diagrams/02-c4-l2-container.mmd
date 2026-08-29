@@ -6,9 +6,9 @@ flowchart TB
 
         Go["<b>Go Edge & Market Gateway</b><br/>[Go workload]<br/><br/>Public REST/WSS, AuthN/AuthZ, quota,<br/>provider WSS/REST, normalize Candle/BBO,<br/>subscription fan-out và internal event ingress."]
 
-        PyAPI["<b>Python Strategy API</b><br/>[Python/FastAPI workload]<br/><br/>StrategySpec authoring + registry,<br/>realtime analysis, experiment/search orchestration,<br/>news/AI orchestration, result queries."]
+        PyAPI["<b>Python Research API</b><br/>[Python/FastAPI workload]<br/><br/>Strategy runtime/registry, Agent Platform,<br/>experiment/search orchestration,<br/>news/sentiment orchestration, result queries."]
 
-        PyWorker["<b>Python Backtest Worker × N</b><br/>[Cùng Python image/package]<br/><br/>Claim lease, load immutable Candle+BBO,<br/>Strategy Runtime, LONG/SHORT execution,<br/>persist facts + transactional outbox."]
+        PyWorker["<b>Python Research Worker × N</b><br/>[Cùng Python image/package]<br/><br/>Claim backtest/agent lease, load immutable Candle+BBO,<br/>Strategy Runtime, LONG/SHORT execution,<br/>persist facts/evidence + transactional outbox."]
 
         DB[("<b>PostgreSQL</b><br/>[Source of truth]<br/><br/>market events/snapshots, strategies,<br/>experiments/jobs, trades/evaluations,<br/>news/tags/sentiment, outbox/consumptions")]
 

@@ -1,657 +1,171 @@
-# CryptoBot Jira backlog
+# Crypto Strategy Lab — Canonical Delivery Backlog
 
-Blueprint-only backlog. No implementation included.
+> Blueprint v1.5. Đây là backlog thiết kế; `Planned` không có nghĩa đã implement. Requirement ID tham chiếu `traceability.md`.
 
-Import rules: every item is a Jira `Story`; Summary starts with external ID;
-assignees are `Member 1`–`Member 5`; points are Fibonacci; each `Depends on`
-entry becomes a Jira `blocks` link from dependency to dependent task. Existing
-active blueprint and Go skeleton are the product baseline. The reconciled domain
-rules were verified against the active Go skeleton and `blueprint/` specs; all
-task references below point to active repository `blueprint/` documents.
-Verification-spec restoration is intentionally not a separate task; fixture
-evidence belongs in M2-03.
+## Delivery boundaries
 
-## Reconciled handoff gates
+| Stream | Owner | In scope | Explicitly out of scope |
+| --- | --- | --- | --- |
+| GO | Go API/Market | Public REST/WSS, auth/RBAC/quota/CORS/error/correlation, provider REST/WSS, normalized Candle/BBO, history/provisional/closed persistence, checkpoint/reconnect/backfill, internal market contract, Python-event fan-out | Strategy, indicator, experiment, backtest, search, ranking, news, sentiment, agent, Python-domain tables |
+| PY | Python `research` | Strategy Runtime/Registry, indicators/composite, experiment/jobs/worker, backtest/evaluation/search/ranking/Leaderboard, news/sentiment orchestration, Agent Platform | Binance/provider connection, public browser edge, model hosting |
+| AI | Internal `ai` adapter | Versioned structured inference | Workflow state, tools, domain DB, crawl/fetch, approval/publish |
+| WEB | Next.js | Render/API client, four independent panels, authoring/review/progress/results | Domain calculation, direct Python/AI access |
+| QA/OPS | Cross-cutting | Contracts, migrations/grants, sandbox image/policy, observability, test/demo/benchmark evidence | Marking a requirement verified without an artifact |
 
-These constraints apply to every story that touches the four reconciled domains:
+## Priority map
 
-- Binance public market data uses one combined/multiplex market socket. The
-  `github.com/coder/websocket` dependency stays in infrastructure/transport;
-  domain packages never receive `*websocket.Conn` or coder-specific types.
-- One internal reader owns inbound socket reads; one writer owns outbound
-  control commands; consumers receive normalized events through bounded
-  channels. No public `Read` method or competing reader is allowed.
-- WebSocket lifecycle is `Run(ctx)` plus idempotent terminal `Close()` using
-  `CloseNow()`. External cancellation and explicit close share one shutdown
-  path; a terminally closed client never reconnects.
-- Closed candles, BBO, and provisional updates have separate paths: closed
-  candles use a bounded ingress channel and DB writer; BBO stays in memory; a
-  provisional kline never becomes a `Candle`, strategy input, or dataset row.
-- Realtime paper mode and backtest use the same normalized order/status
-  contracts, but live order placement, cancel, credentials, and private User
-  Data Stream activation remain disabled in MVP.
-- Backtest runs are single-threaded and deterministic. Merge key is
-  `(eventTime, priority, sourceSequence)` with BBO before `CandleClosed`;
-  Decimal arithmetic, one net LONG/SHORT position, executable-side LIMIT
-  fills, and final-BBO settlement are mandatory.
-- Public blueprint route `/api/v1/markets/stream` remains the browser contract.
-  Architecture's `/api/v1/realtime` is the logical facade name; M3-06 and
-  M5-01 must record any alias decision in transport/type tests instead of
-  allowing two undocumented contracts.
+- **P0 / final-project core:** boundary reconciliation, Go Market/API, Python runtime, exact backtest/result contract, Random Search/Leaderboard, four-panel 1.000-candle bootstrap, DSL-backed strategy authoring with Designer/Implementation/Repair, sandbox + human approval.
+- **P1:** adaptive news extraction with `NewsExtractionAgent`.
+- **P2 / optional-default-off:** `CandidateDiscoveryAgent`, `MarketInsightAgent`, custom Python publishing path, full SMC implementation.
 
-## Target gap epics (unified blueprint)
+## P0 epics and stories
 
-Epics derived from the ten target gaps of the unified blueprint
-(`design.md` §12.4; verification gates in `traceability.md`). Each epic is a
-Jira `Epic`; its member stories, points, and assignees are set at refinement —
-they are intentionally not counted in the totals below, which track the
-pre-existing reconciled backlog only. Owner language: Go = realtime market +
-edge/auth/quota; Python platform (`research`) = strategy runtime, backtest,
-search, ranking, news extraction/tagging + sentiment orchestration; `ai` =
-inference adapter.
+### ARCH-01 — Enforce Go/Python/AI ownership
 
-- **GAP-01 — Strategy registry/StrategySpec enforcement.** Architecture test
-  forbidding `if/switch` on strategy ID; add-one-plugin diff proof. (trace #1)
-- **GAP-02 — AI strategy authoring.** Text/URL → declarative `StrategySpec`
-  with validation, preview, human approval, SSRF/sandbox guards
-  (`specs/strategy-authoring.md`). (trace #2)
-- **GAP-03 — Search generator registry.** Resolve generators via
-  `GeneratorRegistry`; contract test running one candidate through ≥2
-  generators with zero core diff. (trace #3)
-- **GAP-04 — Market provider registry + normalized Candle/BBO DTO.** Add a
-  second provider adapter returning the same canonical DTOs; frontend/domain
-  unchanged. (trace #4)
-- **GAP-05 — WSS reconnect/backfill hardening.** Checkpoint + REST backfill
-  tests: zero missing/duplicate closed candles after a forced disconnect.
-  (trace #5)
-- **GAP-06 — LONG/SHORT execution states.** FLAT/LONG/SHORT one-net position
-  simulation with hand-calculated fixtures for open/close/reverse. (trace #6)
-- **GAP-07 — Full trade fact fields.** Pair, time, side, notional, price,
-  SL/TP, fee, spread, slippage, gross/net PnL across API/schema/UI. (trace #7)
-- **GAP-08 — Frozen BBO snapshot + fallback provenance.** BBO replay frozen
-  with dataset; BUY=ask/SELL=bid; 5 bps fallback flagged in provenance.
-  (trace #8)
-- **GAP-09 — News HTML extraction + LLM tagging cache.** Safe HTML fetch,
-  readability extraction, content-hash tag reuse, model/prompt versions,
-  null-on-model-down. (trace #9)
-- **GAP-10 — Scale/reliability proof.** Load benchmark, crash/takeover,
-  duplicate delivery, sequence gap, rerun-hash tests; publish scale numbers
-  only with metrics. (trace #10)
-
-## Member 3 — Infrastructure
-
-### M3-01 — Create PostgreSQL migrations, projections, and seeds
-
-- **Assignee / points:** Member 3 / 21 SP
-- **Depends on:** M1-01, M2-01, M2-02
-- **Blueprint refs:** `blueprint/design.md` §§4.1–4.2, 5.7, 8.3;
-  `blueprint/specs/experiment.md`, `blueprint/specs/evaluation.md`,
-  `blueprint/specs/market-data.md`, `blueprint/specs/news.md`,
-  `blueprint/specs/sentiment.md`, `blueprint/specs/search-loop.md`,
-  `blueprint/specs/leaderboard.md`.
-- **Purpose:** Make PostgreSQL source of truth for domain facts and views.
-- **Scope:** `server/migrations/`, `server/seeds/`; users, sessions, markets,
-  candles, stream checkpoints, datasets, strategies, experiments, jobs, runs, trades,
-  equity, evaluations, search, leaderboard, news, sentiment, event
-  consumption, and outbox schemas.
-- **Description:** Add fresh-install migrations, immutable snapshots,
-  constraints, uniqueness rules, lease columns, append-only facts, indexes,
-  projections, and deterministic seed data supporting readiness and ranking.
-  Keep BBO as a memory/replay stream rather than a candle-table row; preserve
-  `api_reader` and versioned `read.*` projections. Add checkpoint state needed
-  by reconnect/backfill and make snapshot/artifact mutation impossible at the
-  database boundary.
-- **Tests:** Fresh PostgreSQL migration; invalid status/duplicate dataset/mixed
-  sentiment-version rejection; stale-lease checks; readiness and leaderboard
-  seed queries; checkpoint round-trip; BBO is not persisted as a candle; read
-  role grants; snapshot UPDATE/DELETE rejection.
-
-### M3-02 — Implement PostgreSQL repositories, queue, and outbox
-
-- **Assignee / points:** Member 3 / 21 SP
-- **Depends on:** M3-01, M2-01, M2-02
-- **Purpose:** Connect persistence ports and provide safe jobs/events.
-- **Scope:** `server/internal/platform/database/`,
-  `infrastructure/postgres/`, `ports/persistence.go`, `ports/job.go`, outbox
-  and event-consumption adapters.
-- **Description:** Add pools, transactions, idempotent writes,
-  `FOR UPDATE SKIP LOCKED`, lease tokens, heartbeat, completion/failure guards,
-  retries, and atomic result-plus-outbox commits. Implement the closed-candle
-  DB writer behind a bounded ingress channel; checkpoint updates and retry
-  behavior must be observable and must not reorder market events. Repository
-  code must not create a second domain store outside Go-owned migrations/read
-  projections.
-- **Tests:** Repository integration; duplicate event idempotency; expired lease
-  reclaim; heartbeat only for matching token; old worker cannot write after
-  takeover; atomic result/outbox commit; bounded-channel shutdown and retry;
-  checkpoint persistence after reconnect.
-
-### M3-03 — Consolidate runtime configuration and observability
-
-- **Assignee / points:** Member 3 / 13 SP
-- **Depends on:** M3-01, M3-02
-- **Purpose:** Make startup, health, readiness, metrics, and compose behavior
-  production-safe.
-- **Scope:** `server/internal/platform/config/`, API/worker entrypoints,
-  observability, `docker-compose.yml`, `docker-compose.prod.yml`.
-- **Description:** Support `CORS_ALLOWED_ORIGINS` with `CORS_ORIGIN` scaffold
-  compatibility; expose `/health`, `/ready`, `/metrics`; keep AI optional for
-  core readiness; remove AI host publishing in production compose.
-- **Tests:** Health without DB; readiness `503` before DB/migration; AI outage
-  does not fail core readiness; invalid origins rejected; compose validation.
-
-### M3-04 — Register target HTTP transport and middleware
-
-- **Assignee / points:** Member 3 / 13 SP
-- **Depends on:** M3-03
-- **Purpose:** Replace scaffold-only routing with target transport.
-- **Scope:** `server/internal/transport/httpapi/`, middleware, route manifest,
-  and migration from `server/internal/httpapi/`.
-- **Description:** Register every manifest route with a handler or explicit
-  `501`; add stable errors, request/correlation IDs, structured logs, body
-  limits, timeouts, and exact allowlist CORS; async commands return `202`.
-  Register the public market WebSocket contract and keep live trading routes
-  absent. Transport owns protocol conversion only; it must not leak Binance
-  payloads or websocket library types into domain/application packages.
-- **Tests:** Every route registered; stable code/message/request ID/field
-  errors; arbitrary origin never echoed; limit/timeout behavior; canonical
-  `/health` and `/ready`; async `202` responses.
-
-### M3-05 — Implement authentication, authorization, CSRF, and quotas
-
-- **Assignee / points:** Member 3 / 13 SP
-- **Depends on:** M3-02, M3-04
-- **Purpose:** Secure sessions, ownership, roles, and expensive operations.
-- **Scope:** `server/internal/auth/`, session persistence, auth middleware,
-  CSRF, RBAC, ownership, AI/search quota middleware.
-- **Description:** Add register/login/refresh/logout, refresh-cookie rotation,
-  role and ownership checks, CSRF validation, inactive-user rejection, and
-  per-principal AI/search quotas.
-- **Tests:** Anonymous/owner/operator/admin matrix; cross-user denial;
-  refresh-token rotation/reuse; CSRF errors; stable quota errors; inactive
-  account rejection.
-
-### M3-06 — Integrate public APIs, internal events, and WebSocket transport
-
-- **Assignee / points:** Member 3 / 13 SP
-- **Depends on:** M1-06, M2-04, M3-04, M3-05
-- **Purpose:** Connect application services to REST, events, and realtime UI.
-- **Scope:** `transport/httpapi/`, `transport/ws/`, application services,
-  market/strategy/experiment/search/leaderboard/news/AI handlers, and
-  `/internal/events`.
-- **Blueprint refs:** `blueprint/design.md` §§5.5, 5.8, 6.1;
-  `blueprint/specs/market-data.md`, `blueprint/specs/chart-overlay.md`,
-  `blueprint/specs/experiment.md`, `blueprint/specs/auth.md`,
-  `blueprint/specs/observability.md`.
-- **Description:** Implement public resource routes, internal event intake,
-  versioned WS frames, sequence numbers, reconnect, and resync. Keep
-  `/api/v1/markets/stream` as the public blueprint route; if the logical
-  `/api/v1/realtime` facade is exposed, make it an explicit tested alias.
-  Enforce per-connection subscription limits and key isolation. Use a Hub
-  with one connection reader/writer ownership model, bounded outbound buffers,
-  provisional-frame dropping before closed/overlay frames, and explicit
-  `resync_required` on unrecoverable backpressure. Route `StreamStale` and
-  `StreamRecovered` only after checkpoint/backfill state is authoritative.
-  Normalize API frames (`CandleClosed`, `BBOUpdated`, `StreamStatusChanged`,
-  `SignalGenerated`, `OrderUpdated`, `PositionUpdated`, and
-  `BacktestProgress`) without exposing Binance or coder types. `/internal/events`
-  remains authenticated/internal and idempotent.
-- **Tests:** `httptest`/WebSocket integration for schemas, auth, ownership,
-  reconnect, ordering, route errors, subscription limit, sequence gap/resync,
-  stale/recovered ordering, backpressure, idempotent terminal close, and no
-  provisional candles in backtests. Run race/leak/shutdown tests proving one
-  reader, one writer, bounded channels, and no reconnect after `Close()`.
-
-## Member 1 — Market, indicators, strategy
-
-### M1-01 — Implement canonical market and domain primitives
-
-- **Assignee / points:** Member 1 / 8 SP
+- **Status:** Planned
+- **Requirements:** P01–P03
 - **Depends on:** none
-- **Purpose:** Establish validated deterministic domain values.
-- **Scope:** `server/internal/domain/common/`, `domain/market/`, causal
-  strategy inputs, canonical hash helpers.
-- **Blueprint refs:** `blueprint/design.md` §§5.1–5.3;
-  `blueprint/specs/market-data.md`, `blueprint/specs/strategy-registry.md`,
-  `blueprint/specs/composite-strategy.md`, `blueprint/specs/backtest.md`.
-- **Description:** Implement decimal `Candle`, transient `KlineUpdate`, BBO,
-  `CandleQuery`, subscription, validation, stable serialization, and immutable
-  `CausalCandles`; provisional data cannot become `Candle`. Preserve optional
-  live BBO `updateID` plus required fixture `sourceSequence`, UTC timestamps,
-  normalized symbols (`SOLUSDT`, not fixture directory `sol`), and keep domain
-  contracts independent of `coder/websocket`.
-- **Tests:** Invalid symbol/timeframe/provider rejection; future access returns
-  `LookAheadError`; deterministic hash; provisional exclusion; decimal-stable
-  serialization; BBO source ordering and provider isolation.
+- **Scope:** architecture tests, DB roles/grants, signed Go→Python internal contract, Python→Go `/internal/events`, production network exposure.
+- **Acceptance:**
+  - Go build has no strategy/backtest/search/ranking/news/agent package or Python-domain repository.
+  - Browser cannot reach `research` or `ai`; Go cannot write/read Python base tables.
+  - Signed principal/scopes/correlation/deadline reach Python; Python rechecks ownership.
+  - Python commits state + outbox before fan-out notification; duplicate event is idempotent.
+- **Refs:** `design.md` §1.2, ADR-011/016; `specs/python-research.md`; diagrams 02–04, 14, 33.
 
-### M1-02 — Implement causal indicator library
+### GO-01 — Public API, auth and Market Data Gateway
 
-- **Assignee / points:** Member 1 / 8 SP
-- **Depends on:** M1-01
-- **Purpose:** Provide reusable causal calculations.
-- **Scope:** `server/internal/domain/indicator/`.
-- **Description:** Implement SMA/MA cross, RSI, Bollinger Bands, and Go MACD
-  (`macd.go`) with warm-up, aligned series, decimal precision, and causal
-  `IndicatorView`. Indicator code remains pure: no DB, network, wall clock, or
-  exchange/websocket dependency.
-- **Tests:** Known vectors; warm-up; decimal precision; index bounds;
-  look-ahead rejection; MACD is not implemented in Python.
+- **Status:** Partial
+- **Requirements:** R01, R02, A08, P01
+- **Depends on:** ARCH-01
+- **Scope:** Binance REST/combined WSS, normalization, REST weight limiter, Candle/BBO boundaries, closed persistence/checkpoint, reconnect/backfill, public history, per-panel subscription, WebSocket fan-out.
+- **Acceptance:**
+  - Exactly 1.000 most-recent closed candles on panel bootstrap.
+  - Provisional candle with equal `open_time` replaces; newer appends; final closes/persists once.
+  - Forced disconnect recovers by checkpoint + overlap-safe REST backfill with no missing/duplicate closed candles.
+  - Raw Binance payload never crosses adapter; BBO does not become candle data.
+  - Changing panel 1 does not request, subscribe or render panel 2–4.
+- **Refs:** `specs/market-data.md`, `go-review-checklist.md`; diagrams 05, 09, 20.
 
-### M1-03 — Implement strategy registry and technical plugins
+### PY-01 — Canonical Strategy Runtime and plugin catalog
 
-- **Assignee / points:** Member 1 / 13 SP
-- **Depends on:** M1-01
-- **Purpose:** Make strategies versioned, immutable, and discoverable.
-- **Scope:** `domain/strategy/registry.go`, contract, and `plugins/` for MA
-  Cross, RSI, Bollinger, Support/Resistance, and MACD.
-- **Description:** Implement `Register(definition, factory)`, `Resolve`, sorted
-  immutable listing, fingerprint/version validation, parameter schemas,
-  warm-up metadata, and pure plugins. Plugin addition must require no core
-  branch. Strategy execution receives normalized causal input only and cannot
-  place live orders or access transport/persistence.
-- **Tests:** Duplicate/unknown version failure; invalid definition/missing
-  warm-up failure; fingerprint/version check; plugins run without DB/network;
-  deterministic listing; no registry/engine/API/UI branch for new plugin.
+- **Status:** Partial
+- **Requirements:** R03, R04, A09, P02
+- **Depends on:** ARCH-01
+- **Scope:** Strategy Protocol/Definition/Registry, causal context, indicator library, MA/RSI/Bollinger/S-R, composites, metadata-driven catalog/form/search, runtime parity.
+- **Acceptance:** no literal strategy branching; plugin purity/no-lookahead tests; same approved spec/version/fingerprint drives preview/realtime/backtest; MACD add proof does not change core.
+- **Refs:** `specs/strategy-registry.md`, `specs/composite-strategy.md`; diagrams 03, 10, 22.
 
-### M1-04 — Implement composite signal combiners
+### PY-02 — Experiment, backtest, evaluation and exact result facts
 
-- **Assignee / points:** Member 1 / 5 SP
-- **Depends on:** M1-03
-- **Purpose:** Combine resolved child signals deterministically.
-- **Scope:** `server/internal/domain/strategy/composite/`.
-- **Description:** Implement `weighted_vote` and `majority_vote`; validate
-  cardinality, weights, threshold, encoding, and prices; preserve evidence and
-  propagate child errors. Use strict symmetric threshold comparison, weighted
-  non-HOLD price, and an explicit `SizePolicy` for quantity; do not silently
-  drop a non-HOLD child that lacks price or size.
-- **Tests:** Weighted threshold/boundary; majority tie; HOLD; invalid policy;
-  child error; deterministic evidence/output independent of child ordering.
+- **Status:** Partial
+- **Requirements:** R05, R06, R09, R11, A04–A06
+- **Depends on:** PY-01, GO-01
+- **Scope:** immutable ExperimentSnapshot, job lease/heartbeat/takeover, BBO execution, one-net LONG/SHORT, risk/cost policies, facts/evaluation/provenance and result query DTO.
+- **Acceptance:**
+  - Create snapshot + candidate/job atomically; worker restart never double-counts.
+  - BUY uses ask, SELL uses bid; no future candle; deterministic rerun.
+  - Trade DTO/UI has `symbol`, `quote_currency`, entry/exit time, side, quantity, entry/exit notional, prices, nullable SL/TP, fee/spread/slippage, gross/net PnL.
+  - Wins/losses/total profit/Win Rate/Max Drawdown reconcile to immutable facts.
+- **Refs:** `specs/experiment.md`, `specs/backtest.md`, `specs/evaluation.md`, `specs/visualization.md`; diagrams 16–19, 23, 24.
 
-### M1-05 — Implement Binance REST/WebSocket adapters
+### PY-03 — Bounded Search and Leaderboard
 
-- **Assignee / points:** Member 1 / 13 SP
-- **Depends on:** M1-01
-- **Purpose:** Normalize historical klines, realtime klines, and BBO.
-- **Blueprint refs:** `blueprint/design.md` §6.1, §9;
-  `blueprint/specs/market-data.md` (execution handoff and provider limits).
-- **Scope:** `server/internal/infrastructure/market/binance.go`, private REST/
-  WS payloads, `github.com/coder/websocket`, combined-stream client, limiter,
-  reconnect client, and disabled private User Data Stream seam.
-- **Description:** Parse USDⓈ-M Futures REST `/fapi/v1/klines`, combined market
-  stream `/market/stream`, kline, and `bookTicker`; normalize SOL to SOLUSDT;
-  use decimals; enforce final semantics; validate malformed/future data; add
-  weight limiting/backoff; keep BBO separate. Implement a logical facade with
-  `Run(ctx)`, idempotent terminal `Close()`, desired subscription snapshot,
-  `Subscribe`/`Unsubscribe`, bounded `Events`/`Errors`, one internal reader,
-  one serialized writer, and keepalive. Unwrap `{stream,data}` envelopes,
-  correlate numeric control IDs, filter control acknowledgements from domain
-  events, lowercase stream names, restore subscriptions after reconnect, and
-  publish recovered only after acknowledgements. Apply Binance 24-hour,
-  ping/pong, inbound-rate, and stream-count policies in the adapter. Keep
-  `ORDER_TRADE_UPDATE`/`ACCOUNT_UPDATE` parser contracts available for future
-  use; preserve Binance `o.X` (current order status) separately from `o.x`
-  (execution type). Never activate private UDS or live order placement without
-  a valid explicitly enabled adapter.
-- **Tests:** Mock parsing, malformed payloads, final/non-final events, BBO order,
-  combined unwrap, control-ID correlation, stream isolation, one-reader/
-  one-writer ownership, bounded event behavior, ping timeout, 24-hour
-  reconnect, idempotent `Close()`/`CloseNow()`, no reconnect after close,
-  rate limits, and reconnect snapshot restore; opt-in live test with
-  `BINANCE_LIVE=1`. Race and goroutine-leak tests are mandatory.
+- **Status:** Partial
+- **Requirements:** R07, R08, R12, A01
+- **Depends on:** PY-02
+- **Scope:** Random + Domain-Guided CandidateGenerator, generator registry, dedup, quota/stop/pause/resume/cancel, bounded queue, evaluation-based ranking and Top-K provenance.
+- **Acceptance:** seed determinism; candidate/time/no-improvement stop gates; no unbounded loop; generator cannot call backtest directly; scoring change does not rewrite facts; Leaderboard entry traces exact strategy/dataset/execution/evaluator/score versions.
+- **Refs:** `specs/search-loop.md`, `specs/leaderboard.md`; diagrams 11, 12, 15, 24.
 
-### M1-06 — Implement market service, reconnect, checkpoints, and datasets
+### AGT-01 — Shared Agent Platform
 
-- **Assignee / points:** Member 1 / 13 SP
-- **Depends on:** M1-05
-- **Purpose:** Produce reliable closed-candle datasets plus in-memory BBO events.
-- **Scope:** Market service, checkpoint ports, dataset builder, event
-  envelopes, market integration tests.
-- **Blueprint refs:** `blueprint/design.md` §§4.2, 6.1;
-  `blueprint/specs/market-data.md`, `blueprint/specs/experiment.md`.
-- **Description:** Convert adapter callbacks into normalized events. Send
-  closed candles through a bounded ingress channel to the DB writer and a
-  separate closed-candle strategy bus; send BBO to a low-latency in-memory hub
-  and never to candle persistence. Backfill reconnect gaps from the DB
-  checkpoint, deduplicate by provider/symbol/timeframe/open time, suppress
-  duplicate downstream closed events, publish stale/recovered/closed events,
-  and create immutable content-hashed datasets. A DB failure is observable and
-  retryable without silently reordering market events.
-- **Tests:** 60-second disconnect has zero missing/duplicate closed candles;
-  provisional exclusion; stable dataset hash; idempotent repeated backfill;
-  deterministic BBO sequence; provider isolation; bounded-channel cancellation;
-  DB-writer retry; recovered event only after backfill and subscription restore.
+- **Status:** Planned
+- **Requirements:** P04
+- **Depends on:** ARCH-01
+- **Scope:** deterministic `AgentOrchestrator`, `ModelGateway`, `ToolRegistry`, permission/budget/audit middleware, run/attempt repositories, event publisher and idempotent transitions.
+- **Implement:**
+  - `strategy_drafts`, `agent_runs`, `agent_attempts`, `strategy_artifacts`, `sandbox_runs` persistence.
+  - Versioned invocation/result envelopes with principal, run, correlation, deadline, idempotency and evidence reference.
+  - Stable errors: validation/policy/sandbox/model/tool/budget/conflict/permission/cancelled.
+- **Acceptance:** role allowlist denies undeclared tool; generic shell/SQL/HTTP/filesystem/secret/publish/policy/budget tools do not exist; retry cannot duplicate attempt/transition; model output cannot grant authority.
+- **Refs:** `specs/agent-architecture.md`; diagrams 25, 26, 33.
 
-## Member 2 — Backtest, evaluation, jobs, search
+### AGT-02 — Strategy Designer Agent and safe source ingestion
 
-### M2-01 — Implement chronological backtest engine
+- **Status:** Planned
+- **Requirements:** A02, P04–P05
+- **Depends on:** AGT-01, PY-01
+- **Tools:** `source.get_document`, `strategy.get_catalog`, `strategy.get_dsl_schema`, `strategy.validate_spec`, `strategy.get_validation_errors`, `strategy.save_draft_spec`.
+- **Acceptance:** text and allowlisted URL produce schema/semantic-valid draft; SSRF/DNS rebinding/redirect/size/content-type checks; prompt injection cannot add tools or publish; source/content/model/prompt hashes persist.
+- **Refs:** `specs/strategy-authoring.md`, `specs/agent-architecture.md`; diagrams 21, 27, 33.
 
-- **Assignee / points:** Member 2 / 21 SP
-- **Depends on:** M1-01, M1-02, M1-03, M1-04
-- **Purpose:** Produce deterministic raw trade/order/signal/equity facts.
-- **Scope:** `domain/backtest/`, `ports.BacktestEngine` implementation, event
-  merger, order manager, position tracker, synthetic order-status stream, BBO
-  replay.
-- **Blueprint refs:** `blueprint/design.md` §§5.2–5.4, 6.3;
-  `blueprint/specs/backtest.md`, `blueprint/specs/market-data.md`,
-  `blueprint/specs/composite-strategy.md`.
-- **Description:** Run chronologically on closed candles; BBO precedes same-time
-  candle; fixed notional, one-net position, BBO LIMIT, final-BBO exit, initial
-  100 USDT, notional 10 USDT, leverage 1, fee 10 bps, zero slippage. Use one
-  single-thread event loop with key `(eventTime, priority, sourceSequence)`:
-  BBO, `CandleClosed`, strategy/order command, synthetic order status, then
-  position/equity observation. BUY LIMIT crosses `ask <= limit` and fills at
-  ask; SELL LIMIT crosses `bid >= limit` and fills at bid. Maintain one net
-  LONG/SHORT position: opposite signals exit, same-side signals are ignored,
-  pending opposite entries cancel-and-replace, and an entry owns a logical
-  OCO SL/TP plan. MVP full-fills/cancel only; parse and observe partial-fill
-  statuses without applying them. Settle an open LONG at final executable bid
-  or SHORT at final executable ask. No live order path.
-- **Tests:** Synthetic golden replay; warm-up/no-lookahead; deterministic facts;
-  fill-side/fee; opposite and same-side behavior; missing final BBO; invalid
-  snapshot with no partial result; event-priority ties; OCO stop-loss-first;
-  cancel/replace; partial-fill non-application; final-BBO settlement; race
-  check proving each run owns isolated state.
+### AGT-03 — Strategy Implementation, policy and sandbox
 
-### M2-02 — Implement evaluation metrics and score policy
+- **Status:** Planned
+- **Requirements:** A03, P05
+- **Depends on:** AGT-02
+- **Tools:** `artifact.compile_from_spec`, `artifact.create_custom_draft`, `artifact.run_policy_check`, `artifact.save_version`, `sandbox.run_contract_tests`, `sandbox.get_test_report`, `draft.mark_review_required`.
+- **Implement:** deterministic StrategySpec compiler, AST/import policy checker, disposable non-root/no-network/no-secret sandbox, fixture/contract/determinism/parity tests, artifact/report repositories.
+- **Acceptance:** DSL compile reproducible; violation fails before execution; sandbox limits CPU/RAM/time/output/fs/process; pass reaches only `REVIEW_REQUIRED`; custom Python cannot hot-load.
+- **Refs:** diagrams 21, 28, 33.
 
-- **Assignee / points:** Member 2 / 8 SP
-- **Depends on:** M2-01
-- **Purpose:** Calculate reproducible metrics from immutable facts.
-- **Scope:** `server/internal/domain/evaluation/` and evaluation service.
-- **Blueprint refs:** `blueprint/design.md` §§4.2, 6.3;
-  `blueprint/specs/evaluation.md`, `blueprint/specs/backtest.md`.
-- **Description:** Calculate return, drawdown, volatility/Sharpe, win rate,
-  trade count, profit factor, average trade, and policy/version provenance;
-  undefined values stay null with a machine-readable reason. Evaluator is pure:
-  it receives immutable execution facts and cannot call strategy, exchange,
-  clock, or DB. Include input/strategy/evaluator hashes and canonical result
-  hash.
-- **Tests:** Empty/no-trade; zero variance; missing equity; decimal determinism;
-  invalid policy; evaluator/score provenance; minimum-trade eligibility.
+### AGT-04 — Bounded Repair, review and immutable publishing
 
-### M2-03 — Execute and document SOL fixture backtest
+- **Status:** Planned
+- **Requirements:** A03, P04–P05
+- **Depends on:** AGT-03
+- **Tools:** `agent.get_attempt_context`, `sandbox.get_test_report`, `strategy.apply_spec_patch`, `artifact.apply_code_patch`, validation/policy/sandbox tools, `draft.mark_failed`.
+- **Acceptance:** orchestrator enforces default max 3 repair attempts; repair cannot alter fixtures/policy/budget or approve; restart resumes exactly once; rejection hides Registry version; approval publishes exactly reviewed spec/artifact hash and is idempotent/conflict-safe.
+- **Refs:** diagrams 26, 29, 33.
 
-- **Assignee / points:** Member 2 / 8 SP
-- **Depends on:** M1-06, M2-01, M2-02
-- **Purpose:** Verify the market-to-evaluation chain with supplied fixture.
-- **Scope:** Fixture loaders/replay for
-  `data/formatted/sol/2026-03-04/{ohlcv.csv,bbo.csv}`; update the reconciled
-  fixture evidence record only after the implementation produces a result.
-- **Blueprint refs:** `blueprint/specs/backtest.md` (Verification fixture),
-  `blueprint/specs/evaluation.md` (Verification fixture), `blueprint/README.md`
-  (fixture/evidence rule).
-- **Description:** Load the SOL OHLCV/BBO files; record hashes, configuration,
-  structural outputs, metrics, and reproducibility. Record PnL only when engine
-  produces it. The current reconciled record intentionally contains only
-  structural expectations and notes that the fixture passport is absent; do not
-  recreate a second verification document in `blueprint/` or guess missing
-  values.
-- **Tests:** 1,443 candles and 800,692 BBO rows; 29 strict MA20/MA50 signals;
-  15 settled trades under fixed policy; five identical result hashes; no
-  invented PnL; input-file SHA-256 and sourceSequence/order-policy evidence.
+### WEB-01 — Authoring, review, progress and exact results UI
 
-### M2-04 — Implement experiments, worker execution, and lease lifecycle
+- **Status:** Planned
+- **Requirements:** R02, R08–R09, A01–A06, A08
+- **Depends on:** GO-01, PY-02, PY-03, AGT-04
+- **Scope:** four panels, draft/spec/evidence/repair/review screens, agent progress via Go WSS, search/Leaderboard, chart markers and exact trade columns.
+- **Acceptance:** browser network targets Go only; pending/degraded/null states explicit; approval binds visible artifact hash; accessible keyboard/focus/error behavior; no indicator/PnL/ranking logic in TypeScript.
 
-- **Assignee / points:** Member 2 / 21 SP
-- **Depends on:** M2-01, M2-02, M3-02
-- **Purpose:** Execute immutable snapshots asynchronously and safely.
-- **Scope:** `application/experiment.go`, `application/worker.go`, job ports,
-  worker command, persistence, retry/cancel, lease heartbeat.
-- **Description:** Implement snapshot creation, async enqueue, claim/heartbeat/
-  complete/fail, retries, cancellation, stale-worker rejection, idempotent
-  completion, and atomic facts/run/outbox commit. Keep each backtest run
-  single-threaded and deterministic; use the same normalized order/status
-  contract as realtime paper mode, with `SyntheticOrderStatusStream` rather
-  than a private/live exchange stream.
-- **Tests:** Snapshot immutability; retry; heartbeat; takeover; stale commit
-  rejection; cancellation; duplicate completion; restart recovery.
+## P1 epic
 
-### M2-05 — Implement search loop and candidate generators
+### NEWS-01 — Adaptive news extraction and sentiment orchestration
 
-- **Assignee / points:** Member 2 / 13 SP
-- **Depends on:** M1-03, M1-04, M2-04
-- **Purpose:** Search strategy combinations reproducibly and with bounds.
-- **Scope:** `domain/search/`, `infrastructure/search/`, candidate hashes,
-  generators, search-run service, progress and stop state.
-- **Description:** Implement seeded random search, `SearchSpace`,
-  `SearchHistory`, `CandidateStrategy`, canonical dedup, bounded attempts,
-  stop conditions, progress events, and experiment enqueueing.
-- **Tests:** Same seed; duplicate skip; max candidates/duration/non-improvement/
-  failure-rate stops; exhausted-space detection; failed candidates continue;
-  progress survives restart.
+- **Status:** Planned
+- **Requirements:** R10, A07
+- **Depends on:** AGT-01, ARCH-01
+- **Flow:** Safe Fetch → Readability → Quality Gate → on failure `NewsExtractionAgent` with sanitized HTML → schema/quality validation → content-hash/model/prompt cache → tags → sentiment.
+- **Tools:** `document.get_sanitized_html`, `document.get_extraction_errors`, `news.get_item_schema`, `news.validate_extraction`, `news.save_extraction`.
+- **Acceptance:** agent has no fetch/arbitrary URL tool; deterministic pass never calls model; malformed extraction is not saved; DOM-change fixture recovers; AI-down leaves sentiment unavailable/null while collection persists.
+- **Refs:** `specs/news.md`, `specs/sentiment.md`; diagrams 13, 30, 33.
 
-### M2-06 — Implement ranking, leaderboard, and provenance
+## P2 optional epics
 
-- **Assignee / points:** Member 2 / 13 SP
-- **Depends on:** M2-02, M3-02
-- **Purpose:** Rank valid completed runs with traceable policy.
-- **Scope:** `domain/ranking/`, ranking service, leaderboard repository/projection,
-  tie-breaking, provenance DTOs.
-- **Description:** Apply active score policy, exclude incomplete runs, rank
-  deterministically, and expose dataset/snapshot/strategy/evaluator/policy
-  provenance.
-- **Tests:** Missing policy fails readiness/ranking; deterministic ties;
-  incomplete exclusion; min-trade rule; exact hash provenance; duplicate event
-  idempotency.
+### DISC-01 — Candidate Discovery Agent
 
-## Member 4 — News and AI
+- **Status:** Optional / default-off
+- **Requirements:** A01, P04
+- **Depends on:** PY-03, AGT-01
+- **Tools:** `search.get_search_space`, `search.get_tested_hashes`, `leaderboard.get_summary`, `candidate.validate`, `candidate.estimate_cost`, `candidate.submit_batch`.
+- **Acceptance:** only validated DSL candidates; normal quota/dedup/queue/stop path; no direct backtest/Leaderboard write; generator/model/prompt/history/candidate provenance.
+- **Refs:** diagram 31.
 
-### M4-01 — Define and implement AI sentiment service contract
+### INSIGHT-01 — Read-only Market Insight Agent
 
-- **Assignee / points:** Member 4 / 8 SP
-- **Depends on:** none
-- **Purpose:** Stabilize Python inference boundary.
-- **Scope:** `ai/app/main.py`, `schemas.py`, `services/predictor.py`, health and
-  inference tests.
-- **Description:** Preserve internal `POST /predict`; add model version;
-  validate bounded text and confidence; keep health separate; report model
-  failure explicitly.
-- **Tests:** Health; valid prediction; blank/oversized text; score bounds;
-  malformed output; model/model-version presence; no fallback sentiment.
+- **Status:** Optional / default-off
+- **Requirements:** A10, P04
+- **Depends on:** AGT-01, GO-01, NEWS-01
+- **Tools:** `market.get_snapshot`, `indicator.get_snapshot`, `news.get_recent_summary`, `experiment.get_recent_results`, `insight.save_draft`.
+- **Acceptance:** timestamped insight/provenance; cannot place order, publish strategy or submit candidate; strategy conversion restarts normal authoring/review flow.
+- **Refs:** diagram 32.
 
-### M4-02 — Implement Go sentiment model adapter
+### SMC-01 — Full SMC plugin/custom strategy
 
-- **Assignee / points:** Member 4 / 5 SP
-- **Depends on:** M4-01
-- **Purpose:** Adapt Python inference to `ports.SentimentAnalyzer`.
-- **Scope:** `server/internal/infrastructure/ai/analyzer.go`, HTTP client,
-  timeout/error mapping, tests.
-- **Description:** Call internal `/predict`, map to `sentiment.Result`, carry
-  model version, bound payload/timeouts, and never synthesize `NEUTRAL/0.5`.
-- **Tests:** `httptest` success, timeout, 4xx/5xx, malformed JSON, bounds,
-  version mapping, unavailable error, no fallback row.
+- **Status:** Optional until teacher confirms final-demo scope
+- **Requirements:** A09
+- **Depends on:** PY-01, AGT-04
+- **Acceptance:** explicit SMC method/inputs/warm-up/causality; plugin + fixtures + no-lookahead + demo evidence. Architecture support alone must not be reported as implementation.
 
-### M4-03 — Implement approved news collection and SSRF controls
+## Release evidence gate
 
-- **Assignee / points:** Member 4 / 13 SP
-- **Depends on:** M3-01, M3-02
-- **Purpose:** Collect trusted news safely and idempotently.
-- **Scope:** `domain/news/`, `infrastructure/news/`, RSS provider, canonical
-  URL/sanitization, source persistence, worker job, news events.
-- **Description:** Use only configured `ApprovedSource`; normalize `news.Item`;
-  sanitize/deduplicate; enforce HTTPS/origin/DNS/private-network/redirect/
-  timeout/size/item limits; emit `NewsCollected`.
-- **Tests:** Approved-source and no-client-URL enforcement; private-IP/unsafe
-  redirect/DNS-rebind rejection; timeout/backoff; duplicate items; 2 MB limit;
-  sanitization; event idempotency; no strategy/Python imports.
-
-### M4-04 — Persist sentiment, aggregate windows, and add news strategy
-
-- **Assignee / points:** Member 4 / 13 SP
-- **Depends on:** M1-03, M3-02, M4-02, M4-03
-- **Purpose:** Make sentiment optional, causal, and provenance-aware.
-- **Scope:** Sentiment persistence/service, `NewsSentimentWindow`, model/version
-  constraints, lag aggregation, `news_sentiment` plugin, `AnalysisContext`.
-- **Description:** Persist `(news_item, model, model_version)`; apply lag; use
-  one version per window; pass window through context; HOLD on missing data;
-  keep strategy free of SQL/HTTP/model dependencies.
-- **Tests:** Version uniqueness; no fake rows; lag/no-lookahead; missing HOLD;
-  deterministic aggregate; model version in evidence; technical-only operation
-  without AI; bounded precomputed query count.
-
-### M4-05 — Implement AI/news degradation behavior
-
-- **Assignee / points:** Member 4 / 5 SP
-- **Depends on:** M3-03, M3-06, M4-04
-- **Purpose:** Prove optional AI/news failure preserves core system.
-- **Scope:** API errors, news/sentiment workers, readiness, chart and technical
-  backtest paths, retry/recovery integration tests.
-- **Description:** AI failure prevents sentiment writes and marks unavailable
-  data; market data, chart, technical backtest, and core readiness continue;
-  recovery enables later retry.
-- **Tests:** Mock AI `503`; readiness remains core healthy; chart/technical
-  backtest succeed; no neutral placeholders; retry succeeds after recovery.
-
-## Member 5 — Frontend and end-to-end verification
-
-### M5-01 — Define web API, WebSocket, and state contracts
-
-- **Assignee / points:** Member 5 / 5 SP
-- **Depends on:** M3-04, M3-06
-- **Purpose:** Define typed browser-facing contracts.
-- **Scope:** `web/lib/api.ts`, DTOs for market/WS/experiments/search/
-  leaderboard/news/auth/errors/loading/degraded states.
-- **Description:** Consume only Go REST/WS contracts; define stable envelopes,
-  ownership/auth states, and distinct provisional/closed payloads. Keep the
-  public route `/api/v1/markets/stream` aligned with the blueprint, document
-  any `/api/v1/realtime` alias, and type normalized events
-  `CandleClosed | BBOUpdated | StreamStatusChanged | SignalGenerated |
-  OrderUpdated | PositionUpdated | BacktestProgress`. Preserve Decimal values
-  as strings at the boundary, sequence metadata, stale/recovered status, and
-  control acknowledgements. Define `ChartKline` separately from `market.Candle`,
-  including `final`, `seq`, `last_sequence`, and `resync_required` semantics;
-  never expose Binance combined envelopes or coder connection types.
-- **Tests:** Type-check against mocked Go responses; malformed/error handling;
-  typed reconnect; static scan finds no DB/Python calls.
-
-### M5-02 — Implement four-panel realtime market dashboard
-
-- **Assignee / points:** Member 5 / 13 SP
-- **Depends on:** M1-06, M3-06, M5-01
-- **Purpose:** Render independent realtime timeframe panels.
-- **Scope:** Chart, indicator/strategy overlays, market status, four timeframe
-  subscriptions, reconnect state, accessibility.
-- **Description:** Support stale/recovered status, sequence checks, provisional
-  updates, closed overlays, and isolated panel state; calculations stay
-  backend. Restore all panel subscriptions after reconnect, refetch REST before
-  applying deltas, reject stale sequence frames, keep BBO/status/order/position
-  displays separate, and show a static degraded chart when live transport is
-  down. Each panel owns state; no shared dashboard object may cause unrelated
-  panel rerenders.
-- **Tests:** Mock reconnect; timeframe isolation; stale-event rejection;
-  provisional/closed rendering; loading/error/empty; keyboard/accessibility;
-  one panel change does not rerender others; BBO-before-candle ordering;
-  sequence-gap refetch; subscription restore; no Binance schema import.
-
-### M5-03 — Implement experiment and backtest visualization
-
-- **Assignee / points:** Member 5 / 13 SP
-- **Depends on:** M2-02, M3-06, M5-01
-- **Purpose:** Show async lifecycle and reproducible results.
-- **Scope:** Experiment status, trades, equity, signals, overlays, polling,
-  ownership errors, provenance components.
-- **Description:** Render queued/running/completed/failed/cancelled states and
-  exact dataset/strategy/snapshot/evaluator metadata; hide facts before
-  completion.
-- **Tests:** Every lifecycle response; API-to-chart order; no premature result;
-  safe ownership errors; exact provenance; accessible empty/loading/error.
-
-### M5-04 — Implement search, leaderboard, and news views
-
-- **Assignee / points:** Member 5 / 13 SP
-- **Depends on:** M2-06, M3-06, M4-04, M5-01
-- **Purpose:** Expose search progress, ranking provenance, news, and coverage.
-- **Scope:** Search actions/progress, leaderboard, provenance, news list/
-  aggregate, sentiment version, pagination, auth errors.
-- **Description:** Show score policy, dataset hash, strategy/model version,
-  missing sentiment, ranking failures, pause/resume/cancel, and deterministic
-  tie order; retain `sentiment: null` as unavailable.
-- **Tests:** Deterministic ranking; missing policy; no-sentiment; model version;
-  pagination; authorization; loading/empty/degraded/retry states.
-
-### M5-05 — Enforce frontend purity and accessibility
-
-- **Assignee / points:** Member 5 / 5 SP
-- **Depends on:** M5-02, M5-03, M5-04
-- **Purpose:** Harden browser boundaries and inclusive behavior.
-- **Scope:** `web/app/`, `web/components/`, `web/lib/`, error boundaries,
-  keyboard/focus/ARIA, purity checks, frontend tooling.
-- **Description:** Remove direct infrastructure assumptions; standardize error
-  boundaries/degraded states; document typecheck/lint/accessibility commands.
-- **Tests:** Typecheck/lint; static DB/Python scan; keyboard/focus management;
-  automated accessibility; no raw upstream error leakage.
-
-### M5-06 — Run final Binance, fixture, and scale verification
-
-- **Assignee / points:** Member 5 / 13 SP
-- **Depends on:** M1-05, M1-06, M2-03, M3-03, M3-05, M3-06, M4-05, M5-05
-- **Purpose:** Verify the complete component graph under live, failure, and
-  bounded-concurrency conditions.
-- **Scope:** E2E harness, Docker stack, fixture replay, opt-in Binance,
-  provider disconnect/reconnect, auth/API/WS/UI, AI outage, leases, rate
-  limits, ownership, and concurrent experiments.
-- **Description:** Run SOL fixture; connect with `BINANCE_LIVE=1`; disconnect
-  provider for 60 seconds; reconnect/backfill; exercise complete stack and
-  bounded concurrent jobs; exercise coder/websocket lifecycle (combined stream,
-  control correlation, ping/pong, terminal close), actor/channel shutdown,
-  and collect reproducibility evidence.
-- **Tests:** Zero candle loss/duplication; reproducible fixture; containers
-  interoperate; AI outage preserves technical functionality; rate limits,
-  lease recovery, ownership, auth, four-timeframe WS, combined-stream
-  reconnect/resync, no reconnect after explicit close, race/leak checks, and
-  scale bounds pass.
-
-## Component interaction acceptance
-
-```text
-Binance REST/WSS
-  -> coder/websocket combined client (one reader/writer)
-  -> decode + normalize
-  -> bounded closed-candle ingress -> DB writer
-  -> closed-candle strategy bus
-  -> closed Candle + BBO memory hub + events
-  -> StrategyRegistry
-  -> causal AnalysisContext
-  -> Signal / ResolvedSignal
-  -> OrderManager / PositionTracker
-  -> BacktestEngine(snapshot, Candle[], BBO[])
-  -> Result
-  -> Evaluator
-  -> Ranking/API/Web UI
-```
-
-```text
-ApprovedSource
-  -> NewsProvider
-  -> news.Item
-  -> SentimentAnalyzer(text)
-  -> sentiment.Result
-  -> NewsSentimentWindow
-  -> AnalysisContext
-  -> news_sentiment strategy
-```
-
-```text
-Experiment API
-  -> immutable snapshot
-  -> JobDispatcher lease/heartbeat
-  -> Worker
-  -> BacktestEngine
-  -> PostgreSQL projections/outbox
-  -> REST/WebSocket/frontend
-```
-
-The private User Data Stream and live order adapter remain disabled seams. BBO
-does not become a candle-table row; provisional klines do not enter persistence,
-datasets, strategy input, or backtest facts.
-
-## Totals
-
-| Member | Stories | Story points |
-|---|---:|---:|
-| Member 1 | 6 | 60 |
-| Member 2 | 6 | 84 |
-| Member 3 | 6 | 94 |
-| Member 4 | 5 | 44 |
-| Member 5 | 6 | 62 |
-| **Total** | **29** | **344** |
+Before changing any `Verified` field in `traceability.md` to `Yes`, attach the matching test report, demo capture, benchmark or immutable provenance record. Required release bundle includes architecture-boundary tests, Mermaid render check, API/tool schema tests, agent permission/sandbox/repair tests, reconnect/backfill test, deterministic backtest/search fixtures, exact UI result-contract test and dependency-down behavior.
