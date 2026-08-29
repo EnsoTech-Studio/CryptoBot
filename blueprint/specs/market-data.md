@@ -280,7 +280,7 @@ Khi tạo experiment hoặc search run:
 
 ## Tiêu chí chấp nhận
 
-- [ ] AC-01: Ngắt network Go Strategy Service 60 s rồi nối lại → query `candles` liên tục **không có gap**, `reconnect_count` tăng đúng 1.
+- [ ] AC-01: Ngắt network của Go Market Gateway tới provider 60 s rồi nối lại -> query `candles` liên tục **không có gap**, `reconnect_count` tăng đúng 1.
 - [ ] AC-02: Chạy backfill cùng khoảng **3 lần liên tiếp** → số row trong `candles` không đổi sau lần đầu.
 - [ ] AC-03: Kill process Go giữa lúc mất kết nối, restart → backfill vẫn bắt đầu từ `last_closed_at` cũ, không mất nến.
 - [ ] AC-04: 20 raw Kline có `k.x:false` đến trong một phút → `candles` **không có row nào** cho `close_time` đó; UI vẫn thấy `ChartKline` cập nhật.
@@ -293,7 +293,7 @@ Khi tạo experiment hoặc search run:
 - [ ] AC-10: Tạo dataset 2 lần cho cùng range, dữ liệu không đổi → dùng lại cùng `dataset_version`. Provider revise 1 nến → cache `candles` nhận giá trị mới, `content_hash` khác → dataset `-r2` và snapshot mới; revise lần nữa với hash khác → `-r3`; snapshot cũ **không** bị sửa, backtest trỏ dataset cũ vẫn byte-identical.
 - [ ] AC-10b: Hai worker đồng thời tạo dataset cho cùng identity → advisory lock serialize transaction; không có duplicate `revision_no`, không có `dataset_version` collision, và cùng một `content_hash` chỉ dùng một snapshot.
 - [ ] AC-10c: Thử `UPDATE` hoặc `DELETE` trên `market_datasets`/`market_dataset_candles` → DB trigger reject; INSERT revision mới vẫn thành công và snapshot cũ còn nguyên.
-- [ ] AC-11: Test static: raw field `json:"k"`, `json:"x"`, `json:"t"` chỉ xuất hiện trong `server/internal/infrastructure/market/binance_kline_event.go`; `server/internal/domain/strategy` không import `application` hay `transport`.
+- [ ] AC-11: Test static: raw field `json:"k"`, `json:"x"`, `json:"t"` chỉ xuất hiện trong `server/internal/infrastructure/market/binance_kline_event.go`; Go Market/API không chứa hoặc import Strategy/Backtest/Search/News domain.
 - [ ] AC-11b: Đưa `KlineUpdate{Final:false}` vào MarketService → nhận đúng một `ChartKline` frame, tạo **0** `market.Candle`, gọi `Strategy.Analyze` **0** lần và ghi DB **0** row. Đưa cùng update với `Final:true` → tạo đúng một `market.Candle`, gọi overlay/strategy đúng một lần.
 - [ ] AC-12: Độ trễ tick → WS Hub đo trên 20 mẫu: p95 < 500 ms.
 
@@ -305,3 +305,17 @@ Các điểm dưới đây là yêu cầu đích của bộ sơ đồ thống nh
 - **DTO chuẩn hoá Candle/BBO**: mọi adapter trả cùng canonical Candle (closed, keyed `(provider,symbol,timeframe,open_time)`) và BBO event (bid/ask/updateID/`sourceSequence`); provider envelope thô không lọt qua port.
 - **WSS reconnect/backfill như contract bắt buộc**: combined stream, desired-subscription restore, control ACK, capped exponential backoff, checkpoint (`stream_checkpoints`) và REST backfill khoảng thiếu — de-dup theo unique key, zero missing/duplicate closed candles (sơ đồ 05; AC hiện có của spec này).
 - **Internal market stream Go → Python**: Go chuẩn hoá realtime Candle/BBO và fan-out nội bộ tới Python platform; Python không tự kết nối sàn (`specs/python-research.md` R4).
+
+### Bootstrap đúng 1.000 closed candles cho từng panel `[SRC-ADD]`
+
+1. Mount hoặc đổi `(provider,symbol,timeframe)` của một panel yêu cầu **most recent 1.000 closed candles**.
+2. Sau history snapshot, panel subscribe đúng realtime key của chính nó.
+3. Provisional có cùng `open_time` với candle cuối thì replace/update candle in-memory.
+4. Provisional có `open_time` mới hơn thì append làm current candle.
+5. `Final=true` chuyển bucket thành closed, persist idempotently và mở provisional bucket kế tiếp.
+6. De-duplicate theo `(provider,symbol,timeframe,open_time)`.
+7. Đổi Chart 1 chỉ cancel history/subscription của Chart 1; Chart 2-4 không reload.
+
+- [ ] AC-13: Mỗi panel bootstrap trả đúng 1.000 closed candles gần nhất khi nguồn có đủ dữ liệu.
+- [ ] AC-14: Provisional cùng `open_time` replace, provisional mới hơn append, `Final=true` persist đúng một closed row.
+- [ ] AC-15: Đổi một panel tạo đúng một history request/subscription replacement; ba panel còn lại có 0 request/render mới.

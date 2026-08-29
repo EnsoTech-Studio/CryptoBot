@@ -1,0 +1,31 @@
+flowchart TB
+    Input["Validated StrategySpec revision<br/>and authoring mode"]
+    Agent["StrategyImplementationAgent<br/>choose deterministic compile by default<br/>or custom draft in advanced mode"]
+    Mode{"DSL-backed mode?"}
+    Compile["artifact.compile_from_spec<br/>compile deterministic Python<br/>under compiler version"]
+    Custom["artifact.create_custom_draft<br/>save advanced Python proposal<br/>for PR/build/deploy path"]
+    Policy["artifact.run_policy_check<br/>AST, imports, APIs and forbidden behavior"]
+    Save["artifact.save_version<br/>artifact hash and provenance"]
+    Run["sandbox.run_contract_tests<br/>new isolated sandbox run<br/>with fixed policy and fixtures"]
+    Report["sandbox.get_test_report<br/>structured pass/fail, resources and evidence"]
+    Pass{"All gates pass?"}
+    Review["draft.mark_review_required<br/>freeze reviewed hashes"]
+    Repair["Orchestrator routes failure<br/>to Repair Agent if budget remains"]
+    Output["Review package<br/>not published"]
+
+    Input --> Agent --> Mode
+    Mode -->|yes, default| Compile --> Policy
+    Mode -->|no, advanced| Custom --> Policy
+    Policy -->|pass| Save --> Run --> Report --> Pass
+    Policy -->|fail| Repair
+    Pass -->|no| Repair
+    Pass -->|yes| Review --> Output
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Agent agent;
+    class Compile,Custom,Policy,Save,Run,Report,Review tool;
+    class Mode,Pass gate;
+    class Repair stop;

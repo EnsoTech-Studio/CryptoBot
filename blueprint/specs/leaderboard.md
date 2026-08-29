@@ -1,5 +1,9 @@
 # Đặc tả: Leaderboard, Score Policy và Top-K Ranking
 
+**Canonical ownership:** Python `research` sở hữu RankingService, scoring policy và
+Leaderboard persistence/query. Go chỉ proxy authorized public request; Candidate Discovery
+chỉ đọc summary và không có quyền ghi rank.
+
 ## Mô tả
 
 Leaderboard trả lời một câu hỏi duy nhất nhưng phải trả lời được **mãi mãi**: strategy nào tốt nhất, trên đúng tập dữ liệu nào, theo đúng công thức chấm điểm nào, tại đúng thời điểm nào. Module gồm hai bảng — `score_policies` (công thức chấm điểm, có version, chỉ một cái active) và `leaderboard_entries` (bảng xếp hạng **append-only** tham chiếu `evaluation_id`) — cộng `RankingService` là consumer của event `StrategyEvaluated`. Đây là hiện thực của đề bài §21 (Module 8 Leaderboard) và §22 (Top-K Strategies), và là mắt cuối của chuỗi provenance bắt đầu từ `specs/experiment.md`.

@@ -1,5 +1,8 @@
 # Đặc tả: Experiment Snapshot và vòng đời Backtest Job/Run
 
+**Canonical ownership:** Python `research` tạo immutable snapshot, job/run và ghi toàn bộ
+experiment/backtest result tables. Go chỉ edge admission, signed proxy và progress fan-out.
+
 ## Mô tả
 
 `ExperimentSnapshot` là đơn vị bất biến trung tâm của hệ thống. Nó ghi lại **mọi thứ** cần để chạy lại một backtest và nhận đúng con số cũ: strategy nào ở version nào, tham số con và policy kết hợp nào, tập nến nào với `content_hash` nào, giả định thực thi nào (fee, slippage, fill policy, position policy, xử lý vị thế còn mở khi hết dataset), và evaluator version nào. Worker nạp tập nến từ snapshot vật lý `market_dataset_candles` theo `market_dataset_id`, không đọc operational cache `candles`. Đây là hiện thực của yêu cầu Reproducibility (đề bài §36) và là gốc của toàn bộ chuỗi provenance mà `specs/leaderboard.md` khai thác. Nếu một field ảnh hưởng tới kết quả mà không nằm trong snapshot, thì kết quả đó không tái lập được — và đó là tiêu chí duy nhất để quyết định field nào phải có trong bảng này.
@@ -392,7 +395,7 @@ Event của module: `BacktestQueued` (publisher `ExperimentService`), `BacktestS
 - `jobs_completed_total`, `jobs_failed_total{error_code}` counter — `error_code` là label nên đếm được theo loại lỗi mà không parse log.
 - `job_queue_wait_seconds` histogram (từ `enqueued_at` tới lúc claim) — chính là tín hiệu quyết định có cần thêm worker.
 - `backtest_duration_seconds` histogram với label `strategy_family` và `candle_count_bucket`.
-- Log JSON structured kèm `correlation_id` xuyên Go API → Go Worker; một `request_id` trên UI grep ra được toàn bộ chuỗi (`design.md` §8.4). Python AI chỉ xuất hiện khi route sentiment được gọi.
+- Log JSON structured kèm `correlation_id` xuyên Go API -> Python Research API/Worker -> domain/tool/model/sandbox; một `request_id` trên UI grep ra được toàn bộ chuỗi (`design.md` §8.4). AI Adapter chỉ xuất hiện khi Python yêu cầu inference.
 - **Không** dùng `experiment_id` hay `user_id` làm label metric: cardinality explosion và PII.
 
 ## Tiêu chí chấp nhận

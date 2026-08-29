@@ -1,0 +1,27 @@
+flowchart TB
+    Trigger["Optional discovery trigger<br/>authorized SearchRun and bounded budget"]
+    Space["search.get_search_space<br/>allowed strategies, parameters,<br/>bounds and policy version"]
+    Tested["search.get_tested_hashes<br/>candidate hashes already evaluated"]
+    Board["leaderboard.get_summary<br/>Top-K metric/history summary"]
+    Agent["CandidateDiscoveryAgent<br/>propose CandidateStrategy DSL values<br/>with model/prompt/history provenance"]
+    Validate["candidate.validate<br/>schema, semantic, causal, bounds and duplicate"]
+    Cost["candidate.estimate_cost<br/>quota, worker cost and deadline impact"]
+    Admit{"Valid and within budget?"}
+    Submit["candidate.submit_batch<br/>idempotent standard bounded queue"]
+    Queue["Deterministic pipeline<br/>backtest -> evaluate -> rank -> Top-K"]
+    Reject["Reject proposal and persist reason<br/>cannot change quota or stop condition"]
+
+    Trigger --> Space --> Tested --> Board --> Agent --> Validate
+    Validate -->|valid| Cost --> Admit
+    Validate -->|invalid| Reject
+    Admit -->|yes| Submit --> Queue
+    Admit -->|no| Reject
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Agent agent;
+    class Space,Tested,Board,Validate,Cost,Submit tool;
+    class Admit gate;
+    class Reject stop;

@@ -1,5 +1,8 @@
 # Đặc tả: Evaluation (tính metrics từ kết quả backtest)
 
+**Canonical ownership:** Python `research` sở hữu Evaluator, evaluation tables và recompute.
+Go chỉ auth/proxy public query; không tính hoặc ghi metrics.
+
 ## Mô tả
 
 Module này biến `BacktestResult` (trade/order/equity facts thô) thành
@@ -140,17 +143,17 @@ publish.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant W as Go Backtest Worker
+    participant W as Python Research Worker
     participant OUT as Transactional Outbox
     participant EVA as Pure Evaluator
-    participant R as Go Read Repository
+    participant R as Python Facts Repository
     participant EV as evaluations
     participant RNK as RankingService
 
     W->>W: commit trades + orders + equity_points
     W->>OUT: BacktestCompleted(run_id, event_id)
     OUT->>EVA: deliver event
-    EVA->>R: read immutable facts via read.trades_v1/read.equity_v1
+    EVA->>R: read Python-owned immutable trade/equity facts
     EVA->>EVA: Evaluate(facts, policy), Decimal only
     EVA->>EV: INSERT ON CONFLICT (run_id, evaluator_version) DO NOTHING
     EVA->>OUT: StrategyEvaluated(evaluation_id)

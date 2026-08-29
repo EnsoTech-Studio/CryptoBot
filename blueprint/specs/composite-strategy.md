@@ -1,5 +1,8 @@
 # Đặc tả: Composite Strategy (Signal Combination)
 
+**Canonical ownership:** Composite evaluator, indicator dependencies và majority/weighted
+policies chạy trong Python Strategy Runtime. Go không chứa combiner hoặc strategy semantics.
+
 ## Mô tả
 
 Composite Strategy là strategy virtual root kết hợp 2–5 child strategies thành
@@ -56,7 +59,7 @@ tạo order. Vì vậy cùng một composite signal không thể âm thầm tạ
 giữa realtime paper và deterministic replay.
 
 The Go skeleton owns these types in
-`internal/domain/strategy/composite/contract.go`; it aliases the shared
+`app/domain/strategy/composite/contract.py`; it uses the shared
 strategy value objects and keeps combination algorithms deferred.
 
 `ResolvedSignal` giữ child definition + signal để evidence tái tạo được:

@@ -3,50 +3,74 @@ sequenceDiagram
     actor A as Strategy Author
     participant UI as Web Authoring UI
     participant GO as Go Edge API
-    participant SAS as Python Authoring Service
-    participant FETCH as Safe Document Fetcher
-    participant LLM as Structured LLM Adapter
-    participant VAL as StrategySpec Validator
-    participant PRE as Preview/Sandbox Evaluator
-    participant REG as StrategyRegistry
-    participant DB as PostgreSQL
+    participant API as Python Research API
+    participant ORCH as AgentOrchestrator
+    participant D as StrategyDesignerAgent
+    participant I as StrategyImplementationAgent
+    participant R as StrategyRepairAgent
+    participant VAL as Spec Validator
+    participant CMP as Deterministic Compiler/Policy
+    participant SB as Isolated Sandbox
+    participant DB as Python State/Artifact Store
+    participant REV as Human ApprovalService
+    participant REG as Python StrategyRegistry
 
-    A->>UI: nhập JSON DSL hoặc mô tả tự nhiên hoặc URL
-    UI->>GO: POST /strategy-drafts (idempotency key)
-    GO->>GO: auth + quota + body/rate limit
-    GO->>SAS: principal + source_type + source
+    A->>UI: submit text, DSL or URL
+    UI->>GO: POST /strategy-drafts with idempotency key
+    GO->>GO: auth, quota, bounded body and correlation ID
+    GO->>API: signed command with principal context
+    API->>DB: persist draft/source/agent run
+    API->>ORCH: schedule persisted workflow
 
-    alt source_type = URL
-        SAS->>FETCH: fetch allowlisted URL
-        FETCH->>FETCH: HTTPS + DNS/IP/redirect/size guard
-        FETCH-->>SAS: extracted text + source_url + content_hash
-    else source_type = text/DSL
-        SAS->>SAS: normalize text or parse JSON
+    alt URL source
+        ORCH->>API: Safe Source Ingestor fetches allowlisted URL
+        API->>DB: persist sanitized content hash and source evidence
     end
 
-    opt mô tả tự nhiên hoặc extracted text
-        SAS->>LLM: schema-constrained prompt<br/>model_version + prompt_version
-        LLM-->>SAS: StrategySpec JSON only
+    ORCH->>D: typed tool session only
+    D->>VAL: validate StrategySpec proposal
+    alt missing intent or invalid nonrepairable spec
+        VAL-->>ORCH: structured errors/questions
+        ORCH->>DB: persist FAILED or AWAITING_INPUT evidence
+    else validated spec
+        VAL-->>ORCH: immutable spec revision
+        ORCH->>I: typed tool session only
+        I->>CMP: compile DSL or create advanced custom draft
+        CMP->>CMP: AST/import/API policy check
+        alt policy passes
+            CMP-->>I: artifact hash + compiler provenance
+            I->>SB: run no-network contract/fixture/parity tests
+            SB-->>ORCH: structured report + resource evidence
+        else policy fails
+            CMP-->>ORCH: structured policy failure
+        end
+
+        loop at most configured repair attempts, default 3
+            alt report/policy failed and budget remains
+                ORCH->>R: immutable context + structured evidence
+                R->>VAL: patch spec or artifact through typed tools
+                VAL-->>ORCH: revised immutable revision
+                ORCH->>I: compile/policy/sandbox again
+            end
+        end
+
+        alt final report passes
+            ORCH->>DB: freeze spec/artifact/report hashes at REVIEW_REQUIRED
+            API-->>GO: persisted progress event
+            GO-->>UI: WebSocket progress/fan-out
+            A->>UI: explicit approve exact review hash
+            UI->>GO: POST /strategy-drafts/{id}/approve
+            GO->>API: signed approval command
+            API->>REV: verify owner, state and exact hashes
+            REV->>DB: atomic immutable StrategyVersion/provenance
+            REV->>REG: admit approved DSL version or create custom-code PR/build task
+            REG-->>API: idempotent publish result
+            API-->>GO: approved version event
+            GO-->>UI: strategy version available
+        else final report fails or budget exhausted
+            ORCH->>DB: persist FAILED with evidence, never publish
+        end
     end
 
-    SAS->>VAL: validate schema + supported indicators/operators<br/>bounded lookback + no network/DB/tool/code
-    alt invalid/unsupported/ambiguous
-        VAL-->>SAS: field errors/questions
-        SAS-->>GO: draft rejected + structured errors
-        GO-->>UI: draft rejected + field errors/questions
-    else valid
-        VAL->>PRE: compile deterministic execution plan<br/>run bounded preview fixture
-        PRE-->>SAS: normalized rules + sample signals + warnings<br/>source/model/prompt versions
-        SAS-->>GO: safe preview DTO
-        GO-->>UI: preview DTO
-        A->>UI: explicit approve
-        UI->>GO: POST /strategy-drafts/{id}/approve
-        GO->>SAS: approve(draft_id, principal)
-        SAS->>DB: BEGIN · immutable strategy_definition<br/>+ strategy_version + source/provenance + fingerprint · COMMIT
-        SAS->>REG: refresh approved version
-        REG-->>SAS: strategy_id@version registered
-        SAS-->>GO: approved strategy DTO
-        GO-->>UI: strategy_id@version available
-    end
-
-    Note over LLM,REG: LLM không sinh rồi chạy Python/Go tùy ý.<br/>Nó chỉ tạo declarative StrategySpec hợp lệ.<br/>Validator và compiler quyết định spec nào được thực thi.
+    Note over D,R: No generic shell, SQL, HTTP, filesystem, secret, approve or publish capability.
+    Note over SB,REG: Passing tests reaches REVIEW_REQUIRED, not automatic publishing.

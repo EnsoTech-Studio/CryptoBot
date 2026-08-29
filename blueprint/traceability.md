@@ -1,23 +1,47 @@
-# Requirement Traceability and Verification Gates
+# Requirement Traceability & Verification Gates
 
-Tài liệu này nối yêu cầu đích của blueprint với sơ đồ trong `assets/diagrams/`
-(24 hình, đánh số thống nhất) và bằng chứng cần có trước khi nhóm được phép nói
-implementation đã hoàn thành. Sơ đồ chỉ là design evidence; không thay thế
-test/demo/benchmark. Bất biến xuyên sơ đồ nằm ở `design.md` §12.4.
+> Version 1.5. `[SRC]` là yêu cầu trong đề bài/PDF; `[SRC-ADD]` là yêu cầu bổ sung trong `note.txt`; `[PD]` là quyết định thiết kế của nhóm. `Designed` chỉ xác nhận đã có contract trong blueprint, không đồng nghĩa runtime đã hoàn thành.
 
-| # | Requirement/invariant | Diagram | Evidence bắt buộc sau implementation |
-|---|---|---|---|
-| 1 | Thêm strategy không sửa core branching | 03, 21, 22 | Architecture test cấm `if/switch` theo strategy ID; add-one-plugin/spec diff |
-| 2 | Nhập text/URL thành strategy an toàn | 01, 21, 14 | Invalid/prompt-injection/SSRF tests; preview + explicit approval audit |
-| 3 | Đổi search generator không ảnh hưởng execution | 03, 11 | Contract tests chạy cùng candidate qua ≥2 generator; core diff = 0 |
-| 4 | Thêm provider không đổi frontend/domain | 05, 20 | Binance/OKX adapter contract tests trả cùng Candle/BBO chuẩn hoá |
-| 5 | Realtime WSS reconnect/backfill không mất dữ liệu | 05, 20 | Disconnect test; checkpoint/backfill; zero missing/duplicate closed candles |
-| 6 | LONG và SHORT được mô phỏng đúng | 23, 17, 19 | Hand-calculated fixtures cho open/close/reverse LONG và SHORT |
-| 7 | Trade output đủ trường và cost breakdown | 23, 24, 06 | API/schema/UI tests cho pair/time/side/notional/SL/TP/fee/spread/slippage/PnL |
-| 8 | BBO quyết định fill; fallback tường minh | 05, 23, 06, 16, 17 | BBO replay fixtures; BUY=ask/SELL=bid; no-look-ahead; fallback provenance |
-| 9 | RSS/HTML extract + LLM tags được lưu và tái sử dụng | 13, 14 | Content-hash cache test; model/prompt version; model-down leaves null sentiment |
-| 10 | 100k/retry/dedup/order/provenance được chứng minh | 24, 07, 08, 15–19 | Load benchmark, crash/takeover, duplicate delivery, sequence gap, rerun hash test |
+Giá trị trạng thái: `Yes`, `Partial`, `No`, `Optional`. Cột `Verified` chỉ được đổi thành `Yes` khi có test/demo/benchmark artifact thật; sơ đồ không phải implementation evidence.
 
-Số hiệu sơ đồ ở cột "Diagram" là slug trong `assets/diagrams/` — ví dụ `23` tương
-ứng `23-bbo-long-short-execution`. Bản đồ "yêu cầu → spec chi tiết" của đề bài gốc
-nằm ở `design.md` §12.3; các gap-derived epic tương ứng nằm trong `jira-backlog.md`.
+| ID | Source | Requirement / invariant | Canonical spec | Diagram | Designed | Implemented | Verified | Verification gate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R01 | [SRC] | Binance historical + realtime normalized Candle/BBO | `specs/market-data.md` | 04, 05, 09, 20 | Yes | Partial | No | Provider contract, integration reconnect/backfill, zero missing/duplicate closed candles |
+| R02 | [SRC] | Candlestick dashboard, tối đa 4 panel độc lập | `specs/market-data.md`, `specs/chart-overlay.md` | 01, 04, 05 | Yes | Partial | No | UI test đổi panel 1 không request/render lại panel 2–4 |
+| R03 | [SRC] | MA, RSI, Bollinger, Support/Resistance qua Plugin Registry | `specs/strategy-registry.md` | 03, 10, 22 | Yes | Partial | No | Registry/fixture tests; architecture test cấm branch theo strategy ID |
+| R04 | [SRC] | Manual composite với policy giải thích được | `specs/composite-strategy.md` | 03, 10 | Yes | Partial | No | Majority/weighted fixtures + immutable candidate hash |
+| R05 | [SRC] | Backtest historical, cùng runtime với realtime | `specs/backtest.md`, `specs/experiment.md` | 11, 16, 17, 19, 22, 23 | Yes | Partial | No | Hand-calculated LONG/SHORT/BBO fixture; parity hash test |
+| R06 | [SRC] | Return, Win Rate, Max Drawdown, Number of Trades | `specs/evaluation.md` | 11, 17, 24 | Yes | Partial | No | Metric golden fixtures, evaluator-version provenance |
+| R07 | [SRC] | Random Search bắt buộc; CandidateGenerator thay thế được | `specs/search-loop.md` | 11, 12, 15 | Yes | Partial | No | Seed determinism, generator contract, bounded batch/stop test |
+| R08 | [SRC] | Top-K Leaderboard | `specs/leaderboard.md` | 11, 24 | Yes | Partial | No | Ranking golden fixture, append-only/provenance test |
+| R09 | [SRC] | Buy/Sell và Entry/Exit visualization | `specs/visualization.md`, `specs/chart-overlay.md` | 10, 22, 24 | Yes | Partial | No | API/schema/UI marker alignment test |
+| R10 | [SRC] | News Collect → Store → Sentiment | `specs/news.md`, `specs/sentiment.md` | 13, 14 | Yes | Partial | No | Collection survives AI-down; null/unavailable is not fake neutral |
+| R11 | [SRC] | Strategy versioning + reproducible experiments | `specs/strategy-registry.md`, `specs/experiment.md` | 06, 16, 22, 24 | Yes | Partial | No | Rerun same snapshot/version gives same facts/hash |
+| R12 | [SRC] | Search stop conditions; không có unbounded loop | `specs/search-loop.md` | 12, 15 | Yes | Partial | No | Candidate/time/no-improvement/cancel/pause recovery tests |
+| R13 | [SRC] | System Context, Container, Component, Data/Realtime/Strategy/Search flows | `design.md` §2–§6 | 01–24 | Yes | N/A | Yes | 24 canonical source diagrams parse/render and links resolve |
+| R14 | [SRC] | Modifiability, scalability, realtime, reliability, performance, maintainability, observability, reproducibility | `design.md` §8–§11, `specs/observability.md` | 07–09, 14–20, 24 | Yes | Partial | No | Architecture tests, crash recovery demo, load benchmark, metric dashboard |
+| A01 | [SRC-ADD] | Chọn single/combined; Automatic Loop Discovery hiển thị best variants | `specs/composite-strategy.md`, `specs/search-loop.md`, `specs/leaderboard.md` | 10–12, 31 | Yes | Partial | No | End-to-end search run shows validated unique Top-K candidates |
+| A02 | [SRC-ADD] | Natural language hoặc URL → draft cho user review | `specs/strategy-authoring.md`, `specs/agent-architecture.md` | 21, 25–27, 33 | Yes | No | No | Text + allowlisted URL demos; SSRF/prompt-injection tests; draft preview audit |
+| A03 | [SRC-ADD] | Sinh Python strategy file và bounded repair loop | `specs/strategy-authoring.md`, `specs/agent-architecture.md` | 21, 26, 28, 29, 33 | Yes | No | No | Artifact hash/provenance; policy rejection; no-network sandbox; max 3 persisted attempts |
+| A04 | [SRC-ADD] | Backtest input: pair, range, investment, single/combined strategy | `specs/experiment.md`, `specs/backtest.md` | 16, 17, 23 | Yes | Partial | No | API validation + immutable ExperimentSnapshot test |
+| A05 | [SRC-ADD] | Trade row đủ pair/time/LONG-SHORT/USD notional/prices/SL-TP/cost/spread-slippage/profit | `specs/backtest.md`, `specs/visualization.md` | 06, 23, 24 | Yes | Partial | No | Exact API/schema/UI columns; null SL/TP; gross/net reconciliation |
+| A06 | [SRC-ADD] | Wins, losses, total profit, Win Rate, Max Drawdown | `specs/evaluation.md`, `specs/visualization.md` | 17, 24 | Yes | Partial | No | Metric fixture + UI contract test |
+| A07 | [SRC-ADD] | Adaptive news extraction khi DOM thay đổi | `specs/news.md`, `specs/agent-architecture.md` | 13, 25, 30, 33 | Yes | No | No | Deterministic quality-gate fail triggers sanitized-HTML agent; validation/cache test |
+| A08 | [SRC-ADD] | Mỗi panel bootstrap 1.000 closed candles + merge provisional theo `open_time` | `specs/market-data.md` | 05, 09 | Yes | Partial | No | Exactly-1000 response, replace/append/finalize/de-dup UI + API tests |
+| A09 | [SRC-ADD] | MA, Bollinger, SMC và strategy bổ sung | `specs/strategy-registry.md`, `specs/strategy-authoring.md` | 03, 10, 21, 22 | Yes | Partial; SMC No | No | MA/BB fixtures; SMC chỉ claim khi có plugin, tests và demo evidence |
+| A10 | [SRC-ADD] | Advanced LLM market analysis | `specs/agent-architecture.md` | 25, 32, 33 | Yes | Optional | No | Read-only insight, timestamp/provenance; cannot order/publish/submit candidate |
+| P01 | [PD] | Go chỉ sở hữu API/edge/auth/quota/WS fan-out + Market Data | `design.md` §1.2, `go-review-checklist.md` | 02, 04, 14, 20, 33 | Yes | Partial | No | Architecture test chặn Go strategy/backtest/search/news/agent packages và DB grants |
+| P02 | [PD] | Python `research` là single canonical domain runtime | `specs/python-research.md` | 02–04, 11, 17, 22, 25 | Yes | Partial | No | Same StrategySpec/version for realtime/backtest; internal API contract tests |
+| P03 | [PD] | `ai` internal inference only; no workflow/domain write/approve/publish | `specs/agent-architecture.md`, `specs/sentiment.md` | 02, 14, 25, 33 | Yes | Partial | No | Network/DB permission test; schema-invalid output rejected by Python |
+| P04 | [PD] | Six logical agents, deterministic orchestrator, typed least-privilege tools | `specs/agent-architecture.md` | 25–33 | Yes | No | No | Role permission matrix; forbidden shell/SQL/HTTP/filesystem/publish tests |
+| P05 | [PD] | DSL-backed authoring MVP; custom Python requires review/build/deploy | `specs/strategy-authoring.md` | 21, 26, 28, 29, 33 | Yes | No | No | Deterministic compile; custom artifact cannot hot-load; reviewed hash equals published hash |
+
+## Diagram mapping
+
+- `01–24`: system/domain/runtime/reliability baseline.
+- `25`: Agent Platform components.
+- `26`: persisted agent-run state machine.
+- `27–32`: one vertical flow for each logical agent.
+- `33`: tool invocation and security boundary.
+
+Canonical file is `assets/diagrams/<number>-<slug>.mmd`; `.svg` and `.png` are generated outputs. Backlog delivery items must reference the IDs above and may not set `Verified=Yes` without the named artifact.

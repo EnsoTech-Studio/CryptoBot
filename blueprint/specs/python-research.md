@@ -1,154 +1,268 @@
-# Đặc tả: Python Strategy Platform (canonical)
+# Đặc tả: Python Research Platform
+
+Trạng thái: canonical target + một phần implementation hiện có  
+Service/package: `research`, source root `app/`  
+Workloads: Research API và Research Worker dùng cùng package/image
 
 ## Mô tả
 
-Python Strategy Platform (codebase `app/` ở repo root, service `research`) là
-**implementation canonical** của chuỗi strategy → backtest → evaluation → search →
-ranking/leaderboard → visualization-of-results, đồng thời sở hữu **news
-extraction/tagging và sentiment/AI orchestration** (gọi service `ai` để inference).
-Nó **thay thế** Go cho phần domain này (đảo ngược ADR-011; quyết định **[PD]** — xem
-`proposal.md` §4.4). Go giữ realtime market data (chuẩn hoá Candle/BBO, WSS
-reconnect/backfill, internal stream), edge/API, auth/RBAC, quota và observability
-(xem `design.md` §1.2).
+Python `research` là domain owner duy nhất của Strategy Runtime, Composite, Backtest,
+Evaluation, Search, Ranking/Leaderboard, result visualization data, News/Sentiment
+orchestration và Agent Platform. Research API phục vụ signed internal command/query từ Go;
+Research Worker consume durable jobs. Hai workload dùng cùng domain/application code và cùng
+Strategy Runtime, không có engine thứ hai.
 
-Backend này mirror cấu trúc `server/internal/domain/*` **1:1**, đổi `decimal.Decimal`
-thành Python `float` (IEEE 754 double / **float64**). Directory structure, file và
-skeleton giữ nguyên theo Go skeleton; chỉ đổi ngôn ngữ và kiểu số.
+Go chỉ sở hữu Public API/Edge và Market Data. AI/LLM Adapter là internal inference-only.
 
-Ba đặc điểm cốt lõi:
+## Ownership contract
 
-1. **Canonical, không phải research code.** Signal/metric do backend này sinh ra **là**
-   nguồn chân lý cho `chart-overlays`, `leaderboard_entries`, `run_signals`. Không còn
-   nhãn "non-canonical" hay "research-only".
-2. **Separate FastAPI platform.** Leaderboard và các endpoint liên quan
-   (strategies, experiments, search-runs, admin score-policies) phục vụ trên FastAPI
-   riêng (service `research`, `:8001`), tách khỏi Go backend.
-3. **`float64` là kiểu số canonical.** Không dùng `Decimal`/`NUMERIC(24,8)` trong
-   backend này (xem R1).
+| Capability | Owner | Giao tiếp |
+|---|---|---|
+| Public REST/WSS, auth/RBAC/quota/CORS/error | Go | Browser -> Go |
+| Binance/provider REST/WSS, Candle/BBO, backfill/checkpoint | Go | Go Market internal contract |
+| Strategy catalog/runtime/version/composite/indicator | Python | Python domain/application |
+| Experiment/job/run/trade/equity/evaluation | Python | Python API/worker + DB |
+| Search/generator/ranking/leaderboard | Python | Python application services |
+| News fetch/extract/tag/sentiment orchestration | Python | Python ports + AI adapter |
+| Agent workflow/tool/artifact/sandbox/approval | Python | Python Agent Platform |
+| Structured model inference | AI Adapter | Python `ModelGateway` only |
+| Persisted event fan-out | Go | Python outbox -> Go `/internal/events` |
 
-## Bốn quy tắc (contract)
+Invariants:
 
-### R1 — Precision: `float64` là kiểu số canonical
+- Python không mở Binance connection.
+- Go không tính indicator/signal/PnL/evaluation/rank.
+- AI Adapter không ghi domain DB hoặc giữ workflow state.
+- Browser không gọi Python/AI trực tiếp.
+- Realtime và backtest resolve cùng immutable Python StrategyVersion.
 
-Mọi giá, quantity, fee, PnL, metric dùng Python `float` (float64). Đây là quyết định
-**[PD]** có chủ đích — không mirror `Decimal` của Go. Hệ quả: so sánh số dùng
-**tolerance** (ví dụ `< 1e-8` cho indicator), không đòi byte-identical.
+## Bốn runtime rules
 
-### R2 — Causal: no-look-ahead bằng `IndicatorView` + purity test
+### R1 - Numeric precision
 
-Strategy chỉ đọc candle/indicator tới index hiện tại qua `IndicatorView`; đọc index
-tương lai → `LookAheadError` ngay. Cộng thêm **purity test** chạy trong CI: tín hiệu
-tại thời điểm `t` phải độc lập với bất kỳ candle nào sau `t`. Đây là enforcement
-canonical của backend này (mirror `specs/backtest.md` AC-02/AC-09).
+Canonical numeric type trong Python runtime là `float`/float64. Input được validate finite;
+serialization/rounding/currency display có explicit rule. Không trộn Go decimal semantics vào
+Python engine rồi gọi hai kết quả là tương đương.
 
-### R3 — Execution fidelity: BBO-limit + event merge + final settlement
+### R2 - Causality
 
-Backtest engine áp đầy đủ fidelity của `specs/backtest.md`: BBO-limit crossing theo
-executable side, merge `(eventTime, priority, sourceSequence)` (BBO priority 0 trước
-`CandleClosed` priority 1), fee/slippage theo snapshot, và final bid/ask settlement
-(`open_position_at_end = last_executable_bbo`). Đây **không** còn là xấp xỉ
-candle-close-only — nó là engine canonical.
+`CausalCandles` và `IndicatorView` không expose future index, negative index, slice hoặc raw
+container length có thể leak tương lai. Strategy chỉ thấy data tại/before current event.
 
-### R4 — Data/network: DB riêng + dataset snapshot; không kết nối sàn
+### R3 - Execution fidelity
 
-Platform được phép truy cập PostgreSQL cho các bảng domain của nó
-(`experiments`, `backtest_jobs`, `backtest_runs`, `trades`, `run_signals`,
-`equity_points`, `evaluations`, `score_policies`, `leaderboard_entries`,
-`strategy_definitions`, `strategy_versions`, `search_*`, `news_sources`,
-`news_items`, `sentiment_results`, `news_collection_jobs`) và đọc dataset snapshot
-(`market_dataset_candles`/BBO replay). Platform **không** mở Binance WS/REST hay
-bất kỳ kết nối sàn nào — realtime market data thuộc Go (nhận qua internal stream);
-sentiment inference thuộc `ai` (gọi qua HTTP nội bộ).
+Backtest merge normalized BBO trước CandleClosed theo `(event_time, source_sequence)`. LIMIT
+BUY cross ask, LIMIT SELL cross bid; fallback candle fill phải explicit trong snapshot và
+provenance. Risk/fee/spread/slippage đều deterministic.
 
-## Contract
+### R4 - Data/network boundary
 
-```python
-class BacktestEngine(Protocol):
-    def run(self, snapshot: ExperimentSnapshot, candles: list[Candle], bbo: list[BBO]) -> Result: ...
+Python đọc market qua `MarketDataPort`, infrastructure adapter gọi authenticated Go internal
+Market contract. Experiment chạy trên immutable dataset snapshot/hash. Agent tool gọi Python
+application port, không gọi Go endpoint trực tiếp.
+
+## Component map
+
+```text
+app/
+  domain/
+    market, indicator, strategy, composite
+    backtest, evaluation, search, ranking
+    news, sentiment, agent
+  application/
+    strategy_catalog, experiment, backtest, search, leaderboard
+    source_ingestion, authoring, agent_orchestrator
+    tool_registry, permission_policy, budget_manager
+    news_pipeline, insight
+  infrastructure/
+    postgres repositories + outbox
+    go_market_adapter
+    model_gateway_adapter
+    artifact_store
+    sandbox_adapter
+  transport/
+    internal HTTP command/query
+    worker job handlers
 ```
 
-`Result` chứa `trades`, `signals`, `orders`, `equity_points` (float64) — mirror
-`server/internal/domain/backtest/contract.go`. `ExperimentSnapshot` giữ mọi execution
-assumption (initial equity, fixed notional, fee/slippage bps, fill/position policy,
-risk policy) để provenance đọc lại được cùng điều kiện tạo ra một con số Leaderboard.
+Target paths nêu intent; code hiện có có thể tiếp tục được tổ chức dần miễn dependency rules
+và ownership không đổi.
 
-Các domain package mirror Go skeleton: `domain/common`, `domain/market`,
-`domain/indicator`, `domain/strategy` (+ `composite`, `plugins`, `registry`),
-`domain/backtest`, `domain/evaluation`, `domain/ranking`, `domain/search`,
-`domain/job`, `domain/sentiment`; `ports/` (backtest, persistence, search, job);
-`services/` (engine, evaluator, ranker); `infrastructure/postgres` (store).
+## Existing reusable seams
 
-## Luồng chính
+- `app/domain/strategy/registry.py`
+- `app/domain/strategy/contract.py`
+- `app/domain/strategy/plugins/`
+- `app/services/backtest_engine.py`
+- `app/services/evaluator.py`
+- `app/services/search.py`
+- `app/services/ranking.py`
+- `app/services/news.py`
 
-```mermaid
-flowchart LR
-    GO[Go API<br/>realtime market/edge/auth] -->|contract nội bộ| FB[Python Strategy Platform<br/>service `research`]
-    FB --> REG[StrategyRegistry]
-    FB --> BE[BacktestEngine<br/>BBO-limit + event merge]
-    BE --> EV[Evaluator<br/>float64]
-    EV --> RK[RankingService]
-    RK --> LB[Leaderboard<br/>leaderboard_entries]
-    FB --> NEWS[News extraction/tagging<br/>+ sentiment orchestration]
-    NEWS --> AI[ai service<br/>inference adapter]
-    FB --> DB[(PostgreSQL<br/>domain tables)]
-    FB -. "không" .-> X[Binance WS/REST]
+Agent Platform phải wrap các service này bằng typed application tools. Agent không import
+module trực tiếp, không nhận repository/DB session và không bypass permission/audit/budget.
+
+## Internal API contract
+
+### Go -> Python
+
+Versioned internal endpoints hoặc equivalent RPC groups:
+
+- Strategy catalog/version and authoring draft commands/queries.
+- Agent run/status/evidence and approval commands.
+- Experiment/search/leaderboard commands/queries.
+- News/sentiment/insight queries.
+- Health/readiness/compatibility.
+
+Mỗi request có service signature, principal delegation, timestamp/nonce anti-replay,
+correlation ID, deadline và idempotency key cho write. Python re-authorize resource ownership;
+không tin một raw user ID header không ký.
+
+### Python -> Go Market
+
+- `GET /internal/market/candles`
+- `GET /internal/market/bbo-snapshot`
+- Authenticated normalized market event stream.
+
+Contract chứa provider, symbol, timeframe, `open_time`, final/provisional flag,
+event/source sequence, checkpoint và as-of semantics.
+
+### Python -> Go event fan-out
+
+- `POST /internal/events`
+
+Python persist aggregate state + outbox trong cùng transaction. Go de-duplicate `event_id` và
+fan-out authorized summary/reference. Go không dùng event để tái tạo domain state.
+
+## Database ownership
+
+Một PostgreSQL instance có thể dùng chung, nhưng role/grant và migration ownership tách rõ:
+
+### Go-owned write
+
+- Market pair/provider metadata.
+- Closed candle cache, BBO/market events nếu persist.
+- Stream checkpoints/reconnect state.
+- Edge auth/session/refresh/quota data.
+
+### Python-owned write
+
+- Strategy definitions/versions/drafts/revisions.
+- Agent runs/attempts/tool invocations/artifacts/sandbox/approvals.
+- Experiments/jobs/runs/signals/trades/equity/evaluations.
+- Search runs/candidates/ranking/leaderboard.
+- News documents/items/extractions/tags/sentiment.
+- Insight drafts và Python outbox.
+
+MVP không cho Go trực tiếp join/read nhiều Python domain tables. Public query qua stable Python
+internal API để tránh coupling schema. Cross-owner foreign key chỉ dùng khi migration ownership
+và failure behavior được chứng minh; ưu tiên immutable ID/value snapshot.
+
+## Worker model
+
+- PostgreSQL durable job queue với claim `FOR UPDATE SKIP LOCKED`.
+- Lease token + expiration + heartbeat; mọi result update guard current lease token.
+- Retry/cancellation/status idempotent; old worker mất lease không được ghi.
+- Scale bằng N Research Worker replicas, không đổi API/schema/domain contract.
+- Agent job, backtest candidate, evaluation và ranking có handler riêng nhưng dùng chung job
+  lifecycle/observability.
+- CPU-heavy generated code chỉ chạy sandbox workload, không trong API process.
+
+## Agent Platform integration
+
+`AgentOrchestrator`, `ToolRegistry`, `ModelGateway`, permission/budget/state transition và
+repositories nằm trong Python application/infrastructure. Sáu logical roles theo
+`agent-architecture.md`; không deploy role riêng.
+
+Required P0/P1:
+
+- Designer, Implementation, Repair.
+- News Extraction fallback.
+- StrategySpec schema/semantic validator.
+- Deterministic compiler, AST/import policy checker.
+- Isolated Sandbox Runner và contract fixtures.
+- Human ApprovalService và StrategyPublisher.
+
+P2 default-off:
+
+- Candidate Discovery generator adapter.
+- Market Insight read-only flow.
+
+## News và AI boundary
+
+Python News Pipeline sở hữu:
+
+```text
+Safe Fetch
+  -> Readability Extract
+  -> Quality Gate
+     -> pass: normalize
+     -> fail: NewsExtractionAgent on sanitized HTML
+  -> schema/quality validation
+  -> content/model/prompt/schema hash cache
+  -> tagging
+  -> sentiment through AI adapter
 ```
 
-Strategy → backtest → evaluation → ranking nằm trong một process Python, không
-serialize nến qua Go↔Python boundary. Leaderboard + experiment/search endpoints được
-FastAPI phục vụ, Go gọi tới qua contract nội bộ.
+AI Adapter trả structured inference, không insert/update news/sentiment table. Model down tạo
+`unavailable`/null có provenance; không fake `NEUTRAL`.
 
-## Kịch bản lỗi
+## Failure behavior
 
-| Tình huống | Phản ứng |
+| Failure | Behavior |
 |---|---|
-| Strategy đọc index tương lai qua `IndicatorView` | `LookAheadError` ngay; run dừng |
-| Purity test phát hiện tín hiệu tại `t` phụ thuộc candle sau `t` | CI fail; không merge |
-| Số candle ít hơn warm-up | `422 insufficient_candles` |
-| BBO không monotonic hoặc bid > ask | `422 invalid_bbo_replay` |
-| Replay thiếu BBO trước mark/fill | `missing_prior_bbo`, không fallback candle close |
-| Replay thiếu BBO cuối khi còn position | `missing_final_bbo`, không ghi kết quả giả |
-| Strategy raise exception | `strategy_exception`; không ghi partial facts |
-| `fixed_notional <= 0`, fee/slippage âm | API/DB `422`/check constraint |
+| Go Market unavailable | Current Python jobs retry/bound deadline; không tự nối Binance |
+| Python API down | Go trả 503 cho domain command/query; market/WSS vẫn hoạt động |
+| Python Worker down | Jobs remain durable; API vẫn nhận/query persisted state |
+| PostgreSQL down | Python readiness fail; không báo completed khi chưa persist |
+| AI Adapter down | Agent/news inference fail/unavailable; deterministic technical flow vẫn chạy |
+| Sandbox down | Authoring dừng trước review; không publish |
+| Go event endpoint down | Python state đúng; outbox retry; UI refetch theo aggregate version |
+| Worker chết/mất lease | New worker takeover; old token cannot write |
 
-## Ràng buộc
+## Security
 
-**Tính đúng đắn**
+- Python internal API không public bind hoặc được network policy chặn từ browser.
+- Service-to-service signature rotation và anti-replay.
+- Least-privilege DB role theo owner.
+- Model/sandbox không nhận application/market credential.
+- Agent tools deny-by-default; không shell/SQL/arbitrary HTTP/secret/publish.
+- Safe Fetcher SSRF guard ở mọi redirect/DNS resolution.
+- Generated Python no-network/no-DB/non-root/read-only/bounded.
 
-- Strategy context chỉ chứa candles/indicators tới `CandleClosed` hiện tại.
-- Event ordering `(eventTime, priority, sourceSequence)`; không sort bằng map/set.
-- BBO priority 0 trước candle priority 1 tại cùng timestamp.
-- LIMIT crossing dùng executable side, không dùng candle close.
-- End-of-sample dùng final bid/ask, không dùng candle close.
-- Mọi số dùng `float64`; so sánh bằng tolerance.
-- Không dùng wall clock, random không seed, hoặc shared mutable state trong engine.
+## Observability
 
-**Hiệu năng**
+Trace propagation:
 
-- Vectorized NumPy/pandas cho indicator precompute và event loop.
-- Bulk insert facts/equity theo batch; memory bounded theo snapshot + BBO window.
+```text
+Browser -> Go -> Python API -> job/worker
+  -> domain/tool/model/sandbox
+  -> PostgreSQL/outbox -> Go event -> Browser
+```
 
-**Khả năng mở rộng**
+Log chung có timestamp, level, service/workload, correlation/request/principal, aggregate/run/job,
+event/tool/model/sandbox fields phù hợp. Không log raw prompt/source/secret.
 
-- Thêm strategy = một file Python plugin đăng ký vào `Registry` (0 sửa core).
-- Thêm fill policy = thêm implementation vào `PositionSimulator`.
-- Sizing/risk policy khác là extension, phải snapshot đầy đủ.
+Metrics gồm API/job/lease/domain event, backtest/search/evaluation/ranking, news/sentiment và
+agent/tool/model/sandbox metrics. High-cardinality IDs nằm trong logs/traces, không làm label.
 
 ## Tiêu chí chấp nhận
 
-- [ ] AC-01: Cùng snapshot + hai input hashes chạy 5 lần cho cùng canonical result hash (float64, deterministic).
-- [ ] AC-02: BBO cùng timestamp được apply trước CandleClosed.
-- [ ] AC-03: BUY LIMIT chỉ fill khi `ask <= limit`; SELL LIMIT chỉ fill khi `bid >= limit`.
-- [ ] AC-04: Fixed notional + initial equity theo snapshot; quantity dùng float64.
-- [ ] AC-05: Final LONG settle tại final bid; final SHORT settle tại final ask.
-- [ ] AC-06: Strategy future read bị reject; không đọc indicator ngoài causal context.
-- [ ] AC-07: Fixture `sol/2026-03-04`: 29 strict MA20/MA50 signals, 15 BUY, 14 SELL, 15 settled trades.
-- [ ] AC-08: Leaderboard endpoint (`GET /api/v1/leaderboard`) trên FastAPI trả đúng contract; Go không tính rank/score.
-- [ ] AC-09: Không có kết nối Binance WS/REST trong `app/`; market data chỉ từ Go.
-- [ ] AC-10: Directory structure mirror `server/internal/domain/*` 1:1; `float` thay cho `decimal.Decimal`.
+- [ ] AC-01: Architecture test chặn Go import/implement strategy/backtest/search/news domain.
+- [ ] AC-02: Python không mở Binance/network provider ngoài Go Market adapter.
+- [ ] AC-03: Browser không truy cập Python/AI internal endpoints.
+- [ ] AC-04: Research API/Worker dùng cùng package/image và Strategy Runtime.
+- [ ] AC-05: Go không có write grant lên Python-owned tables và ngược lại.
+- [ ] AC-06: Public Python-domain query qua Go proxy nhưng source of truth là Python API.
+- [ ] AC-07: Same StrategyVersion tạo signal parity realtime/backtest.
+- [ ] AC-08: Worker lease takeover không duplicate/fence-bypass result.
+- [ ] AC-09: AI/model adapter không có domain write path.
+- [ ] AC-10: Agent tool không bypass permission/budget/audit/repository boundary.
+- [ ] AC-11: News fallback chỉ nhận sanitized document sau deterministic quality fail.
+- [ ] AC-12: Python state commit trước Go progress event; event retry không mất state.
 
----
+## Implementation status
 
-Cross-reference: `design.md` §1.1, §1.2.1–§1.2.2, ADR-011 · `proposal.md` §4.4 ([PD]) ·
-`specs/backtest.md` (execution fidelity), `specs/evaluation.md`, `specs/leaderboard.md`,
-`specs/search-loop.md`, `specs/chart-overlay.md` AC-05, `specs/strategy-registry.md`.
+Strategy Registry/plugins và service seams cho backtest/evaluation/search/ranking/news đã có
+trong `app/`. Internal API ownership cleanup, complete Python-owned migrations, Agent Platform,
+compiler/policy/sandbox/approval và adaptive news extraction còn cần implementation evidence.

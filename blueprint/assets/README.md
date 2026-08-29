@@ -22,7 +22,7 @@ Giữ cả ba định dạng có lý do: `.mmd` là **nguồn** (sửa ở đây
 
 ## Danh mục sơ đồ
 
-24 sơ đồ đánh số thống nhất. Cột "Gốc" cho biết nguồn của file `.mmd`: **doc** = trích
+33 sơ đồ đánh số thống nhất. Cột "Gốc" cho biết nguồn của file `.mmd`: **doc** = trích
 từ mermaid nhúng trong tài liệu (Markdown là nguồn sự thật); **target** = sơ đồ kiến trúc
 đích của bộ thống nhất (`.mmd` chính là nguồn sự thật cho tới khi mermaid tương ứng được
 nhúng vào tài liệu narrative).
@@ -53,12 +53,21 @@ nhúng vào tài liệu narrative).
 | 22 | `22-strategy-runtime-parity` | Một runtime cho realtime/backtest — không hai nguồn chân lý | target | `design.md` §6.2 | **Strategy Flow** |
 | 23 | `23-bbo-long-short-execution` | Mô phỏng LONG/SHORT bằng BBO (fee, spread, slippage, SL/TP) | target | `specs/backtest.md` | **Search/Backtest Flow** |
 | 24 | `24-trade-result-provenance` | Trade detail và provenance chain đầy đủ | target | `specs/leaderboard.md` | **Search/Backtest Flow** |
+| 25 | `25-agent-platform-components` | Agent Platform: control plane, 6 role, tool/service/state/approval | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 26 | `26-agent-run-state-machine` | Durable authoring/repair/review/publish state machine | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 27 | `27-strategy-designer-agent` | Designer Agent và typed tools | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 28 | `28-strategy-implementation-agent` | Implementation Agent: compiler, policy, sandbox, review | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 29 | `29-strategy-repair-agent` | Repair Agent: evidence, bounded patch và retest | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 30 | `30-news-extraction-agent` | Adaptive news extraction fallback với sanitized HTML | target | `specs/news.md` | **Agent Architecture**, **Data Flow** |
+| 31 | `31-candidate-discovery-agent` | Optional Candidate Discovery bounded by normal queue | target | `specs/agent-architecture.md` | **Agent Architecture**, **Search/Backtest Flow** |
+| 32 | `32-market-insight-agent` | Optional read-only Market Insight flow | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 33 | `33-tool-invocation-security-boundary` | Typed tool contract và least-privilege security boundary | target | `specs/agent-architecture.md` | **Agent Architecture**, access control |
 
 Ghi chú parity: 09 và 10 là sơ đồ gốc của tài liệu narrative (mermaid nhúng); target
 tương ứng của chúng nằm ở 05 (candle+BBO realtime) và 22 (runtime parity) — đọc kèm nhau.
 Mapping yêu cầu → sơ đồ → verification gate: `blueprint/traceability.md`.
 
-Bảy góc nhìn bắt buộc ở `requirements.html` (System Context, Container/HLA, ERD, Data Flow, Realtime/Reconnect Flow, Strategy Flow, Search/Backtest Flow) đều có ít nhất một sơ đồ render sẵn — xem cột cuối.
+Bảy góc nhìn bắt buộc ở `requirements.html` (System Context, Container/HLA, ERD, Data Flow, Realtime/Reconnect Flow, Strategy Flow, Search/Backtest Flow) đều có ít nhất một sơ đồ render sẵn — xem cột cuối. Nhóm Agent Architecture (25–33) bổ sung cho yêu cầu trong `note.txt`; không thay thế các góc nhìn bắt buộc.
 
 ## Render lại
 

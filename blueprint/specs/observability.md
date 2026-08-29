@@ -4,7 +4,7 @@
 
 Observability ở dự án này **không** phải "cài Prometheus rồi tính sau". Đề bài §32.7 nêu năm câu hỏi rất cụ thể — *Loop đang chạy hay dừng? Đã thử bao nhiêu strategy? Backtest mất bao lâu? Có bao nhiêu job lỗi? Strategy nào đang Top 1?* — nên module này được thiết kế ngược từ câu hỏi: **mỗi câu có đúng một signal trả lời trực tiếp**, không phải suy ra từ ba dashboard.
 
-Phạm vi gồm bốn nhánh. (1) **Metrics**: Prometheus text format, expose ở `GET /metrics` của Go Strategy Service và Python AI service, chỉ `OPERATOR`/`ADMIN` đọc được qua boundary công khai. (2) **Structured log**: JSON một dòng, cùng một tập field bắt buộc ở cả ba runtime (Go `slog` ở API/worker, Python `logging` ở AI inference). (3) **Correlation ID**: một id duy nhất theo request đi xuyên browser → Go → `domain_events` → worker → quay lại UI trong error toast. (4) **Health**: `/health` liveness tách khỏi `/ready` readiness, cộng với `UI Progress panel` — phần observability mà người dùng thực sự nhìn.
+Phạm vi gồm bốn nhánh. (1) **Metrics**: Prometheus text format từ Go API/Market, Python Research API/Worker và internal AI Adapter; chỉ `OPERATOR`/`ADMIN` đọc qua public Go boundary. (2) **Structured log**: JSON một dòng với field chung xuyên các workload. (3) **Correlation ID**: một ID đi xuyên browser -> Go -> Python API/Worker -> tool/model/sandbox -> outbox -> Go -> UI. (4) **Health**: `/health` liveness tách `/ready` readiness, cộng UI Progress panel. Agent state/tool/model/sandbox metrics được bổ sung theo `agent-architecture.md`.
 
 Điểm cần nói rõ: hệ thống có **3 code artifact** (`web/`, `server/` Go, `ai/` Python) nhưng **4 loại runtime workload** — API và worker dùng chung image Go nhưng chạy process riêng; `ai/` chỉ làm inference sentiment (`design.md` §1.3.1). Một backtest lỗi có thể bắt nguồn từ HTTP request 40 phút trước đó, được thực thi bởi một worker khác process. Không có correlation ID xuyên suốt thì việc trả lời "vì sao experiment của tôi failed" là mò kim đáy bể qua log stream — và đó là tình huống xảy ra **mỗi lần demo**.
 
@@ -22,8 +22,8 @@ Giới hạn phạm vi có ý thức: chỉ dùng **Prometheus + structured log*
 
 ## Contract
 
-- Go public API expose `/health`, `/ready` và `/metrics`; Python AI expose
-  health/metrics surface chỉ trên internal network. Browser không gọi Python trực tiếp.
+- Go API/Market expose `/health`, `/ready`, `/metrics`; Python Research API/Worker và AI
+  Adapter expose health/metrics chỉ trên internal network. Browser không gọi Python/AI trực tiếp.
 - `/health` chỉ kiểm tra process còn phản hồi; `/ready` kiểm tra DB, migration và
   dependency bắt buộc theo từng field. `/metrics` dùng Prometheus text format.
 - Mọi log JSON bắt buộc có `timestamp`, `level`, `service`, `message`, `request_id`/
@@ -47,23 +47,24 @@ Giới hạn phạm vi có ý thức: chỉ dùng **Prometheus + structured log*
 
 > **Vì sao mỗi câu có cả metric *và* API?** Prometheus trả lời câu hỏi **theo thời gian** ("lỗi có tăng không") cho người vận hành. API trả lời câu hỏi **theo instance** ("run #a3f8 của tôi thế nào") cho người dùng. Dùng Prometheus cho việc thứ hai là sai công cụ: nó là time-series có sampling interval, không phải store trạng thái chính xác — và nó cũng không có ownership check.
 
-### B. Correlation ID xuyên ba service
+### B. Correlation ID xuyên các workload
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant B as Browser
     participant GO as Go API
-    participant PY as Python AI Sentiment
+    participant PY as Python Research API
+    participant AI as Internal AI Adapter
     participant DB as PostgreSQL
     participant W as Worker
 
     B->>GO: POST /api/v1/experiments header X-Request-ID req_01JB2X
     Note over GO: thiếu header thì Go tự sinh ULID có tiền tố req_
     GO->>GO: log service=api request_id=req_01JB2X event=experiment_requested
-    GO->>W: enqueue experiment header X-Correlation-ID req_01JB2X
-    W->>W: log service=worker correlation_id=req_01JB2X event=experiment_created
-    PY->>DB: INSERT experiments, INSERT domain_events correlation_id=req_01JB2X
+    GO->>PY: signed command + principal + X-Correlation-ID req_01JB2X
+    PY->>PY: re-authorize + domain quota + idempotency
+    PY->>DB: INSERT experiments + jobs + outbox correlation_id=req_01JB2X
     PY->>DB: INSERT backtest_jobs status=queued
     PY-->>GO: 202 experiment_id
     GO-->>B: 202 experiment_id, request_id=req_01JB2X
@@ -73,6 +74,10 @@ sequenceDiagram
     W->>W: log service=worker correlation_id=req_01JB2X event=backtest_started
     W->>W: log level=error event=backtest_failed error_code=strategy_timeout
     W->>DB: INSERT domain_events BacktestFailed correlation_id=req_01JB2X
+    opt inference required by authoring/news/sentiment
+        W->>AI: structured request correlation_id=req_01JB2X
+        AI-->>W: structured output + model usage
+    end
     B->>GO: GET /api/v1/experiments/id
     GO-->>B: 200 status failed, error_code strategy_timeout, request_id req_01JB2X
     Note over B: toast hiện request_id để user copy khi báo lỗi
@@ -328,3 +333,10 @@ RETURNING event_id;   -- 0 row = đã xử lý, dừng lại
 
 - **Event delivery dedup/order/dead-letter**: consumer idempotent theo `event_id`; ordering chỉ hứa theo aggregate sequence; event retry hết lượt vào dead-letter có quan sát được, không âm thầm drop (sơ đồ 07, 08; `design.md` §12.4 invariants 7–8).
 - **Scale gate**: tuyên bố "100.000 backtest" chỉ được công bố khi có benchmark/metric chứng minh (design §12.4 invariant 10; sơ đồ 15); gate gồm throughput worker, queue depth, age-of-oldest-job.
+- **Agent/tool/model/sandbox metrics**: `agent_runs_total`, `agent_state_duration_seconds`,
+  `agent_tool_calls_total`, `agent_tool_latency_seconds`, `agent_model_calls_total`,
+  `agent_model_tokens_total`, `agent_repair_attempts_total`, `sandbox_runs_total`,
+  `sandbox_resource_usage` và `strategy_publish_conflicts_total` theo
+  `specs/agent-architecture.md`. Không dùng principal/draft/run ID làm Prometheus label.
+- **Agent alerts**: stuck state quá deadline, repeated policy violation, sandbox isolation
+  signal, model/tool failure spike, publish conflict và Python outbox backlog.

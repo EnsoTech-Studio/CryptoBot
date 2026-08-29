@@ -1,59 +1,61 @@
-flowchart LR
-    subgraph Py["🐍 Python Strategy Platform — TARGET"]
-        direction LR
+flowchart TB
+    subgraph Py["Python Research Platform - canonical domain runtime"]
+        direction TB
 
-        subgraph App["Application — use cases"]
-            direction TB
-            ContentSvc["StrategyAuthoringService<br/>NewsIntelligenceService"]
-            MarketSvc["RealtimeAnalysisService"]
-            ResearchSvc["SearchRunService<br/>ExperimentService<br/>RankingService"]
+        subgraph App["Application layer"]
+            API["Research API<br/>signed commands and queries"]
+            Experiment["Experiment/Search/Ranking services"]
+            NewsApp["News/Sentiment orchestration"]
+            AgentApp["AgentOrchestrator<br/>persisted deterministic workflow"]
         end
 
-        subgraph Domain["Domain — deterministic, không framework I/O"]
-            direction TB
-            StrategyCore["StrategySpec DSL → StrategyRegistry<br/>→ StrategyRuntime dùng chung<br/>IndicatorLibrary · SignalCombiner"]
-            ExecutionCore["ExecutionSimulator<br/>BBO · LONG/SHORT · SL/TP<br/>fee · spread · slippage"]
-            ResultCore["Evaluator + ScorePolicy<br/>ProvenanceBuilder"]
+        subgraph Domain["Pure domain layer"]
+            Strategy["StrategyRegistry + StrategyRuntime<br/>indicators and composite"]
+            Backtest["Backtest Engine + Execution Simulator<br/>evaluator and provenance"]
+            NewsDomain["news extraction/tagging rules<br/>quality gate and cache policy"]
+            AgentDomain["agent state, attempts, artifacts,<br/>permissions and budgets"]
         end
 
-        subgraph Ports["Ports — interface do Python sở hữu"]
-            direction TB
-            IntelligencePorts["StructuredLLM<br/>NewsDocumentProvider"]
-            ExtensionPorts["MarketEventStream<br/>CandidateGenerator"]
-            DataPorts["Repositories<br/>JobQueue · EventPublisher"]
+        subgraph Ports["Ports owned by Python"]
+            MarketPort["MarketDataPort"]
+            ModelPort["ModelGatewayPort"]
+            ArtifactPort["Artifact/Sandbox/Approval ports"]
+            DataPort["Repository/Job/Outbox ports"]
         end
 
-        subgraph Adapters["Adapters — thay provider/protocol tại đây"]
-            direction TB
-            GoAdapter["Go Gateway WS Client"]
-            AIAdapters["LLM Adapter<br/>RSS + Safe HTML Extract"]
-            GeneratorAdapters["Random · Domain-guided<br/>Genetic generators"]
-            DataAdapters["PostgreSQL repos/queue/outbox<br/>Broker adapter chỉ khi benchmark cần"]
+        subgraph Adapters["Infrastructure adapters"]
+            GoMarket["Authenticated Go Market adapter<br/>closed candles, BBO and history"]
+            AIAdapter["Internal AI/LLM Adapter client<br/>structured inference only"]
+            SandboxAdapter["Isolated Sandbox Runner"]
+            SourceAdapter["SafeFetcher + Readability"]
+            Postgres["Python-owned PostgreSQL repos,<br/>jobs and transactional outbox"]
         end
     end
 
-    ContentSvc --> StrategyCore
-    ContentSvc --> IntelligencePorts
-    MarketSvc --> StrategyCore
-    MarketSvc --> ExtensionPorts
-    ResearchSvc --> StrategyCore
-    ResearchSvc --> ExecutionCore --> ResultCore
-    ResearchSvc --> ExtensionPorts
+    API --> Experiment
+    API --> NewsApp
+    API --> AgentApp
+    Experiment --> Strategy
+    Experiment --> Backtest
+    NewsApp --> NewsDomain
+    AgentApp --> AgentDomain
+    AgentApp --> Strategy
+    AgentApp --> NewsDomain
+    Strategy --> MarketPort --> GoMarket
+    Backtest --> MarketPort
+    NewsDomain --> ModelPort --> AIAdapter
+    AgentDomain --> ModelPort
+    AgentDomain --> ArtifactPort --> SandboxAdapter
+    NewsDomain --> SourceAdapter
+    Experiment --> DataPort --> Postgres
+    NewsApp --> DataPort
+    AgentApp --> DataPort
 
-    ContentSvc --> DataPorts
-    MarketSvc --> DataPorts
-    ResearchSvc --> DataPorts
-
-    IntelligencePorts -.->|implemented by| AIAdapters
-    ExtensionPorts -.->|market stream| GoAdapter
-    ExtensionPorts -.->|generator plugins| GeneratorAdapters
-    DataPorts -.->|default| DataAdapters
-
-    classDef app fill:#bfdbfe,stroke:#2563eb,color:#111
-    classDef domain fill:#fde68a,stroke:#d97706,color:#111
-    classDef port fill:#e5e7eb,stroke:#6b7280,color:#111
-    classDef adapter fill:#bbf7d0,stroke:#16a34a,color:#111
-    class ContentSvc,MarketSvc,ResearchSvc app
-    class StrategyCore,ExecutionCore,ResultCore domain
-    class IntelligencePorts,ExtensionPorts,DataPorts port
-    class GoAdapter,AIAdapters,GeneratorAdapters,DataAdapters adapter
+    classDef app fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef domain fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef port fill:#faf9f6,stroke:#6b6258,color:#2a251f;
+    classDef adapter fill:#e9f1eb,stroke:#426b55,color:#2a251f;
+    class API,Experiment,NewsApp,AgentApp app;
+    class Strategy,Backtest,NewsDomain,AgentDomain domain;
+    class MarketPort,ModelPort,ArtifactPort,DataPort port;
+    class GoMarket,AIAdapter,SandboxAdapter,SourceAdapter,Postgres adapter;

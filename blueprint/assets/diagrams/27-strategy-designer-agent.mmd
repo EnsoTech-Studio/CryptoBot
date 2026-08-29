@@ -1,0 +1,26 @@
+flowchart TB
+    Input["Input reference<br/>natural language, DSL or safe-fetched document ID"]
+    GetDoc["source.get_document<br/>read pre-fetched/sanitized content by ID"]
+    Catalog["strategy.get_catalog<br/>supported strategies, indicators,<br/>operators and parameters"]
+    Schema["strategy.get_dsl_schema<br/>versioned StrategySpec JSON Schema"]
+    Agent["StrategyDesignerAgent<br/>propose declarative StrategySpec"]
+    Validate["strategy.validate_spec<br/>schema, semantic, bounds,<br/>causality and unsupported construct"]
+    Valid{"Spec valid?"}
+    Errors["strategy.get_validation_errors<br/>structured errors/questions"]
+    Save["strategy.save_draft_spec<br/>idempotently save hashed revision"]
+    Output["Validated StrategySpec revision<br/>ready for implementation"]
+    Stop["Stop/request user input<br/>when intent remains ambiguous"]
+
+    Input --> GetDoc --> Catalog --> Schema --> Agent --> Validate --> Valid
+    Valid -->|no, repairable| Errors --> Agent
+    Valid -->|no, missing intent| Stop
+    Valid -->|yes| Save --> Output
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Agent agent;
+    class GetDoc,Catalog,Schema,Validate,Errors,Save tool;
+    class Valid gate;
+    class Stop stop;

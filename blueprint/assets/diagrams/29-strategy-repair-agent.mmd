@@ -1,0 +1,36 @@
+flowchart TB
+    Trigger["Validation, policy or sandbox failure<br/>and orchestrator confirms budget"]
+    Context["agent.get_attempt_context<br/>current spec/code and immutable attempt history"]
+    Report["sandbox.get_test_report<br/>structured failures and evidence"]
+    Agent["StrategyRepairAgent<br/>smallest safe patch proposal"]
+    Mode{"DSL-backed or custom code?"}
+    SpecPatch["strategy.apply_spec_patch<br/>expected draft revision; no history overwrite"]
+    CodePatch["artifact.apply_code_patch<br/>isolated advanced artifact workspace"]
+    Validate["strategy.validate_spec<br/>schema, semantic, bounds and causality"]
+    Policy["artifact.run_policy_check<br/>AST/import/API policy"]
+    Test["sandbox.run_contract_tests<br/>fresh sandbox; fixed fixtures"]
+    Pass{"Pass?"}
+    Budget{"Budget remains?"}
+    Failed["draft.mark_failed<br/>terminal reason and evidence"]
+    Handoff["Return revised artifact/spec<br/>to implementation/review flow"]
+
+    Trigger --> Context --> Report --> Agent --> Mode
+    Mode -->|DSL| SpecPatch --> Validate
+    Mode -->|custom| CodePatch --> Policy
+    Validate -->|valid| Policy
+    Validate -->|invalid| Budget
+    Policy -->|pass| Test --> Pass
+    Policy -->|fail| Budget
+    Pass -->|yes| Handoff
+    Pass -->|no| Budget
+    Budget -->|yes| Context
+    Budget -->|no| Failed
+
+    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Agent agent;
+    class Context,Report,SpecPatch,CodePatch,Validate,Policy,Test,Failed tool;
+    class Mode,Pass,Budget gate;
+    class Handoff stop;
