@@ -1,0 +1,192 @@
+Tóm tắt tình hình:
+- Backtest backend: có. Có Python DeterministicEngine, queue worker, event-worker evaluate/rank, Go API proxy POST /api/v1/experiments, và migration có demo dataset ETHUSDT 5m để chạy offline. Xem [README.md](D:\\University\\Projects\\Individual projects\\CryptoBot\\README.md) và [app/worker.py](D:\\University\\Projects\\Individual projects\\CryptoBot\\app\\worker.py).
+- Lưu ý: màn hình Backtest hiện có rủi ro fail khi chạy 1 strategy đơn lẻ, vì UI gửi thành composite 1 child, còn engine yêu cầu composite 2-5 child. Xem [BacktestScreen.tsx](D:\\University\\Projects\\Individual projects\\CryptoBot\\web\\app\\components\\backtest\\BacktestScreen.tsx) và [backtest_engine.py](D:\\University\\Projects\\Individual projects\\CryptoBot\\app\\services\\backtest_engine.py).
+- Sentiment từ news: có pipeline cơ bản, chưa phải agent LLM. News worker collect nguồn đã duyệt, gọi AI sentiment, lưu sentiment_results; backtest có thể load sentiment window và strategy news_sentiment đưa ra BUY/SELL/HOLD theo avg_score, buy_above, sell_below, min_items. Xem [news_worker.py](D:\\University\\Projects\\Individual projects\\CryptoBot\\app\\news_worker.py) và [news_sentiment.py](D:\\University\\Projects\\Individual projects\\CryptoBot\\app\\domain\\strategy\\plugins\\news_sentiment.py).
+- AI sentiment hiện là demo keyword/rule-based, không phải model tin tức nâng cao hay agent phân tích thị trường. Xem [predictor.py](D:\\University\\Projects\\Individual projects\\CryptoBot\\ai\\app\\services\\predictor.py).
+- Dynamic crawl data: market data Binance REST/WSS có code trong Go, có reconnect/backfill/dataset creation, nhưng đây là market gateway, không phải agent. News crawler backend hiện chủ yếu là RSS allowlisted; adaptive HTML extraction/LLM self-healing đang là target gap. Xem [schemas.py](D:\\University\\Projects\\Individual projects\\CryptoBot\\app\\schemas.py) và [blueprint/specs/news.md](D:\\University\\Projects\\Individual projects\\CryptoBot\\blueprint\\specs\\news.md).
+- Agent nhận ngôn ngữ -> sinh code -> thêm strategy: chưa có runtime thật. Tài liệu ghi rõ còn là Designed, target gap; repo chưa có orchestrator, strategy_drafts, agent tables, compiler, policy checker, sandbox, approval/publisher. UI Strategy hiện là mock/static illustration. Xem [strategy-authoring.md](D:\\University\\Projects\\Individual projects\\CryptoBot\\blueprint\\specs\\strategy-authoring.md) và [strategy-authoring.ts](D:\\University\\Projects\\Individual projects\\CryptoBot\\web\\lib\\strategy-authoring.ts).
+
+
+- Thêm phần AI sentiment crawling -> không cố định một phương pháp crawling
+- Thêm phần vòng loop tìm strategy
+
+Note - slide: 
+- Làm theo format của thầy
+    + Yêu cầu kiến trúc: Quality Attributes / ASRs 
+    + C4 model + UML + Use case
+    + Patterns
+    + Strategy với algorithm vẽ class diagram
+
+Slides:
+    + Yêu cầu kiến trúc: ASRs / Architectural Drivers x
+    + Quality Attributes x
+    + C4 model + UML + Use case 
+        + Use case
+        + C3: context, container, component
+    + Component boundary: chắc trình bày scope (làm thêm specs cho C4)
+        + Market
+        + Strategy: handcraft + Auto (Loop Discovery)
+        + Experiment - Backtest
+        + Sentiment: crawling + evaluation
+        + News Intelligence: Agent 
+    + Contract/interface: Class diagram (detail từng cái -> kế thừa class interface) - giải quyết đc God Service và coupling là ok
+        + Class của Strategy: strategy design patterns
+        + Class của Search algorithm
+        + Class của Crawling 
+    Note: Chỉnh lại C2-C3, high level cùng format 
+    + High-level architecture - Modular monolith (Chỗ này show ra nhiều kỹ thuật): kết nối giữa các components (không vẽ flow nữa)
+        + Middleware (Go API): CQRS, RBAC, 
+        + Frontend: SPA, Micro-Frontends, JAMstack
+            + Event Streaming, Kappa Architecture
+        + Backend: Plugin Architecture, Event-driven, Job queue
+            + Research
+            + Market service: Binance adapter
+            + Backtest worker
+        + Database: 
+            + Redis: cache,  
+            + Postgre
+        + Agent: Agent Strategy, Crawling agent, LLM sinh code
+        + External services: Binance, AI service, news sources
+    + Runtime flow: Nói về từng flow  
+        + Market: flow hiện candle từ binance
+        + Strategy
+            + Run strategy: handcraft + auto
+            + Add Strategy
+        + Experiment: Chạy Backtest
+        + News Crawling: pipeline chạy new crawling (handcraft + LLM hỗ trợ)
+    + Scalability: scale-out, scale-up -> chạy test k6, locust
+    + Failure: retry, idempotency, reconnect, failure isolation -> sinh ra kịch bản testing + chạy test mô phỏng (tắt mấy module trong đó)
+    + Deploy and MLOps: Docker, 
+        + Scale và failure khi deploy: health check
+        + Kubernetes hỗ trợ replicas, scheduling, rolling deployment và autoscaling nhưng không bắt buộc cho MVP -> dùng docker compose
+    + Tổng kết: extensibility, replaceability, scalability/failure theo yêu cầu
+    + Bàn thêm tradeoffs: lập ra cái bảng tradeoffs
+
+
+Note: ông thầy dùng syllabus sinh ra nên nói theo syllabus
+
+Improving:
+- Thiếu ASR, QA
+- Component chia ra từng components, khó nhìn -> vẽ lại
+- AI sentiment đang rule based
+- Crawling mới có pipeline chưa có Dynamic
+- Chưa có agent sinh code + thêm strategy, chưa có orchestrator, strategy_drafts, agent tables, compiler, policy checker, sandbox, approval/publisher
+- Search algorithm: Genetic chưa có
+- Provider mới làm frontend đổi? -> chưa thấy second provider proof
+- 100k backtests chưa có phần testing chứng minh -> cần benchmark testing 
+- Xử lý failure chưa có phần chứng minh
+
+Code:
+- Add feat crawling news thông thường + crawl có agent LLM phân tích 
+- Add feat AI sentiment -> tích hợp LLM không rule based, lấy AI api key ngoài
+- Add feat agent NLP sinh ngôn ngữ từ câu của user
+    + Sinh code gán kế thừa vào interface Strategy
+- 
+
+
+
+
+
+# Meeting: 
+- Ôn lại toàn bộ bài học -> list ra những thứ cần xem 
+- Lấy slide của thầy và note những thứ mình đã Làm
+- Yêu cầu thêm + chia việc
+
+
+
+
+
+----------------------------------------------------------
+Crypto Project Notes
+
+# Frontend - UI:
+Hiển thị biểu đồ Realtime
++ Load lịch sử nến (1000 nến tương ứng từng khung thời gian 1m, 5m,...)
++ Hiển thị cây nến hiện tại realtime
+    - Nếu cây nến hiện tại trùng với cây nến cuối cùng (n=1000)
+    - Nếu cây nến hiện tại là cây nến mới hoàn toàn
+
+# Strategy
+1. Strategy đơn: 
++ MA
++ Bollingbands
++ SMC
++...
+
+2. Strategy kết hợp:
+  + Thủ công: kết hợp các strategy đơn
+  + Tự động (Harder but Recommended): Loop Discovery - tự kết hợp các strategy để tìm biến thể tốt nhất và hiển thị lên Leaderboard
+
+3. Add strategy
+  + User can use natural language or insert a link, then the system will covert it into a unit of strategy and save it.
+  Note: it requires a draft for the user to review before deciding to generate code.
+  Challenging: Code generated may be unable to run in the first time, so a repair loop is considered to ensure it can run. 
+Note: Bổ sung thêm strategy: người dùng có thể nhập ngôn ngữ tự nhiên/link trang web/... 
+=> Hệ thống tự động chuyển thành strategy đơn/đa và lưu trong hệ thống có thể lại trong hệ thống (chatbot, tạo ra file python rồi cái strategy sẽ được tính như nào, rồi lưu lại)
+
+# Backtest 
+Thao tác:
+  + Chọn pair/coin
+  + Chọn thời gian test: from - to
+  + Choose investment
+  + Choose strategy (single/combined)
+
+Output: Bảng kết quả
+  + Pair/Coin
+  + Entry Time
+  + Direction: LONG/SHORT
+  + Weigh: USD 
+  + Entry Price
+  + Stoploss
+  + TakeProfit
+  + Exit Price
+  + Transaction Cost
+  + Slippage/Spread (e.g. 5bps)
+  + Profit
+
+Statistics
+Win rate: 40% Wins: 40 Losses: 60
+Total Profit: 50$
+Max Drawn Down: 70%
+
+Visualize in the graph
+
+
+# Crawler news
+- Crawler news: use llm to break the html construction just in case the web changes its html tree
+
+# Sentiment 
+- Use LLM models to analyze market
+
+----------------------------------------------------------
+
+Câu hỏi:
+1. Architectural drivers là gì?
+
+
+2. C4 Context và Container của nhóm?
+
+
+
+3. Boundary của Market / Strategy / Experiment / News?
+
+
+4. Thêm strategy mới sửa ở đâu?
+
+
+5. Đổi search algorithm sửa ở đâu?
+
+
+6. Provider mới có làm frontend đổi?
+
+
+7. 100.000 backtests scale thế nào?
+
+
+8. Service lỗi có lan failure không?
+
+
+9. Duplicate/retry/event order xử lý thế nào?
+
+
+10. Leaderboard result truy được provenance thế nào?
