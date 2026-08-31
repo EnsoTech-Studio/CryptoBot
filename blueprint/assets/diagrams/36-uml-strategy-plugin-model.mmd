@@ -1,0 +1,104 @@
+classDiagram
+    direction LR
+
+    class Strategy {
+        <<interface>>
+        +id() String
+        +version() String
+        +inputRequirements() Requirements
+        +validate(params) ValidationResult
+        +analyze(ctx) Signal
+    }
+
+    class BaseStrategy {
+        <<abstract>>
+        +validate(params) ValidationResult
+        #requireIndicator(name, params)
+    }
+
+    class MAStrategy {
+        +fastPeriod int
+        +slowPeriod int
+        +analyze(ctx) Signal
+    }
+
+    class RSIStrategy {
+        +period int
+        +buyThreshold Decimal
+        +sellThreshold Decimal
+        +analyze(ctx) Signal
+    }
+
+    class BollingerBandsStrategy {
+        +period int
+        +deviation Decimal
+        +analyze(ctx) Signal
+    }
+
+    class SupportResistanceStrategy {
+        +lookback int
+        +tolerance Decimal
+        +analyze(ctx) Signal
+    }
+
+    class SMCStrategy {
+        <<target extension>>
+        +structureWindow int
+        +analyze(ctx) Signal
+    }
+
+    class CompositeStrategy {
+        +children StrategyRef[]
+        +combinationPolicy PolicyRef
+        +analyze(ctx) Signal
+    }
+
+    class SignalCombiner {
+        <<interface>>
+        +combine(signals, policy) Signal
+    }
+
+    class WeightedVoteCombiner {
+        +combine(signals, policy) Signal
+    }
+
+    class StrategyRegistry {
+        +register(descriptor)
+        +resolve(id, version) Strategy
+        +listAvailable() Descriptor[]
+    }
+
+    class StrategyRuntime {
+        +analyze(spec, ctx) SignalRecord
+    }
+
+    class IndicatorLibrary {
+        +precompute(candles, requirements) IndicatorView
+    }
+
+    class AnalysisContext {
+        +candles CausalView
+        +index int
+        +indicators IndicatorView
+        +sentiment SentimentWindow
+    }
+
+    Strategy <|.. BaseStrategy
+    BaseStrategy <|-- MAStrategy
+    BaseStrategy <|-- RSIStrategy
+    BaseStrategy <|-- BollingerBandsStrategy
+    BaseStrategy <|-- SupportResistanceStrategy
+    BaseStrategy <|-- SMCStrategy
+    Strategy <|.. CompositeStrategy
+    SignalCombiner <|.. WeightedVoteCombiner
+
+    CompositeStrategy o-- Strategy : child references
+    CompositeStrategy --> SignalCombiner
+    StrategyRegistry o-- Strategy : versioned plugins
+    StrategyRuntime --> StrategyRegistry
+    StrategyRuntime --> IndicatorLibrary
+    StrategyRuntime --> AnalysisContext
+
+    note for Strategy "No database, HTTP, queue or UI access.<br/>Returns BUY, SELL or HOLD with evidence."
+    note for StrategyRegistry "Add strategy through registration,<br/>not if/else by strategy ID."
+    note for StrategyRuntime "Same package and semantics<br/>for realtime and backtest."

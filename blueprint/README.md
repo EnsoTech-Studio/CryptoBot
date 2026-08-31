@@ -26,7 +26,7 @@ blueprint/
 ├── agent-architecture-update-plan.md # Kế hoạch đã duyệt để cập nhật v1.5
 ├── agent-architecture-diagrams.html  # Reference HTML cho toàn bộ agent/tool
 ├── assets/                        # Sơ đồ render sẵn — đọc offline / export PDF được
-│   ├── README.md                  # Danh mục 33 sơ đồ + cách render lại
+│   ├── README.md                  # Danh mục 39 sơ đồ + cách render lại
 │   ├── diagrams/                  # Mermaid source (.mmd) + SVG vector + index.json
 │   └── diagrams-png/              # PNG 2× cho Word/PowerPoint
 ├── scripts/
@@ -59,22 +59,25 @@ task/AC; implementation claim phải trỏ code/test/evidence thật.
 
 ## Sơ đồ render sẵn
 
-Mọi sơ đồ đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×) — tổng cộng **33 sơ đồ** đánh số thống nhất. Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
+Mọi sơ đồ đều có **bản render sẵn** ở `assets/diagrams/*.svg` (vector) và `assets/diagrams-png/*.png` (2×) — tổng cộng **39 sơ đồ** đánh số thống nhất. Không có URL ảnh ngoài — mở tài liệu offline hoặc export PDF thì sơ đồ vẫn hiển thị đầy đủ.
 
-Bảy góc nhìn kiến trúc bắt buộc đều có sơ đồ tương ứng:
+Bảy góc nhìn kiến trúc bắt buộc và các nhóm sơ đồ bổ sung đều có sơ đồ tương ứng:
 
 | Góc nhìn bắt buộc | Sơ đồ | Section |
 | ----------------- | ----- | ------- |
 | System Context | `01-c4-l1-system-context` | `design.md` §2.1 |
 | Container / HLA | `02-c4-l2-container`, `04-high-level-architecture` | §2.2, §3 |
-| Component responsibilities | `03-c4-l3-python-strategy-platform` | §2.3 |
+| Component responsibilities | `03-c4-l3-python-strategy-platform`, `35-c4-l3-go-edge-market-gateway` | §2.3, §1.2–§3.2 |
 | ERD | `06-erd` | §4.3 |
 | Data Flow | `05-market-realtime-candle-bbo`, `07-outbox-retry-order`, `13-news-html-llm-pipeline` | §3.2, §5.7.5, §6.4 |
 | Realtime / Reconnect Flow | `09-realtime-reconnect-backfill-flow`, `05-market-realtime-candle-bbo` | §6.1 |
 | Strategy/Agent Flow | `10-strategy-flow`, `21-ai-strategy-authoring`, `22-strategy-runtime-parity`, `25`–`33` | §6.2, `specs/agent-architecture.md` |
 | Search / Backtest Flow | `11-search-backtest-pipeline`, `15-job-queue-scale`, `16`–`19`, `23`, `24` | §6.3, §8.3, `specs/experiment.md` |
+| Use Case | `34-use-case-overview` | `docs/note-update-require.txt` |
+| UML class contracts | `36-uml-strategy-plugin-model`, `37-uml-search-algorithm-model`, `38-uml-news-crawler-model` | `specs/strategy-registry.md`, `specs/search-loop.md`, `specs/news.md` |
+| Deployment | `39-deployment-topology` | §1.3, §8, §12 |
 
-Danh mục đầy đủ 33 sơ đồ và hướng dẫn render lại: **`assets/README.md`**. Mapping yêu cầu -> sơ đồ -> verification gate: **`traceability.md`**.
+Danh mục đầy đủ 39 sơ đồ và hướng dẫn render lại: **`assets/README.md`**. Mapping yêu cầu -> sơ đồ -> verification gate: **`traceability.md`**.
 
 ## Cách đọc
 
@@ -229,6 +232,9 @@ Năm nguyên tắc được áp dụng nhất quán trong toàn bộ blueprint, 
 
 ## Phiên bản
 
+- **v1.6** — 2026-08-31 — Bổ sung Use Case tổng thể, C4 Level 3 cho Go Edge/Market,
+  ba UML class contract cho Strategy/Search/Crawler và Deployment topology; render/cập nhật
+  catalog + traceability thành bộ 01–39.
 - **v1.5** — 2026-08-27 — Khóa Go = API/Edge/Market, Python `research` = toàn bộ Research
   Domain; thêm Agent Platform 6 logical role, typed tools, durable state, generated-artifact
   policy/sandbox/bounded repair/human approval; thêm adaptive news extraction; đóng contract

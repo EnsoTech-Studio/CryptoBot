@@ -22,7 +22,7 @@ Giữ cả ba định dạng có lý do: `.mmd` là **nguồn** (sửa ở đây
 
 ## Danh mục sơ đồ
 
-33 sơ đồ đánh số thống nhất. Cột "Gốc" cho biết nguồn của file `.mmd`: **doc** = trích
+39 sơ đồ đánh số thống nhất. Cột "Gốc" cho biết nguồn của file `.mmd`: **doc** = trích
 từ mermaid nhúng trong tài liệu (Markdown là nguồn sự thật); **target** = sơ đồ kiến trúc
 đích của bộ thống nhất (`.mmd` chính là nguồn sự thật cho tới khi mermaid tương ứng được
 nhúng vào tài liệu narrative).
@@ -62,12 +62,18 @@ nhúng vào tài liệu narrative).
 | 31 | `31-candidate-discovery-agent` | Optional Candidate Discovery bounded by normal queue | target | `specs/agent-architecture.md` | **Agent Architecture**, **Search/Backtest Flow** |
 | 32 | `32-market-insight-agent` | Optional read-only Market Insight flow | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 33 | `33-tool-invocation-security-boundary` | Typed tool contract và least-privilege security boundary | target | `specs/agent-architecture.md` | **Agent Architecture**, access control |
+| 34 | `34-use-case-overview` | Use Case tổng thể cho user, author, operator và plugin developer | target | `docs/note-update-require.txt` | **Use Case** |
+| 35 | `35-c4-l3-go-edge-market-gateway` | C4 Level 3 — component bên trong Go Edge & Market Gateway | target | `design.md` §1.2–§3.2 | **Component responsibilities**, **Realtime Flow** |
+| 36 | `36-uml-strategy-plugin-model` | UML class — Strategy interface, plugin, composite, registry và runtime | target | `specs/strategy-registry.md`, `specs/composite-strategy.md` | **UML/Class**, **Strategy Flow** |
+| 37 | `37-uml-search-algorithm-model` | UML class — CandidateGenerator và các search algorithm thay thế được | target | `specs/search-loop.md` | **UML/Class**, **Search/Backtest Flow** |
+| 38 | `38-uml-news-crawler-model` | UML class — crawler adapters, deterministic extractor và LLM fallback | target | `specs/news.md` | **UML/Class**, **Data Flow** |
+| 39 | `39-deployment-topology` | Deployment — Docker Compose MVP, network boundary và scale path | target | `design.md` §1.3, §8, §12 | **Deployment**, scalability/reliability |
 
 Ghi chú parity: 09 và 10 là sơ đồ gốc của tài liệu narrative (mermaid nhúng); target
 tương ứng của chúng nằm ở 05 (candle+BBO realtime) và 22 (runtime parity) — đọc kèm nhau.
 Mapping yêu cầu → sơ đồ → verification gate: `blueprint/traceability.md`.
 
-Bảy góc nhìn bắt buộc ở `requirements.html` (System Context, Container/HLA, ERD, Data Flow, Realtime/Reconnect Flow, Strategy Flow, Search/Backtest Flow) đều có ít nhất một sơ đồ render sẵn — xem cột cuối. Nhóm Agent Architecture (25–33) bổ sung cho yêu cầu trong `note.txt`; không thay thế các góc nhìn bắt buộc.
+Bảy góc nhìn bắt buộc ở `requirements.html` (System Context, Container/HLA, ERD, Data Flow, Realtime/Reconnect Flow, Strategy Flow, Search/Backtest Flow) đều có ít nhất một sơ đồ render sẵn — xem cột cuối. Nhóm Agent Architecture (25–33) và nhóm Use Case/C4-Go/UML/Deployment (34–39) bổ sung cho yêu cầu trong `docs/note-update-require.txt`; không thay thế các góc nhìn bắt buộc.
 
 ## Render lại
 

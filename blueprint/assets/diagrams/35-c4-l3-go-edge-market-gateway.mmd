@@ -1,0 +1,60 @@
+flowchart TB
+    subgraph Go["Go Edge and Market Gateway - C4 Level 3 components"]
+        direction TB
+
+        subgraph Edge["Public edge"]
+            API["REST API<br/>request validation and DTO mapping"]
+            Auth["Auth and Ownership Guard<br/>JWT, RBAC and quota"]
+            Hub["Public WebSocket Hub<br/>subscription fan-out by panel key"]
+        end
+
+        subgraph Market["Market data"]
+            Registry["MarketProviderRegistry<br/>resolve provider adapter"]
+            Binance["BinanceAdapter - MVP<br/>REST history and WSS kline/BBO"]
+            Future["FutureProviderAdapter - extension"]
+            Normalizer["MarketNormalizer<br/>symbol, timeframe, decimal,<br/>timestamp and sequence validation"]
+            Service["MarketService<br/>checkpoint, de-dup, batch persistence,<br/>reconnect and backfill coordination"]
+        end
+
+        subgraph Internal["Internal boundary"]
+            PyClient["Python Research Client<br/>signed commands and queries"]
+            Ingress["Internal Event Ingress<br/>signature, schema, sequence and idempotency"]
+        end
+
+        Repos["Go-owned repositories<br/>candles, BBO and stream checkpoints"]
+    end
+
+    Browser["Web Dashboard"]
+    Exchange["Binance / future provider"]
+    Python["Python Research Platform"]
+    DB[("PostgreSQL market schema")]
+
+    Browser -->|"HTTPS"| API --> Auth
+    Auth --> PyClient -->|"signed internal HTTP"| Python
+    Browser <-->|"public WebSocket"| Hub
+
+    Auth --> Registry
+    Registry --> Binance
+    Registry -.-> Future
+    Binance <-->|"REST + WSS"| Exchange
+    Future <-->|"provider contract"| Exchange
+    Binance --> Normalizer
+    Future --> Normalizer
+    Normalizer --> Service
+    Service --> Repos --> DB
+    Service -->|"normalized MarketEvent"| Python
+    Service -->|"market delta"| Hub
+
+    Python -->|"signed progress/result events"| Ingress --> Hub
+
+    Boundary["Boundary rule:<br/>Go owns edge, auth, market connections and fan-out.<br/>Go does not implement strategy, search, backtest, news or agents."]
+    Go --- Boundary
+
+    classDef component fill:#cffafe,stroke:#0891b2,color:#111;
+    classDef adapter fill:#dcfce7,stroke:#16a34a,color:#111;
+    classDef external fill:#6b7280,stroke:#374151,color:#fff;
+    classDef note fill:#fef3c7,stroke:#d97706,color:#111;
+    class API,Auth,Hub,Registry,Normalizer,Service,PyClient,Ingress,Repos component;
+    class Binance,Future adapter;
+    class Browser,Exchange,Python,DB external;
+    class Boundary note;

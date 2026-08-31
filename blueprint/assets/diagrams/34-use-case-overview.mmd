@@ -1,0 +1,45 @@
+flowchart LR
+    subgraph Actors["Actors"]
+        direction TB
+        Researcher["Researcher"]
+        Author["Strategy Author"]
+        Operator["Operator"]
+        Developer["Plugin Developer"]
+    end
+
+    subgraph System["Crypto Strategy Lab - system use cases"]
+        direction TB
+
+        subgraph Primary["Primary research capabilities"]
+            direction LR
+            Access(["<b>Account and ownership</b><br/><br/>Register / login / logout<br/>Access only owned data<br/>and experiments"])
+            Market(["<b>Market and research</b><br/><br/>View realtime candlestick chart<br/>Manage up to 4 independent panels<br/>Select timeframe, strategy,<br/>indicators and signals<br/>View news and sentiment<br/>Analyze supplied text"])
+            Strategy(["<b>Strategy lifecycle</b><br/><br/>Browse single/composite strategies<br/>Create manual composite<br/>Draft from text, DSL or approved URL<br/>Review, approve and version<br/>Deploy reviewed trusted plugin"])
+        end
+
+        subgraph Execution["Experiment and operations"]
+            direction LR
+            Experiment(["<b>Experiment and discovery</b><br/><br/>Create and run backtest<br/>View trades, metrics, equity curve<br/>and entry/exit chart markers<br/>Start discovery loop<br/>Pause / resume / cancel search<br/>View Top-K and provenance"])
+            Operations(["<b>Operations</b><br/><br/>Monitor queue and workers<br/>Inspect retry and DLQ<br/>Replay failed work<br/>Inspect incidents and health"])
+        end
+    end
+
+    Researcher --> Access
+    Researcher --> Market
+    Researcher --> Strategy
+    Researcher --> Experiment
+    Author --> Access
+    Author --> Strategy
+    Author --> Experiment
+    Operator --> Operations
+    Developer --> Strategy
+
+    Guard["Simulation and research only<br/>No real order placement<br/>No exchange credentials"]
+    System --- Guard
+
+    classDef actor fill:#08427b,stroke:#052e56,color:#fff;
+    classDef usecase fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef guard fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    class Researcher,Author,Operator,Developer actor;
+    class Access,Market,Strategy,Experiment,Operations usecase;
+    class Guard guard;

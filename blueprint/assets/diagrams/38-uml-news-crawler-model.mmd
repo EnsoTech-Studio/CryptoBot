@@ -1,0 +1,82 @@
+classDiagram
+    direction LR
+
+    class NewsSourceAdapter {
+        <<interface>>
+        +id() String
+        +supports(sourceConfig) bool
+        +collect(since, limit) SourceItem[]
+    }
+
+    class RSSSourceAdapter {
+        +collect(since, limit) SourceItem[]
+    }
+
+    class HTMLSourceAdapter {
+        +collect(since, limit) SourceItem[]
+    }
+
+    class NewsSourceRegistry {
+        +register(adapter)
+        +resolve(sourceConfig) NewsSourceAdapter
+    }
+
+    class SafeFetcher {
+        +fetch(approvedUrl) SanitizedDocument
+        -validateSchemeHostIpRedirect()
+        -enforceSizeTypeTimeout()
+    }
+
+    class ContentExtractor {
+        <<interface>>
+        +extract(document) ExtractionResult
+    }
+
+    class ReadabilityExtractor {
+        +extract(document) ExtractionResult
+    }
+
+    class AgentFallbackExtractor {
+        +extract(document, diagnostics) ExtractionResult
+    }
+
+    class ContentQualityGate {
+        +validate(result) QualityResult
+    }
+
+    class NewsCollectionService {
+        +collectAll(since)
+        +persistNormalized(result)
+    }
+
+    class NewsTagger {
+        +tag(document) NewsTags
+    }
+
+    class SentimentAnalyzer {
+        <<interface>>
+        +analyze(document) SentimentResult
+    }
+
+    class ModelSentimentAdapter {
+        +analyze(document) SentimentResult
+    }
+
+    NewsSourceAdapter <|.. RSSSourceAdapter
+    NewsSourceAdapter <|.. HTMLSourceAdapter
+    NewsSourceRegistry o-- NewsSourceAdapter
+    ContentExtractor <|.. ReadabilityExtractor
+    ContentExtractor <|.. AgentFallbackExtractor
+    SentimentAnalyzer <|.. ModelSentimentAdapter
+
+    HTMLSourceAdapter --> SafeFetcher
+    HTMLSourceAdapter --> ReadabilityExtractor
+    NewsCollectionService --> NewsSourceRegistry
+    NewsCollectionService --> ContentQualityGate
+    NewsCollectionService --> AgentFallbackExtractor : only after deterministic failure
+    NewsCollectionService --> NewsTagger
+    NewsCollectionService --> SentimentAnalyzer
+
+    note for SafeFetcher "HTTPS allowlist, SSRF and redirect guards.<br/>No arbitrary agent-controlled HTTP."
+    note for AgentFallbackExtractor "Reads already-fetched sanitized HTML.<br/>Must preserve source evidence and never fabricate."
+    note for NewsCollectionService "Crawler and sentiment remain separable.<br/>News collection still works when AI is unavailable."

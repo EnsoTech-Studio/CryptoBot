@@ -134,5 +134,29 @@
   {
     "slug": "33-tool-invocation-security-boundary",
     "origin": "target"
+  },
+  {
+    "slug": "34-use-case-overview",
+    "origin": "target"
+  },
+  {
+    "slug": "35-c4-l3-go-edge-market-gateway",
+    "origin": "target"
+  },
+  {
+    "slug": "36-uml-strategy-plugin-model",
+    "origin": "target"
+  },
+  {
+    "slug": "37-uml-search-algorithm-model",
+    "origin": "target"
+  },
+  {
+    "slug": "38-uml-news-crawler-model",
+    "origin": "target"
+  },
+  {
+    "slug": "39-deployment-topology",
+    "origin": "target"
   }
 ]

@@ -1,0 +1,66 @@
+flowchart TB
+    User["User browser"]
+
+    subgraph Host["MVP deployment - Docker Compose on one host"]
+        direction TB
+
+        subgraph Public["Public network boundary"]
+            Web["web container<br/>Next.js dashboard"]
+            Go["go-api container<br/>REST, WebSocket, auth and market gateway"]
+        end
+
+        subgraph Private["Private application network"]
+            PyAPI["python-api container<br/>research, strategy, search, news and agents"]
+            Worker1["python-worker-1<br/>backtest and agent jobs"]
+            WorkerN["python-worker-N<br/>optional horizontal replicas"]
+            AI["ai container or remote adapter<br/>structured inference only"]
+        end
+
+        subgraph Data["Private data network and volumes"]
+            DB[("PostgreSQL<br/>source of truth")]
+            Blob[("Object storage volume<br/>optional raw HTML")]
+            Broker[("Redis Stream / broker<br/>optional after benchmark")]
+        end
+    end
+
+    Exchange["Binance public REST/WSS"]
+    News["Approved RSS and article sources"]
+    RemoteAI["Remote LLM / ML provider - optional"]
+
+    User -->|"HTTPS/WSS"| Web
+    Web -->|"same-origin REST/WSS"| Go
+    Go -->|"signed internal HTTP"| PyAPI
+    Go <-->|"public market data only"| Exchange
+    PyAPI -->|"safe HTTPS fetch"| News
+    PyAPI --> AI
+    AI -.->|"versioned API"| RemoteAI
+
+    Go -->|"market schema role"| DB
+    PyAPI -->|"strategy/app schema role"| DB
+    Worker1 -->|"lease, facts and outbox"| DB
+    WorkerN -->|"lease, facts and outbox"| DB
+    PyAPI -.-> Blob
+    Worker1 -.-> Broker
+    WorkerN -.-> Broker
+
+    Health["Health and operations<br/>readiness/liveness, structured logs,<br/>metrics, queue depth and worker heartbeat"]
+    Go --- Health
+    PyAPI --- Health
+    Worker1 --- Health
+
+    Scale["Scale path<br/>1) add worker replicas<br/>2) separate hosts when measured<br/>3) Kubernetes scheduling/rolling update/autoscaling is optional"]
+    WorkerN --- Scale
+
+    Guard["Deployment guards<br/>no exchange trading credential<br/>secrets injected at runtime<br/>Python/AI/DB are not publicly exposed"]
+    Host --- Guard
+
+    classDef public fill:#dbeafe,stroke:#2563eb,color:#111;
+    classDef private fill:#fef3c7,stroke:#d97706,color:#111;
+    classDef data fill:#dcfce7,stroke:#16a34a,color:#111;
+    classDef external fill:#6b7280,stroke:#374151,color:#fff;
+    classDef note fill:#f5eddf,stroke:#8a6127,color:#2a251f;
+    class Web,Go public;
+    class PyAPI,Worker1,WorkerN,AI private;
+    class DB,Blob,Broker data;
+    class User,Exchange,News,RemoteAI external;
+    class Health,Scale,Guard note;
