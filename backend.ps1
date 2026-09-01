@@ -18,7 +18,7 @@ $stopScript = Join-Path $repoRoot "scripts\stop-native-backend.ps1"
 $statusScript = Join-Path $repoRoot "scripts\status-native-backend.ps1"
 $setupScript = Join-Path $repoRoot "scripts\setup-native-backend.ps1"
 $apiBinary = Join-Path $repoRoot ".runtime\bin\cryptobot-api.exe"
-$workerServices = @("worker", "event-worker", "news-worker")
+$workerServices = @("worker", "event-worker", "news-worker", "agent-worker")
 
 function Invoke-Checked {
     param(
@@ -32,9 +32,85 @@ function Invoke-Checked {
     }
 }
 
+function Import-LauncherEnvFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) {
+            continue
+        }
+        $separator = $trimmed.IndexOf("=")
+        if ($separator -lt 1) {
+            continue
+        }
+        $name = $trimmed.Substring(0, $separator).Trim()
+        $value = $trimmed.Substring($separator + 1).Trim()
+        if ($name -notmatch "^[A-Za-z_][A-Za-z0-9_]*$") {
+            continue
+        }
+        if ($value.Length -ge 2) {
+            $first = $value.Substring(0, 1)
+            $last = $value.Substring($value.Length - 1, 1)
+            if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+        }
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+}
+
+function Test-UsesExternalDatabase {
+    $resolvedEnvFile = $EnvFile
+    if (-not [System.IO.Path]::IsPathRooted($resolvedEnvFile)) {
+        $resolvedEnvFile = Join-Path $repoRoot $resolvedEnvFile
+    }
+    Import-LauncherEnvFile $resolvedEnvFile
+
+    $sawDatabaseUrl = $false
+    foreach ($name in @("MIGRATION_DATABASE_URL", "DATABASE_URL", "MARKET_DATABASE_URL")) {
+        $url = [Environment]::GetEnvironmentVariable($name, "Process")
+        if ([string]::IsNullOrWhiteSpace($url)) {
+            continue
+        }
+        $sawDatabaseUrl = $true
+        $lower = $url.ToLowerInvariant()
+        if ($lower -match "//(localhost|127\.0\.0\.1|postgres)(:|/)" -or $lower -match "@(localhost|127\.0\.0\.1|postgres)(:|/)") {
+            return $false
+        }
+    }
+    return $sawDatabaseUrl
+}
+
 function Start-Database {
+    if (Test-UsesExternalDatabase) {
+        Write-Host "External PostgreSQL configured; skipping Docker PostgreSQL."
+        return
+    }
     $docker = Get-Command "docker" -ErrorAction Stop
-    Invoke-Checked $docker.Source @("compose", "up", "-d")
+    Invoke-Checked $docker.Source @("compose", "--profile", "local-db", "up", "-d", "postgres")
+}
+
+function Stop-Database {
+    if (Test-UsesExternalDatabase) {
+        Write-Host "External PostgreSQL configured; no Docker PostgreSQL to stop."
+        return
+    }
+    $docker = Get-Command "docker" -ErrorAction Stop
+    Invoke-Checked $docker.Source @("compose", "--profile", "local-db", "down")
+}
+
+function Show-DatabaseStatus {
+    if (Test-UsesExternalDatabase) {
+        Write-Host "External PostgreSQL configured; Docker PostgreSQL is not used."
+        return
+    }
+    $docker = Get-Command "docker" -ErrorAction Stop
+    Invoke-Checked $docker.Source @("compose", "--profile", "local-db", "ps")
 }
 
 function Resolve-Services {
@@ -110,14 +186,12 @@ switch ($Command) {
     }
     "down" {
         Stop-NativeServices
-        $docker = Get-Command "docker" -ErrorAction Stop
-        Invoke-Checked $docker.Source @("compose", "down")
+        Stop-Database
         break
     }
     "status" {
         & $statusScript
-        $docker = Get-Command "docker" -ErrorAction Stop
-        Invoke-Checked $docker.Source @("compose", "ps")
+        Show-DatabaseStatus
         break
     }
     "logs" {
@@ -139,8 +213,8 @@ switch ($Command) {
         @"
 Run from the repository root:
 
-  run up                            Start PostgreSQL and all backend services
-  run db                            Start PostgreSQL only
+  run up                            Start all backend services; skips Docker DB for Supabase
+  run db                            Start optional local PostgreSQL only
   run api                           Start Go API and its research dependency
   run research | run ai             Start one service
   run worker                        Start the backtest worker
@@ -150,7 +224,7 @@ Run from the repository root:
   run stop [service]                Stop all, or one service/group
   run status                        Show native backend and PostgreSQL status
   run logs <service>                Tail a service log
-  run down                          Stop backend and PostgreSQL (keeps volumes)
+  run down                          Stop backend and optional local PostgreSQL
 
 PowerShell: run .\scripts\install-run-command.ps1 once to register this command.
 "@ | Write-Host

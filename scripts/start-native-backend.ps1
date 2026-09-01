@@ -57,6 +57,21 @@ function Get-ProcessEnvironment {
     return [Environment]::GetEnvironmentVariable($Name, "Process")
 }
 
+function Get-DatabaseTargetLabel {
+    $databaseUrl = Get-ProcessEnvironment "MIGRATION_DATABASE_URL"
+    if ([string]::IsNullOrWhiteSpace($databaseUrl)) {
+        $databaseUrl = Get-ProcessEnvironment "DATABASE_URL"
+    }
+    $lower = $databaseUrl.ToLowerInvariant()
+    if ($lower -match "supabase\.com|pooler\.supabase\.com") {
+        return "Supabase PostgreSQL"
+    }
+    if ($lower -match "//(localhost|127\.0\.0\.1|postgres)(:|/)" -or $lower -match "@(localhost|127\.0\.0\.1|postgres)(:|/)") {
+        return "local PostgreSQL"
+    }
+    return "configured PostgreSQL"
+}
+
 function Set-DefaultEnvironment {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -161,7 +176,8 @@ function Wait-Database {
         }
         Start-Sleep -Seconds 1
     }
-    throw "PostgreSQL did not become reachable within ${TimeoutSeconds}s. Run 'docker compose up -d' first."
+    $target = Get-DatabaseTargetLabel
+    throw "$target did not become reachable within ${TimeoutSeconds}s. Check the database URL, credentials, SSL mode, and network access."
 }
 
 function Wait-HttpReady {
