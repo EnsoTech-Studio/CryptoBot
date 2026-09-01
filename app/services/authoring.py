@@ -7,11 +7,14 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 from uuid import UUID
 
 from ..errors import ApplicationError
+from ..domain.common import DomainError
 from ..domain.strategy import DeclarativeStrategy
 from ..infrastructure.ai import StrategyDesignUnavailable
 from ..infrastructure.news.rss import NewsProviderError, _pinned_https_get
@@ -174,6 +177,36 @@ def preflight_dsl(spec: StrategySpecResponse, artifact: str) -> dict[str, Any]:
     }
 
 
+def verify_dsl_backtest(
+    spec: StrategySpecResponse, fixture_dir: str | Path | None = None
+) -> dict[str, Any]:
+    """Replay a generated DSL strategy against the checked-in CSV fixture."""
+    from ..domain.strategy import Reference
+    from ..infrastructure.dataset import load_fixture_dataset
+    from ..services.backtest_engine import DeterministicEngine, canonical_result_hash
+    from ..worker import build_fixture_snapshot
+
+    fixture = fixture_dir or Path(__file__).resolve().parents[2] / "data/formatted/sol/2026-03-04"
+    try:
+        candles, quotes, info = load_fixture_dataset(fixture)
+        snapshot = build_fixture_snapshot(Reference(spec.strategy_id, "v1"), {}, info)
+        result = DeterministicEngine().with_runtime_spec(spec.model_dump()).run(snapshot, candles, quotes)
+    except (DomainError, OSError, TypeError, ValueError) as exc:
+        raise ApplicationError(
+            "strategy_fixture_backtest_unavailable", "fixture backtest is unavailable", 503
+        ) from exc
+    return {
+        "status": "passed",
+        "dataset_version": info.dataset_version,
+        "dataset_hash": info.content_hash,
+        "bbo_dataset_hash": info.bbo_content_hash,
+        "candles_read": len(candles),
+        "signals_count": len(result.signals),
+        "trade_count": len(result.trades),
+        "result_hash": canonical_result_hash(result),
+    }
+
+
 def preflight_custom_python(artifact: str) -> dict[str, Any]:
     """Policy-check an advanced proposal without executing it in this process."""
     try:
@@ -211,10 +244,17 @@ def stabilize_generated_id(spec: StrategySpecResponse, _source_hash: str) -> Str
 
 
 class StrategyAuthoringService:
-    def __init__(self, store: object, designer: object, sandbox: object | None = None) -> None:
+    def __init__(
+        self,
+        store: object,
+        designer: object,
+        sandbox: object | None = None,
+        backtest_verifier: Callable[[StrategySpecResponse], dict[str, Any]] | None = None,
+    ) -> None:
         self._store = store
         self._designer = designer
         self._sandbox = sandbox
+        self._backtest_verifier = backtest_verifier
         self._tools = ToolRegistry()
 
     def close(self) -> None:
@@ -369,13 +409,21 @@ class StrategyAuthoringService:
             designer_version = "strategy-spec/v1"
             attempts_used = 1
         else:
-            designer_model = "openai/gpt-oss-120b"
-            designer_version = "groq"
+            designer_model = "unversioned-designer"
+            designer_version = "unversioned"
             design_input = source_text
             for attempts_used in range(1, _MAX_DESIGN_ATTEMPTS + 1):
                 candidate: StrategySpecResponse | None = None
                 try:
-                    candidate = self._designer.design(design_input, correlation_id)
+                    designed = self._designer.design(design_input, correlation_id)
+                    if isinstance(designed, StrategySpecResponse):
+                        candidate = designed
+                    else:
+                        candidate = getattr(designed, "spec", None)
+                        designer_model = str(getattr(designed, "model", "")).strip()
+                        designer_version = str(getattr(designed, "model_version", "")).strip()
+                        if not isinstance(candidate, StrategySpecResponse) or not designer_model or not designer_version:
+                            raise ApplicationError("strategy_design_invalid", "designer returned invalid provenance", 422)
                     spec = normalize_spec(stabilize_generated_id(candidate, source_hash))
                     advance("SPEC_VALIDATING")
                     require("StrategyDesignerAgent", "strategy.validate_spec")
@@ -436,6 +484,8 @@ class StrategyAuthoringService:
         advance("SANDBOX_TESTING")
         require("StrategyImplementationAgent", "sandbox.run_contract_tests")
         report = preflight_dsl(spec, artifact)
+        if self._backtest_verifier is not None:
+            report["fixture_backtest"] = self._backtest_verifier(spec)
         if self._sandbox is not None:
             sandbox_report = self._sandbox.run_contract(artifact)
             report = {

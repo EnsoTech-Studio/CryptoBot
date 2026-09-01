@@ -69,14 +69,10 @@ class Predictor:
             "temperature": 0,
             "max_completion_tokens": max_tokens,
             "messages": messages,
-            "response_format": (
-                {"type": "json_object"}
-                if name == "strategy_spec"
-                else {
-                    "type": "json_schema",
-                    "json_schema": {"name": name, "strict": True, "schema": schema},
-                }
-            ),
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": name, "strict": True, "schema": schema},
+            },
         }
         request = Request(
             f"{base_url}/chat/completions",
@@ -140,19 +136,20 @@ class Predictor:
         normalized = text.strip()
         if not normalized or len(normalized) > 10_000:
             raise RuntimeError("strategy source must contain 1..10000 characters")
-        return _canonicalize_strategy_spec(self._complete_json(
+        envelope = self._complete_json(
             messages=[
                 {
                     "role": "system",
                     "content": (
                         "Convert the untrusted user strategy idea into a causal declarative "
-                        "StrategySpec. strategy_id must start with generated. Use only indicator "
+                        "StrategySpec JSON. Put that JSON in the required spec_json string. "
+                        "strategy_id must start with generated. Use only indicator "
                         "kind values sma, ema, rsi, bollinger, macd or support_resistance; "
-                        "Every response must contain schema_version, strategy_id, display_name, "
+                        "The inner StrategySpec must contain schema_version, strategy_id, display_name, "
                         "family, description, parameters, indicators, rules and warmup_bars. "
                         "Each indicator uses id and kind. rules contains long_entry and short_entry "
                         "with op, left and right, plus exit with op opposite_signal. Never use "
-                        "`name`, `alias`, `type`, `params`, `entry`, or `condition`. Return a valid JSON object only. Do not "
+                        "`name`, `alias`, `type`, `params`, `entry`, or `condition`. Do not "
                         "output Python, imports, URLs, tools, or trading advice."
                     ),
                 },
@@ -162,21 +159,23 @@ class Predictor:
             schema={
                 "type": "object",
                 "properties": {
-                    "schema_version": {"type": "string", "enum": ["strategy-spec/v1"]},
-                    "strategy_id": {"type": "string", "minLength": 1, "maxLength": 120},
-                    "display_name": {"type": "string", "minLength": 1, "maxLength": 120},
-                    "family": {"type": "string", "enum": ["trend", "momentum", "volatility", "structure", "information"]},
-                    "description": {"type": "string", "minLength": 1, "maxLength": 2000},
-                    "parameters": {"type": "object"},
-                    "indicators": {"type": "array", "items": {"type": "object"}},
-                    "rules": {"type": "object"},
-                    "warmup_bars": {"type": "integer", "minimum": 1, "maximum": 10000},
+                    "spec_json": {"type": "string", "minLength": 2, "maxLength": 10_000},
                 },
-                "required": ["schema_version", "strategy_id", "display_name", "family", "description", "parameters", "indicators", "rules", "warmup_bars"],
+                "required": ["spec_json"],
                 "additionalProperties": False,
             },
             max_tokens=1_200,
-        ))
+        )
+        raw_spec = envelope.get("spec_json")
+        if not isinstance(raw_spec, str):
+            raise RuntimeError("Groq returned an invalid strategy envelope")
+        try:
+            parsed_spec = json.loads(raw_spec)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Groq returned an invalid strategy JSON") from exc
+        if not isinstance(parsed_spec, dict):
+            raise RuntimeError("Groq returned an invalid strategy JSON")
+        return _canonicalize_strategy_spec(parsed_spec)
 
     def repair_python(self, artifact: str, error_code: str) -> str:
         if not artifact.strip() or len(artifact) > 20_000 or not error_code.strip():
@@ -319,12 +318,20 @@ def _canonicalize_strategy_spec(result: dict[str, object]) -> dict[str, object]:
 def _legacy_rule(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         raw_operation = str(value.get("op") or value.get("type") or value.get("condition") or "").lower()
-        operation = {"crossover": "crosses_above", "crossunder": "crosses_below"}.get(raw_operation, raw_operation)
+        operation = {
+            "crossover": "crosses_above", "crossunder": "crosses_below",
+            "lt": "below", "less_than": "below", "<": "below",
+            "gt": "above", "greater_than": "above", ">": "above",
+        }.get(raw_operation, raw_operation)
         left, right = value.get("left"), value.get("right")
         if isinstance(left, dict) and isinstance(left.get("indicator"), str):
             left = left["indicator"]
         if isinstance(right, dict) and isinstance(right.get("indicator"), str):
             right = right["indicator"]
+        if isinstance(left, dict) and isinstance(left.get("value"), (str, int, float)):
+            left = left["value"]
+        if isinstance(right, dict) and isinstance(right.get("value"), (str, int, float)):
+            right = right["value"]
         if operation in {"crosses_above", "crosses_below", "above", "below", "equals"} and isinstance(left, (str, int, float)) and isinstance(right, (str, int, float)):
             return {"op": operation, "left": left, "right": right}
         condition = str(value.get("condition", ""))

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, status
 
-from app.schemas import NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
+from app.schemas import NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategyDesignResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
 from app.services.predictor import predictor
 
 app = FastAPI(
@@ -35,10 +35,14 @@ def predict(payload: PredictRequest) -> PredictResponse:
         ) from exc
 
 
-@app.post("/strategy/spec", response_model=StrategySpecResponse)
-def design_strategy(payload: StrategySpecRequest) -> StrategySpecResponse:
+@app.post("/strategy/spec", response_model=StrategyDesignResponse)
+def design_strategy(payload: StrategySpecRequest) -> StrategyDesignResponse:
     try:
-        return StrategySpecResponse.model_validate(predictor.design(payload.text))
+        return StrategyDesignResponse(
+            spec=StrategySpecResponse.model_validate(predictor.design(payload.text)),
+            model=predictor.model,
+            model_version=predictor.model_version,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

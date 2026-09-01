@@ -1,3 +1,3 @@
-from .design import NewsExtractionHTTPAdapter, NewsExtractionUnavailable, StrategyDesignUnavailable, StrategyDesignHTTPAdapter
+from .design import NewsExtractionHTTPAdapter, NewsExtractionUnavailable, StrategyDesign, StrategyDesignUnavailable, StrategyDesignHTTPAdapter
 
-__all__ = ["NewsExtractionHTTPAdapter", "NewsExtractionUnavailable", "StrategyDesignHTTPAdapter", "StrategyDesignUnavailable"]
+__all__ = ["NewsExtractionHTTPAdapter", "NewsExtractionUnavailable", "StrategyDesign", "StrategyDesignHTTPAdapter", "StrategyDesignUnavailable"]

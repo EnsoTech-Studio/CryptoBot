@@ -27,6 +27,13 @@ class NewsExtraction:
     model_version: str
 
 
+@dataclass(frozen=True)
+class StrategyDesign:
+    spec: StrategySpecResponse
+    model: str
+    model_version: str
+
+
 class NewsExtractionHTTPAdapter:
     def __init__(
         self,
@@ -89,16 +96,24 @@ class StrategyDesignHTTPAdapter:
     def close(self) -> None:
         self._client.close()
 
-    def design(self, text: str, request_id: str | None = None) -> StrategySpecResponse:
+    def design(self, text: str, request_id: str | None = None) -> StrategyDesign:
         headers = {"X-Request-ID": request_id} if request_id else {}
         try:
             response = self._client.post(
                 self._base_url + "/strategy/spec", json={"text": text}, headers=headers
             )
             response.raise_for_status()
-            return StrategySpecResponse.model_validate(response.json())
+            payload = response.json()
+            result = StrategyDesign(
+                spec=StrategySpecResponse.model_validate(payload["spec"]),
+                model=str(payload["model"]).strip(),
+                model_version=str(payload["model_version"]).strip(),
+            )
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise StrategyDesignUnavailable("strategy design inference is unavailable") from exc
+        if not result.model or not result.model_version:
+            raise StrategyDesignUnavailable("strategy design response is missing model provenance")
+        return result
 
     def repair_python(self, artifact: str, error_code: str, request_id: str | None = None) -> str:
         headers = {"X-Request-ID": request_id} if request_id else {}

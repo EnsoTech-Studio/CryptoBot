@@ -90,6 +90,24 @@ def test_legacy_condition_operator_and_indicator_alias_are_canonicalized() -> No
     assert result["rules"]["long_entry"] == {"op": "crosses_above", "left": "sma20", "right": "sma50"}
 
 
+def test_llm_comparison_aliases_and_value_wrappers_are_canonicalized() -> None:
+    result = _canonicalize_strategy_spec(
+        {
+            "strategy_id": "generated_rsi_strategy_001",
+            "description": "RSI threshold strategy.",
+            "indicators": [{"id": "rsi1", "kind": "rsi"}],
+            "rules": {
+                "long_entry": {"op": "<", "left": {"indicator": "rsi1"}, "right": {"value": 30}},
+                "short_entry": {"op": ">", "left": {"indicator": "rsi1"}, "right": {"value": 70}},
+            },
+            "warmup_bars": 14,
+        }
+    )
+
+    assert result["rules"]["long_entry"] == {"op": "below", "left": "rsi1", "right": 30}
+    assert result["rules"]["short_entry"] == {"op": "above", "left": "rsi1", "right": 70}
+
+
 def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     observed = {}
@@ -111,10 +129,11 @@ def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
 
     def requester(request, _timeout):
         observed.update(json.loads(request.data))
-        return json.dumps({"choices": [{"message": {"content": json.dumps(response)}}]}).encode()
+        return json.dumps({"choices": [{"message": {"content": json.dumps({"spec_json": json.dumps(response)})}}]}).encode()
 
     assert Predictor(requester).design("Use an SMA crossover.") == response
     assert "Never use `name`, `alias`, `type`, `params`, `entry`, or `condition`" in observed["messages"][0]["content"]
+    assert observed["response_format"]["json_schema"]["name"] == "strategy_spec"
 
 
 def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) -> None:
