@@ -13,9 +13,10 @@ import (
 )
 
 type MarketCallbacks struct {
-	Kline  func(domainmarket.KlineUpdate)
-	BBO    func(domainmarket.BBO)
-	Status func(domainmarket.StreamStatus)
+	Kline        func(domainmarket.KlineUpdate)
+	BBO          func(domainmarket.BBO)
+	Status       func(domainmarket.StreamStatus)
+	ScopedStatus func(domainmarket.StreamStatus, []domainmarket.StreamKey)
 }
 
 type providerStatusUpdate struct {
@@ -188,7 +189,7 @@ func (s *MarketService) handleBBO(quote domainmarket.BBO) {
 }
 
 func (s *MarketService) handleStatus(ctx context.Context, status domainmarket.StreamStatus, keys []domainmarket.StreamKey) {
-	s.publishStatus(status)
+	s.publishStatus(status, keys)
 	switch status.State {
 	case domainmarket.StreamStale:
 		for _, key := range keys {
@@ -199,13 +200,13 @@ func (s *MarketService) handleStatus(ctx context.Context, status domainmarket.St
 			s.publishStatus(domainmarket.StreamStatus{
 				State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(),
 				Reason: "backfill_failed", ReconnectNo: status.ReconnectNo,
-			})
+			}, keys)
 			return
 		}
 		s.publishStatus(domainmarket.StreamStatus{
 			State: domainmarket.StreamRecovered, OccurredAt: time.Now().UTC(),
 			ReconnectNo: status.ReconnectNo,
-		})
+		}, keys)
 	}
 }
 
@@ -266,7 +267,11 @@ func (s *MarketService) CreateDataset(
 	return s.store.CreateDataset(ctx, key, from, to, revision, filtered)
 }
 
-func (s *MarketService) publishStatus(status domainmarket.StreamStatus) {
+func (s *MarketService) publishStatus(status domainmarket.StreamStatus, keys ...[]domainmarket.StreamKey) {
+	if len(keys) > 0 && len(keys[0]) > 0 && s.callback.ScopedStatus != nil {
+		s.callback.ScopedStatus(status, keys[0])
+		return
+	}
 	if s.callback.Status != nil {
 		s.callback.Status(status)
 	}
