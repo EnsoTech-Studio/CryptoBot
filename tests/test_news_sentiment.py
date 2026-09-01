@@ -102,6 +102,22 @@ def test_sentiment_adapter_validates_contract() -> None:
     assert result.score == pytest.approx(0.82)
 
 
+def test_sentiment_adapter_uses_the_dedicated_aggregate_endpoint() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json={
+            "label": "NEUTRAL", "score": 0.42, "model": "m", "model_version": "v1",
+        })
+
+    adapter = SentimentHTTPAdapter("http://ai", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = adapter.analyze_aggregate("BTC and ETH market digest")
+
+    assert result.label == "NEUTRAL"
+    assert requested == ["http://ai/news/aggregate-sentiment"]
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+
 import { AGGREGATE_MOCK, ANALYSIS_METRICS, EVENT_TYPES, STRATEGY_LINK } from "../../../lib/news-mock";
-import { Panel, ProgressBar } from "../ui/Foundation";
+import { NEWS_SENTIMENT_STRATEGY, newsStrategyEnginePrompt } from "../../../lib/news-strategy-export";
+import { Button, Panel, ProgressBar } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./news.module.css";
 
@@ -24,10 +27,29 @@ export function AnalysisRail({
   averageScore: number | null;
   referenceMode: boolean;
 }) {
+  const [exportStatus, setExportStatus] = useState("");
   const mix = distribution ?? (referenceMode ? AGGREGATE_MOCK : { positive: 0, neutral: 0, negative: 0 });
   const coveragePct = coverage && coverage.items_total > 0
     ? Math.round((coverage.items_analyzed / coverage.items_total) * 100)
     : referenceMode ? ANALYSIS_METRICS.sourceCoveragePct : 0;
+  const copyStrategy = async () => {
+    try {
+      await navigator.clipboard.writeText(newsStrategyEnginePrompt());
+      setExportStatus("Đã sao chép prompt cho Strategy Engine.");
+    } catch {
+      setExportStatus("Không thể sao chép. Hãy dùng nút lưu strategy.");
+    }
+  };
+  const downloadStrategy = () => {
+    const file = new Blob([JSON.stringify(NEWS_SENTIMENT_STRATEGY, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(file);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "news-sentiment.strategy.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setExportStatus("Đã tải news-sentiment.strategy.json.");
+  };
 
   return (
     <>
@@ -126,6 +148,15 @@ export function AnalysisRail({
             </span>
           </span>
         </div>
+        <div className={styles.stripActions} style={{ marginTop: 12 }}>
+          <Button type="button" onClick={copyStrategy}>
+            <Icon name="copy" aria-hidden="true" />Sao chép prompt
+          </Button>
+          <Button type="button" variant="secondary" onClick={downloadStrategy}>
+            <Icon name="download" aria-hidden="true" />Lưu strategy
+          </Button>
+        </div>
+        {exportStatus ? <p className={styles.integrationCaption} role="status">{exportStatus}</p> : null}
       </Panel>
     </>
   );

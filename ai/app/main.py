@@ -35,6 +35,24 @@ def predict(payload: PredictRequest) -> PredictResponse:
         ) from exc
 
 
+@app.post("/news/aggregate-sentiment", response_model=PredictResponse)
+def aggregate_news_sentiment(payload: PredictRequest) -> PredictResponse:
+    try:
+        result = predictor.predict_aggregate(payload.text)
+        return PredictResponse(
+            label=result.label,
+            score=result.score,
+            model=result.model,
+            model_version=result.model_version,
+            received_at=datetime.now(timezone.utc),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "news_aggregate_sentiment_unavailable"},
+        ) from exc
+
+
 @app.post("/strategy/spec", response_model=StrategyDesignResponse)
 def design_strategy(payload: StrategySpecRequest) -> StrategyDesignResponse:
     try:
