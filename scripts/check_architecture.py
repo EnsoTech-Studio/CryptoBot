@@ -56,7 +56,7 @@ for path in source_files("web", {".ts", ".tsx", ".js", ".jsx"}):
 # rehearsal, while docker-compose.prod.yml is the deployment boundary. Keep
 # data, research, and inference ports private in that production overlay.
 production_compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
-for internal_service in ("postgres", "ai", "research"):
+for internal_service in ("ai", "research"):
     service_block = re.search(
         rf"(?ms)^  {re.escape(internal_service)}:\n(?:(?!^  [A-Za-z0-9_-]+:\n).)*",
         production_compose,

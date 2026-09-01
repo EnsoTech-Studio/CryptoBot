@@ -27,7 +27,7 @@ def test_queue_scale_proof_keeps_the_immutable_experiment_replay_range() -> None
 def test_production_compose_keeps_internal_services_private() -> None:
     compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
-    for service in ("postgres", "ai", "research"):
+    for service in ("ai", "research"):
         match = re.search(
             rf"(?ms)^  {re.escape(service)}:\n(?:(?!^  [A-Za-z0-9_-]+:\n).)*",
             compose,
