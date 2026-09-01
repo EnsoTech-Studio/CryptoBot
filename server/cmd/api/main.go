@@ -68,17 +68,23 @@ func main() {
 		authservice.NewService(marketPool.Pool, targetSigner), cfg.CookieSecure,
 	)
 	hub := transportws.NewMemoryHub(cfg.CORSAllowedOrigins)
+	marketProviders := []string{"binance_usdm", "okx_swap"}
 	marketSymbols := []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}
 	marketTimeframes := []common.Timeframe{"1m", "5m", "15m", "1h", "4h", "1d"}
-	keys := make([]domainmarket.StreamKey, 0, len(marketSymbols)*len(marketTimeframes))
-	for _, symbol := range marketSymbols {
-		for _, timeframe := range marketTimeframes {
-			keys = append(keys, domainmarket.StreamKey{
-				Provider: "binance_usdm", Symbol: symbol, Timeframe: timeframe,
-			})
+	keys := make([]domainmarket.StreamKey, 0, len(marketProviders)*len(marketSymbols)*len(marketTimeframes))
+	for _, provider := range marketProviders {
+		for _, symbol := range marketSymbols {
+			for _, timeframe := range marketTimeframes {
+				keys = append(keys, domainmarket.StreamKey{
+					Provider: provider, Symbol: symbol, Timeframe: timeframe,
+				})
+			}
 		}
 	}
-	providerRegistry, registryErr := marketadapter.NewProviderRegistry(marketadapter.NewBinanceProvider())
+	providerRegistry, registryErr := marketadapter.NewProviderRegistry(
+		marketadapter.NewBinanceProvider(),
+		marketadapter.NewOKXSwapProvider(),
+	)
 	if registryErr != nil {
 		logger.Error("market provider registry failed", "error", registryErr)
 		os.Exit(1)
@@ -106,7 +112,7 @@ func main() {
 					}(key, sequence)
 				}
 			},
-			BBO: hub.PublishBBO, Status: hub.PublishStatus,
+			BBO: hub.PublishBBO, ScopedStatus: hub.PublishStatusForMarkets,
 		},
 	)
 	if serviceErr != nil {

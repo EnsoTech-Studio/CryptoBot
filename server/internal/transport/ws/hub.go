@@ -256,6 +256,24 @@ func (h *MemoryHub) PublishStatus(status domainmarket.StreamStatus) {
 	}
 }
 
+func (h *MemoryHub) PublishStatusForMarkets(status domainmarket.StreamStatus, markets []domainmarket.StreamKey) {
+	h.mu.RLock()
+	keys := make(map[string]struct{})
+	for _, market := range markets {
+		for _, key := range h.matchingKeys(market.Provider, market.Symbol, string(market.Timeframe)) {
+			keys[key] = struct{}{}
+		}
+	}
+	h.mu.RUnlock()
+	for key := range keys {
+		h.publish(key, map[string]any{
+			"type": "stream_status", "key": key, "state": status.State,
+			"occurred_at": status.OccurredAt, "reason": status.Reason,
+			"reconnect_no": status.ReconnectNo,
+		})
+	}
+}
+
 func (h *MemoryHub) publishMatching(
 	market domainmarket.MarketKey,
 	_ string,
@@ -346,7 +364,7 @@ func (h *MemoryHub) enqueue(client *hubClient, payload []byte) {
 
 func validatePublicKey(key string) error {
 	parts := strings.Split(key, "|")
-	if len(parts) < 3 || len(parts) > 5 || parts[0] != "binance_usdm" ||
+	if len(parts) < 3 || len(parts) > 5 || !validPublicProvider(parts[0]) ||
 		strings.TrimSpace(parts[1]) == "" {
 		return fmt.Errorf("invalid subscription key")
 	}
@@ -355,6 +373,15 @@ func validatePublicKey(key string) error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported timeframe")
+	}
+}
+
+func validPublicProvider(provider string) bool {
+	switch provider {
+	case "binance_usdm", "okx_swap":
+		return true
+	default:
+		return false
 	}
 }
 

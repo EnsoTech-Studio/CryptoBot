@@ -155,3 +155,35 @@ func TestSubscriptionKeyValidationRejectsInternalOrUnsupportedStreams(t *testing
 		}
 	}
 }
+
+func TestSubscriptionKeyValidationAllowsRegisteredExternalProviders(t *testing.T) {
+	if err := validatePublicKey("okx_swap|ETHUSDT|5m|ma_cross@v1|sha256:test"); err != nil {
+		t.Fatalf("expected OKX subscription key to be accepted: %v", err)
+	}
+}
+
+func TestScopedStatusDoesNotCrossProviderBoundary(t *testing.T) {
+	hub := NewMemoryHub(nil)
+	binanceKey := "binance_usdm|ETHUSDT|5m"
+	okxKey := "okx_swap|ETHUSDT|5m"
+	client := &hubClient{
+		id: "test", send: make(chan []byte, 2),
+		subscriptions: map[string]struct{}{binanceKey: {}, okxKey: {}},
+	}
+	hub.clients[client.id] = client
+
+	hub.PublishStatusForMarkets(
+		domainmarket.StreamStatus{State: domainmarket.StreamRecovered, OccurredAt: time.Now().UTC()},
+		[]domainmarket.StreamKey{{Provider: "okx_swap", Symbol: "ETHUSDT", Timeframe: "5m"}},
+	)
+
+	frame := decodeFrame(t, <-client.send)
+	if frame["key"] != okxKey || frame["type"] != "stream_status" {
+		t.Fatalf("status crossed provider boundary: %#v", frame)
+	}
+	select {
+	case extra := <-client.send:
+		t.Fatalf("unexpected extra status: %s", extra)
+	default:
+	}
+}
