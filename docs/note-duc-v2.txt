@@ -104,11 +104,27 @@ Note for check:
 - Viết kịch bản testing -> chạy test mô phỏng ra số liệu và show cho thầy xem (chế số liệu cũng được)
 
 
+
 # Kiến thức:
 
 
 3. Backtest:
 Event-driven Architecture
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
