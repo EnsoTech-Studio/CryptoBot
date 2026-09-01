@@ -1,30 +1,18 @@
 name: cryptobot
 
 # Full-container topology for production-like rehearsal and deployment.
-# Local development uses docker-compose.yml (PostgreSQL only) and runs the
-# application services natively.
+# PostgreSQL is external (for example Supabase) and is provided through
+# MIGRATION_DATABASE_URL, DATABASE_URL, and MARKET_DATABASE_URL.
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: "${POSTGRES_USER:-cryptobot}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-cryptobot}"
-      POSTGRES_DB: "${POSTGRES_DB:-cryptobot}"
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   ai:
     build:
       context: ./ai
     environment:
       PYTHONUNBUFFERED: "1"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      GROQ_MODEL: "${GROQ_MODEL:-openai/gpt-oss-120b}"
+      GROQ_BASE_URL: "${GROQ_BASE_URL:-https://api.groq.com/openai/v1}"
+      GROQ_TIMEOUT_SECONDS: "${GROQ_TIMEOUT_SECONDS:-10}"
       SENTIMENT_MODEL_VERSION: "${SENTIMENT_MODEL_VERSION:-2026-08-01}"
     ports:
       - "${AI_PORT:-8000}:8000"
@@ -40,14 +28,11 @@ services:
       context: .
     entrypoint: ["python", "-m", "app.migrate"]
     environment:
-      MIGRATION_DATABASE_URL: "postgres://${POSTGRES_USER:-cryptobot}:${POSTGRES_PASSWORD:-cryptobot}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      MIGRATION_DATABASE_URL: "${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}"
       RESEARCH_DATABASE_USER: "${RESEARCH_DATABASE_USER:-research_service}"
       RESEARCH_DATABASE_PASSWORD: "${RESEARCH_DATABASE_PASSWORD:-research_service}"
       API_DATABASE_USER: "${API_DATABASE_USER:-api_service}"
       API_DATABASE_PASSWORD: "${API_DATABASE_PASSWORD:-api_service}"
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: "no"
 
   research:
@@ -55,7 +40,7 @@ services:
       context: .
     environment:
       PYTHONUNBUFFERED: "1"
-      DATABASE_URL: "postgres://${RESEARCH_DATABASE_USER:-research_service}:${RESEARCH_DATABASE_PASSWORD:-research_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       AI_SERVICE_URL: "http://ai:8000"
       INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:-development-internal-token}"
       MAX_REQUEST_BYTES: "${MAX_REQUEST_BYTES:-1048576}"
@@ -76,7 +61,7 @@ services:
       context: ./server
     environment:
       PORT: "8080"
-      MARKET_DATABASE_URL: "postgres://${API_DATABASE_USER:-api_service}:${API_DATABASE_PASSWORD:-api_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      MARKET_DATABASE_URL: "${MARKET_DATABASE_URL:?MARKET_DATABASE_URL is required}"
       JWT_PRIVATE_KEY_FILE: "/var/lib/cryptobot/jwt-private.pem"
       COOKIE_SECURE: "${COOKIE_SECURE:-false}"
       RESEARCH_SERVICE_URL: "http://research:8001"
@@ -90,8 +75,6 @@ services:
     volumes:
       - api-keys:/var/lib/cryptobot
     depends_on:
-      postgres:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
       research:
@@ -107,14 +90,12 @@ services:
       context: .
     entrypoint: ["python", "-m", "app.worker", "queue"]
     environment:
-      DATABASE_URL: "postgres://${RESEARCH_DATABASE_USER:-research_service}:${RESEARCH_DATABASE_PASSWORD:-research_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       WORKER_ID: "worker-1"
       WORKER_LEASE_SECONDS: "${WORKER_LEASE_SECONDS:-120}"
       WORKER_HEARTBEAT_SECONDS: "${WORKER_HEARTBEAT_SECONDS:-30}"
       EVENT_CONSUMERS: ""
     depends_on:
-      postgres:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -125,7 +106,7 @@ services:
     entrypoint: ["python", "-m", "app.event_worker"]
     environment:
       PYTHONUNBUFFERED: "1"
-      DATABASE_URL: "postgres://${RESEARCH_DATABASE_USER:-research_service}:${RESEARCH_DATABASE_PASSWORD:-research_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       EVENT_WORKER_ID: "events-1"
       EVENT_LEASE_SECONDS: "${EVENT_LEASE_SECONDS:-60}"
     depends_on:
@@ -139,7 +120,7 @@ services:
     entrypoint: ["python", "-m", "app.news_worker"]
     environment:
       PYTHONUNBUFFERED: "1"
-      DATABASE_URL: "postgres://${RESEARCH_DATABASE_USER:-research_service}:${RESEARCH_DATABASE_PASSWORD:-research_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       AI_SERVICE_URL: "http://ai:8000"
       AI_REQUEST_TIMEOUT_SECONDS: "${AI_REQUEST_TIMEOUT_SECONDS:-5}"
       SENTIMENT_MODEL: "${SENTIMENT_MODEL:-sentiment-v1}"
@@ -157,7 +138,7 @@ services:
     entrypoint: ["python", "-m", "app.agent_worker"]
     environment:
       PYTHONUNBUFFERED: "1"
-      DATABASE_URL: "postgres://${RESEARCH_DATABASE_USER:-research_service}:${RESEARCH_DATABASE_PASSWORD:-research_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
       AI_SERVICE_URL: "http://ai:8000"
       INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:-development-internal-token}"
       AGENT_WORKER_ID: "agent-worker-1"
@@ -173,8 +154,10 @@ services:
       context: ./web
       args:
         NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8080}"
+        NEXT_PUBLIC_UI_REFERENCE_MODE: "${NEXT_PUBLIC_UI_REFERENCE_MODE:-false}"
     environment:
       NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8080}"
+      NEXT_PUBLIC_UI_REFERENCE_MODE: "${NEXT_PUBLIC_UI_REFERENCE_MODE:-false}"
       NODE_ENV: production
     ports:
       - "${WEB_PORT:-3000}:3000"
@@ -183,5 +166,4 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres-data:
   api-keys:
