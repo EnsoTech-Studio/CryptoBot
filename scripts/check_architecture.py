@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 
@@ -49,6 +50,19 @@ for path in source_files("web", {".ts", ".tsx", ".js", ".jsx"}):
     )
     if any(token in text for token in forbidden):
         violations.append(f"browser bypasses Go edge: {path.relative_to(ROOT)}")
+
+
+# docker-compose.stack.yml is intentionally useful for local full-stack
+# rehearsal, while docker-compose.prod.yml is the deployment boundary. Keep
+# data, research, and inference ports private in that production overlay.
+production_compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+for internal_service in ("postgres", "ai", "research"):
+    service_block = re.search(
+        rf"(?ms)^  {re.escape(internal_service)}:\n(?:(?!^  [A-Za-z0-9_-]+:\n).)*",
+        production_compose,
+    )
+    if service_block is None or not re.search(r"(?m)^    ports: !reset \[\]$", service_block.group(0)):
+        violations.append(f"production exposes internal service port: {internal_service}")
 
 for path in source_files("app", {".py"}):
     text = path.read_text(encoding="utf-8")

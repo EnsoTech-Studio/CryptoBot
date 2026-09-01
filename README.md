@@ -197,6 +197,18 @@ docker compose -f docker-compose.test.yml up -d postgres-test
 py -3 -m pytest tests/integration -q
 ```
 
+Failure/recovery evidence uses the same isolated PostgreSQL test database. It
+runs the retry/idempotency baseline plus real worker-process crash rehearsals:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/failure-contract-smoke.ps1 -IncludeIntegration
+```
+
+The queue integration suite starts both a backtest worker and an event worker,
+kills each after lease acquisition, then verifies a replacement process
+reclaims the expired lease and completes exactly once. It is controlled local
+recovery evidence, not a production load benchmark.
+
 The 100k-job claim proof runs inside a transaction and rolls back all generated rows:
 
 ```powershell
@@ -238,5 +250,6 @@ Read in this order:
 4. [`blueprint/specs/`](blueprint/specs/)
 5. [`docs/architecture/architectural-drivers.md`](docs/architecture/architectural-drivers.md)
 6. [`docs/note-update-require-status.md`](docs/note-update-require-status.md)
+7. [`blueprint/traceability.md`](blueprint/traceability.md)
 
 The source-of-truth boundary remains: browser -> Go; Go -> research; research -> AI; no live trading.

@@ -1,3 +1,141 @@
+# Prompt bàn giao hiện tại — CryptoBot
+
+> Phần này là nguồn bàn giao mới nhất (01/09/2026) và **ghi đè các ghi chú
+> legacy bên dưới**. Hãy đọc toàn bộ phần này trước khi thao tác.
+
+Bạn tiếp quản repository **CryptoBot**. Tiếp tục đồ án từ trạng thái hiện có;
+không làm lại từ đầu và không xoá/revert thay đổi chưa commit của người trước.
+
+## Nguồn yêu cầu theo thứ tự ưu tiên
+
+1. `Crypto Strategy Lab – Đồ án cuối kỳ.pdf`.
+2. `docs/note-update-require.txt` — yêu cầu cập nhật từ giảng viên.
+3. `blueprint/` (đặc biệt `design.md`, specs, ADR, diagrams, traceability).
+4. `docs/note-duc.txt` chỉ là checklist lịch sử; phần tóm tắt của nó có thể
+   lỗi thời.
+
+Đích đến: code, blueprint, docs và bằng chứng kiểm thử khớp nhau. Không ghi
+"hoàn thành" nếu chỉ có fixture/mock/sơ đồ.
+
+## Quy tắc bắt buộc
+
+- Bắt đầu bằng `git status --short`, `git diff --check`, đọc diff hiện có và
+  đọc prompt này. Giữ toàn bộ thay đổi chưa commit của người trước.
+- Dùng `apply_patch` khi sửa file. Không `git reset --hard`, không checkout/
+  revert hàng loạt; không commit `.env`, API key, token hoặc database URL.
+- Không tự chạy workload nặng hoặc crash test trên stack/database của người
+  dùng. Benchmark/crash rehearsal chỉ dùng PostgreSQL hoặc container cô lập.
+- TDD cho logic mới: thêm/sửa test, chạy để kiểm chứng hành vi, rồi chạy lại
+  test pass.
+- Phân biệt rõ trong tài liệu: `live`, `fixture/demo`, `mock/fallback`,
+  `isolated benchmark`. Không suy diễn kết quả nhỏ thành benchmark 100k.
+- Không tự cài package/framework mới hay push/commit nếu chủ repo chưa yêu cầu.
+
+## Thay đổi chưa commit tại thời điểm bàn giao
+
+Nếu người dùng đã push các file này, hãy xác minh bằng Git trước khi sửa.
+
+```text
+.env.example
+README.md
+app/config.py
+app/event_worker.py
+blueprint/traceability.md
+docker-compose.stack.yml
+docs/architecture/architectural-drivers.md
+docs/note-update-require-status.md
+scripts/backtest-throughput-benchmark.py
+scripts/check_architecture.py
+tests/integration/test_queue_integration.py
+tests/test_integration_stack.py
+```
+
+## Đã hoàn thành trong worktree
+
+1. **Regression kiến trúc/private network**
+   - `scripts/check_architecture.py` chặn browser gọi trực tiếp AI, Research,
+     PostgreSQL, Binance và fail nếu production Compose public port của
+     `postgres`, `ai`, `research`.
+   - `tests/test_integration_stack.py` có 4 test: migration mount, queue-proof
+     replay range, production private ports, validation `EVENT_LEASE_SECONDS`.
+
+2. **Crash recovery thật trên PostgreSQL cô lập**
+   - `tests/integration/test_queue_integration.py` có 23 tests.
+   - Backtest worker: process thật `python -m app.worker queue` lease job,
+     bị `SIGKILL`, worker thay thế reclaim sau expiry; assert job/run attempt 2
+     hoàn thành và không duplicate result event.
+   - Event worker: process thật `python -m app.event_worker` bị kill sau outbox
+     lease; worker thay thế reclaim và persist đúng một evaluation. Trigger
+     test `crash_rehearsal_pause_evaluation` được xóa trong `finally`.
+   - `EVENT_LEASE_SECONDS` là config dương mới, mặc định `60`; đã nối vào
+     `EventWorker`, `docker-compose.stack.yml` và `.env.example`.
+
+3. **Bằng chứng đã chạy**
+   - Queue integration: `23 passed, 1 warning` với PostgreSQL 16 cô lập; hai
+     crash-recovery test được chạy lặp lại và đều pass.
+   - `tests/test_integration_stack.py`: `4 passed`.
+   - `python scripts/check_architecture.py`: pass; `git diff --check`: pass.
+   - Đã có từ trước: Go `go test ./...` pass; frontend 45 tests + lint +
+     TypeScript pass; failure baseline 52 tests pass; k6 `/ready` 10 VU/60s:
+     23,954 requests, p95 38.08ms, 0% error.
+
+4. **Provider proof**
+   - `RealtimeMarketProviderRegistry` và deterministic `okx_fixture` chứng
+     minh frontend không phụ thuộc provider cụ thể.
+   - Production chỉ register Binance. Không được gọi đây là live OKX
+     integration.
+
+## Throughput benchmark — đang tiếp tục
+
+File mới `scripts/backtest-throughput-benchmark.py` đo đúng scope:
+**PostgreSQL queue → worker processes → deterministic engine → persisted
+result facts**. Nó không đo Go/API, frontend hoặc event-evaluation.
+
+- Bắt buộc truyền `--database-url`, `--jobs`, và:
+
+  ```text
+  --confirm-isolated I_UNDERSTAND_THIS_WRITES_TO_AN_ISOLATED_DATABASE
+  ```
+
+  Harness tạo dữ liệu immutable và cố ý không cleanup, nên chỉ chạy trên DB
+  disposable đã migration đầy đủ.
+- Mẫu đã pass trên PostgreSQL 16 cô lập: **1,000 jobs, 4 workers, 60 candles**;
+  7.318s; 136.642 job/s; p50 3670.410ms; p95 6988.348ms; 180,000 persisted
+  equity points. Mẫu 12 jobs/2 workers cũng pass; harness yêu cầu ít nhất 50
+  candles vì MA warm-up.
+- **100,000 executed backtests vẫn Pending.** Không suy diễn từ mẫu 1k. Chỉ
+  chạy 100k sau khi chủ repo đồng ý vì tốn tài nguyên; dùng DB mới cô lập và
+  ghi machine, worker count, duration, p50/p95, errors, queue depth, disk.
+- Có thể còn container tạm `cryptobot-throughput-sample-test`. Kiểm tra trước;
+  chỉ xóa đúng container tạm sau khi xác minh an toàn.
+
+## Trạng thái chính xác và thứ tự tiếp tục
+
+- Failure injection: **Done (isolated rehearsal)**.
+- 100k executed throughput: **Pending**.
+- Provider thứ hai: **Partial — fixture only**, không phải live integration.
+- Agent 2/3: **Deferred P2** vì scope SSRF/security chưa chốt; không tự làm
+  crawler không giới hạn.
+- Browser visual acceptance: **Partial**; trước đó không có browser connector,
+  nên không claim đã visual review.
+
+Làm tiếp theo thứ tự này:
+
+1. Review diff và chạy các static/test nhanh nêu trên; xác nhận prompt vẫn
+   khớp worktree.
+2. Cập nhật `docs/note-update-require-status.md`, architectural drivers và
+   traceability để phản ánh trung thực mẫu throughput 1k nếu các file đó chưa
+   được cập nhật.
+3. Chỉ khi được phép rõ ràng, chạy 100k bằng DB/container cô lập; cập nhật docs
+   bằng số đo thực tế, không extrapolate.
+4. Khi có browser thực, kiểm tra UI acceptance; sau đó mới sửa UI nếu có gap.
+5. Không mở rộng Agent 2/3 hoặc live provider mới nếu chưa có yêu cầu/scope an
+   toàn rõ ràng.
+
+---
+
+## Legacy handoff (historical only)
+
 # Prompt tiếp tục CryptoBot (handoff)
 
 Sao chép nguyên prompt bên dưới vào tài khoản/agent tiếp theo. Không đưa mật khẩu, API key, hoặc nội dung `.env` vào chat hay commit.

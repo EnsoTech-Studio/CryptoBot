@@ -47,6 +47,7 @@ class Settings:
     max_page_size: int
     worker_lease_s: float
     worker_heartbeat_s: float
+    event_lease_s: int
     sentiment_model: str
     sentiment_model_version: str
 
@@ -68,6 +69,7 @@ class Settings:
             max_page_size=_positive_int("MAX_PAGE_SIZE", 100),
             worker_lease_s=lease,
             worker_heartbeat_s=heartbeat,
+            event_lease_s=_positive_int("EVENT_LEASE_SECONDS", 60),
             sentiment_model=_env("SENTIMENT_MODEL", "sentiment-v1"),
             sentiment_model_version=_env("SENTIMENT_MODEL_VERSION", "2026-08-01"),
         )

@@ -29,9 +29,27 @@ the final project status.
 | C4, UML, use case, high-level component boundaries | Done | `blueprint/assets/diagrams/01` through `39`; mapping in `blueprint/README.md` |
 | Strategy/Search/Crawler interfaces | Done | UML diagrams 36–38 and typed ports/plugin contracts |
 | Docker Compose, health/readiness and scale path | Done for MVP | `docker-compose.stack.yml`, health checks and worker replicas; Kubernetes remains optional |
-| Second market provider proof | Pending | Port and provider-bearing frontend contracts exist, but a registered OKX fixture adapter is still required before claiming it |
-| 100k runtime throughput | Pending | Queue-plan proof exists; not a throughput benchmark |
-| Failure-injection demo bundle | Partial | Lease/outbox/retry tests exist; repeatable operator scenario script still required |
+| Second market provider proof | Partial | `ProviderRegistry` resolves the deterministic `okx_fixture` adapter through the same `RealtimeMarketProvider` contract; regression tests cover contract preservation and provider-scoped stale state. Production registers Binance only, so this is not a live second-exchange integration. |
+| 100k runtime throughput | Pending | Isolated PostgreSQL 16 proof on 2026-09-01 inserted 100k experiments in ~2.899s and 100k jobs in ~1.202s; the claim query executed in ~2.236ms and the transaction rolled back. This is a queue/query-plan proof, not end-to-end throughput. |
+| Failure-injection demo bundle | Done (isolated rehearsal) | The repeatable failure baseline and real PostgreSQL queue integration suite pass. The suite runs real backtest and event-worker processes, kills each after lease acquisition, waits for expiry, then verifies the replacement worker reclaims and completes exactly once. |
+
+## Latest local verification (2026-09-01)
+
+The host did not have Go, `uv`, PowerShell, or the Docker Compose plugin in
+its `PATH`, so the checks below were run with the project's already-built
+Docker images. They are real source-tree checks, not claims based only on a
+previous handoff.
+
+| Check | Result | Scope / limitation |
+| --- | --- | --- |
+| Go suite | Pass | `go test ./...` in the local `golang:1.23-alpine` image. This includes the provider registry and provider-scoped stale-state regression tests. |
+| Failure-contract baseline | Pass | 52 tests passed for worker lease/retry, agent orchestration, news sentiment, and adaptive extraction. The queue process-crash check is separately listed below. |
+| Queue integration | Pass with boundary | 23 PostgreSQL-backed tests passed for claim/lease/heartbeat/reclaim, completion fencing, outbox, quota, and async-idempotent research creation. The suite runs real backtest and event-worker processes, kills each after lease acquisition, waits for expiry, then verifies the replacement worker completes attempt 2 exactly once. This remains isolated local PostgreSQL evidence, not a production load benchmark. |
+| Running-stack health | Pass | `GET /` on web returned 200; API `/health` and `/ready` returned 200, with database, market, and research all ready. |
+| Architecture/private-network guard | Pass | `tests/test_integration_stack.py` (4 tests) and `scripts/check_architecture.py` pass. They require production to keep PostgreSQL, AI and Research host ports private, validate the event-outbox lease config, and reject browser source that bypasses the Go edge. This is static/configuration evidence, not dynamic browser-network capture. |
+| Frontend source suite | Pass | Current source ran in a local Node 22 Docker dependency image: 45 tests passed, followed by ESLint and `tsc --noEmit` with exit code 0. |
+| 100k queue proof | Pass with boundary | Separate PostgreSQL 16 container ran `queue-scale-proof.sql`; 100k experiments inserted in ~2.899s, 100k jobs in ~1.202s, and the claim-query execution time was ~2.236ms. The transaction rolled back. |
+| k6 readiness smoke | Pass with boundary | 10 VU for 60s against `/ready`: 23,954 requests (~401 req/s), p95 38.08ms and 0% errors. This measures only API readiness under this local setup. |
 
 ## Rules for the final presentation
 

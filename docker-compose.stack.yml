@@ -127,6 +127,7 @@ services:
       PYTHONUNBUFFERED: "1"
       DATABASE_URL: "postgres://${RESEARCH_DATABASE_USER:-research_service}:${RESEARCH_DATABASE_PASSWORD:-research_service}@postgres:5432/${POSTGRES_DB:-cryptobot}?sslmode=disable"
       EVENT_WORKER_ID: "events-1"
+      EVENT_LEASE_SECONDS: "${EVENT_LEASE_SECONDS:-60}"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -41,8 +41,8 @@ def _log_event(level: str, operation: str, event: ClaimedEvent, **fields: object
 
 
 class EventWorker:
-    def __init__(self, conninfo: str, worker_id: str) -> None:
-        self._outbox = PostgresOutbox(conninfo, worker_id)
+    def __init__(self, conninfo: str, worker_id: str, lease_seconds: int = 60) -> None:
+        self._outbox = PostgresOutbox(conninfo, worker_id, lease_seconds=lease_seconds)
         self._dispatcher = PostgresJobDispatcher(conninfo)
         self._evaluator = DeterministicEvaluator()
         self._stop = threading.Event()
@@ -84,7 +84,11 @@ class EventWorker:
 
 def main() -> int:
     settings = Settings.from_env()
-    worker = EventWorker(settings.database_url, os.getenv("EVENT_WORKER_ID", "events-1"))
+    worker = EventWorker(
+        settings.database_url,
+        os.getenv("EVENT_WORKER_ID", "events-1"),
+        lease_seconds=settings.event_lease_s,
+    )
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, worker.stop)
     try:

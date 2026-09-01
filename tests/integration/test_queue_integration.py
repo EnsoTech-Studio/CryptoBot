@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import math
 import os
+import signal
+import subprocess
+import sys
+import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -69,9 +74,11 @@ def zigzag(n: int, period: int = 8, base: float = 100.0, amp: float = 5.0):
     return [base + amp * math.sin(2 * math.pi * i / period) for i in range(n)]
 
 
-def seed_experiment(d, candidate: dict, strategy_id: str = "composite") -> tuple:
+def seed_experiment(
+    d, candidate: dict, strategy_id: str = "composite", candle_count: int = 60
+) -> tuple:
     """Seed users → pair → dataset (candles+BBO) → strategies → experiment → job."""
-    closes = zigzag(60)
+    closes = zigzag(candle_count)
     candles = [
         (T0 + timedelta(minutes=i), T0 + timedelta(minutes=i, seconds=59, milliseconds=999),
          c, c + 0.1, c - 0.1, c, 10.0, 5)
@@ -183,6 +190,78 @@ def _process_job(d, job_id):
     return job
 
 
+def _wait_for_job_status(d, job_id, expected: str, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_status = None
+    while time.monotonic() < deadline:
+        last_status = _rows(
+            d, "SELECT status FROM backtest_jobs WHERE id = %s", (job_id,)
+        )[0][0]
+        if last_status == expected:
+            return
+        time.sleep(0.01)
+    pytest.fail(f"job {job_id} did not become {expected}; last status was {last_status}")
+
+
+def _queue_worker_process(worker_id: str) -> subprocess.Popen[str]:
+    environment = {
+        **os.environ,
+        "DATABASE_URL": DATABASE_URL,
+        "WORKER_ID": worker_id,
+        "WORKER_LEASE_SECONDS": "1",
+        "WORKER_HEARTBEAT_SECONDS": "0.1",
+        "POLL_INTERVAL_S": "0.01",
+    }
+    return subprocess.Popen(
+        [sys.executable, "-m", "app.worker", "queue"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def _event_worker_process(worker_id: str) -> subprocess.Popen[str]:
+    environment = {
+        **os.environ,
+        "DATABASE_URL": DATABASE_URL,
+        "EVENT_WORKER_ID": worker_id,
+        "EVENT_LEASE_SECONDS": "1",
+    }
+    return subprocess.Popen(
+        [sys.executable, "-m", "app.event_worker"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def _stop_worker(process: subprocess.Popen[str]) -> None:
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+
+
+def _wait_for_event_status(d, event_id, expected: str, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_status = None
+    while time.monotonic() < deadline:
+        last_status = _rows(
+            d, "SELECT dispatch_status FROM domain_events WHERE event_id = %s", (event_id,)
+        )[0][0]
+        if last_status == expected:
+            return
+        time.sleep(0.01)
+    pytest.fail(f"event {event_id} did not become {expected}; last status was {last_status}")
+
+
 def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
     from app.infrastructure.postgres.store import Store
 
@@ -284,6 +363,139 @@ def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
         " AND NOT EXISTS (SELECT 1 FROM backtest_runs r WHERE r.id = e.aggregate_id)",
     )
     assert orphans[0][0] == 0
+
+
+def test_real_worker_sigkill_reclaims_expired_lease_without_duplicate_result(dispatcher) -> None:
+    """A replacement process completes an abandoned real worker lease exactly once."""
+    # A larger deterministic fixture gives the controller time to observe the
+    # real worker's lease before terminating its process.
+    job_id, experiment_id = seed_experiment(
+        dispatcher, COMPOSITE_CANDIDATE, candle_count=8_000
+    )
+    crashed = _queue_worker_process("crash-rehearsal-worker")
+    recovered = None
+    try:
+        _wait_for_job_status(dispatcher, job_id, "leased")
+        crashed.kill()
+        crashed.wait(timeout=3)
+
+        # The claimed job must remain durable until its short test lease can
+        # be reclaimed by a newly started process.
+        assert _rows(
+            dispatcher,
+            "SELECT status FROM backtest_jobs WHERE id = %s",
+            (job_id,),
+        )[0][0] == "leased"
+        time.sleep(1.15)
+
+        recovered = _queue_worker_process("recovery-rehearsal-worker")
+        _wait_for_job_status(dispatcher, job_id, "completed", timeout_s=15)
+    finally:
+        _stop_worker(crashed)
+        if recovered is not None:
+            _stop_worker(recovered)
+
+    job = _rows(
+        dispatcher,
+        "SELECT status, attempt, leased_by FROM backtest_jobs WHERE id = %s",
+        (job_id,),
+    )[0]
+    assert job == ("completed", 2, None)
+    run = _rows(
+        dispatcher,
+        "SELECT status, worker_id, attempt FROM backtest_runs WHERE experiment_id = %s",
+        (experiment_id,),
+    )
+    assert run == [("completed", "recovery-rehearsal-worker", 2)]
+    assert _rows(
+        dispatcher,
+        "SELECT count(*) FROM domain_events WHERE event_type = 'BacktestCompleted'",
+    )[0][0] == 1
+
+
+def test_real_event_worker_sigkill_reclaims_expired_outbox_lease(dispatcher) -> None:
+    """An outbox event survives a killed worker and is evaluated once by its replacement."""
+    from app.worker import BacktestWorker, WorkerConfig
+
+    job_id, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    job = dispatcher.claim("event-rehearsal-producer", timedelta(seconds=120))
+    assert job is not None and job.id == job_id
+    BacktestWorker(
+        dispatcher,
+        config=WorkerConfig(worker_id="event-rehearsal-producer", event_consumers=()),
+    )._process(job)
+    run_id = _rows(
+        dispatcher, "SELECT id FROM backtest_runs WHERE experiment_id = %s", (experiment_id,)
+    )[0][0]
+    event_id = _rows(
+        dispatcher,
+        "SELECT event_id FROM domain_events WHERE event_type = 'BacktestCompleted' "
+        "AND aggregate_id = %s",
+        (run_id,),
+    )[0][0]
+
+    # Hold only the first worker inside its evaluation transaction. The trigger
+    # is dropped after SIGKILL, so the replacement can finish normally.
+    with dispatcher._conn.cursor() as cur:
+        cur.execute(
+            "CREATE FUNCTION crash_rehearsal_pause_evaluation() RETURNS trigger "
+            "LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$"
+        )
+        cur.execute(
+            "CREATE TRIGGER crash_rehearsal_pause_evaluation BEFORE INSERT ON evaluations "
+            "FOR EACH ROW EXECUTE FUNCTION crash_rehearsal_pause_evaluation()"
+        )
+    dispatcher._conn.commit()
+
+    crashed = _event_worker_process("event-crash-rehearsal-worker")
+    recovered = None
+    try:
+        _wait_for_event_status(dispatcher, event_id, "claimed")
+        crashed.kill()
+        crashed.wait(timeout=3)
+        assert _rows(
+            dispatcher,
+            "SELECT dispatch_status FROM domain_events WHERE event_id = %s",
+            (event_id,),
+        ) == [("claimed",)]
+        assert _rows(
+            dispatcher,
+            "SELECT count(*) FROM evaluations WHERE backtest_run_id = %s",
+            (run_id,),
+        ) == [(0,)]
+
+        with dispatcher._conn.cursor() as cur:
+            cur.execute("DROP TRIGGER crash_rehearsal_pause_evaluation ON evaluations")
+            cur.execute("DROP FUNCTION crash_rehearsal_pause_evaluation()")
+        dispatcher._conn.commit()
+        time.sleep(1.15)
+
+        recovered = _event_worker_process("event-recovery-rehearsal-worker")
+        _wait_for_event_status(dispatcher, event_id, "delivered", timeout_s=10)
+    finally:
+        _stop_worker(crashed)
+        if recovered is not None:
+            _stop_worker(recovered)
+        with dispatcher._conn.cursor() as cur:
+            cur.execute("DROP TRIGGER IF EXISTS crash_rehearsal_pause_evaluation ON evaluations")
+            cur.execute("DROP FUNCTION IF EXISTS crash_rehearsal_pause_evaluation()")
+        dispatcher._conn.commit()
+
+    assert _rows(
+        dispatcher,
+        "SELECT dispatch_status, attempt, claimed_by FROM domain_events WHERE event_id = %s",
+        (event_id,),
+    ) == [("delivered", 2, None)]
+    assert _rows(
+        dispatcher,
+        "SELECT count(*) FROM evaluations WHERE backtest_run_id = %s",
+        (run_id,),
+    ) == [(1,)]
+    assert _rows(
+        dispatcher,
+        "SELECT consumer_id FROM event_consumptions WHERE event_id = %s",
+        (event_id,),
+    ) == [("event-recovery-rehearsal-worker",)]
 
 
 def test_fail_after_complete_never_flips_completed_run(dispatcher) -> None:
