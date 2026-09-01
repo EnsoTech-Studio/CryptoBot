@@ -46,7 +46,6 @@ from .schemas import (
     NewsCollectIn,
     NewsItemOut,
     NewsSourceCreateIn,
-    OverlayPointOut,
     ScorePolicyCreateIn,
     SearchActionIn,
     SearchRunCreateIn,
@@ -59,7 +58,6 @@ from .schemas import (
     StrategyApprovalIn,
     StrategyDraftCreateIn,
     StrategyDraftOut,
-    TradeOut,
     TradePageOut,
 )
 from .services.news import NewsService
