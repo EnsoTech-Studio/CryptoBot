@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { api } from "../../../lib/api";
+import { api, apiUrl } from "../../../lib/api";
 import { MOCK_TRADES } from "../../../lib/backtest-mock";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
 import { marketKey } from "../../../lib/market";
@@ -16,8 +16,7 @@ import {
   type BacktestDraft,
 } from "../../../lib/backtest";
 import { useWorkspace } from "../../providers/workspace";
-import { Button, StatusMessage } from "../ui/Foundation";
-import { Icon } from "../ui/Icon";
+import { StatusMessage } from "../ui/Foundation";
 import { BacktestChart } from "./BacktestChart";
 import { BacktestFilters } from "./BacktestFilters";
 import { BacktestMetrics } from "./BacktestMetrics";
@@ -44,6 +43,7 @@ export function BacktestScreen() {
   /* Frozen at submit time so the chart title and ledger keep describing the run
      that produced the numbers, even while the user edits the strip again. */
   const [submitted, setSubmitted] = useState<BacktestDraft | null>(null);
+  const [selectedTradeSequence, setSelectedTradeSequence] = useState<number | null>(null);
   const backtestStrategies = useMemo(
     () => (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter((strategy) => !strategy.is_composite),
     [dataMode, strategies],
@@ -134,8 +134,22 @@ export function BacktestScreen() {
             isMock={isMock}
             empty={!completed && !isMock}
             onInspect={() => openInspector(completed ? "metrics" : "provenance")}
+            onRun={submit}
+            runDisabled={!user || running || noStrategies || issues.length > 0}
+            runLabel={running ? "Đang chạy backtest…" : "Chạy backtest"}
+            selectedTradeSequence={selectedTradeSequence}
           />
-          <TradeLedger trades={trades} symbol={shownDraft.market.symbol} />
+          <TradeLedger
+            key={completed && experiment ? experiment.id : `${dataMode}-pending`}
+            trades={trades}
+            symbol={shownDraft.market.symbol}
+            csvExportUrl={completed && experiment ? `${apiUrl}/api/v1/experiments/${experiment.id}/trades?format=csv` : undefined}
+            selectedTradeSequence={selectedTradeSequence}
+            onSelectTrade={setSelectedTradeSequence}
+            experimentId={completed ? experiment?.id : undefined}
+            nextTradeCursor={completed && result ? result.nextTradeCursor : null}
+            totalTrades={completed ? experiment?.metrics?.trade_count : undefined}
+          />
         </div>
 
         <BacktestMetrics
@@ -144,17 +158,6 @@ export function BacktestScreen() {
           equity={completed ? result.equity : []}
           isMock={isMock}
         />
-
-        <div className={styles.runAction}>
-          <Button
-            variant="primary"
-            disabled={!user || running || noStrategies || issues.length > 0}
-            onClick={submit}
-          >
-            <Icon name="play" aria-hidden="true" />
-            {running ? "Đang chạy backtest…" : "Chạy backtest"}
-          </Button>
-        </div>
       </div>
     </section>
   );

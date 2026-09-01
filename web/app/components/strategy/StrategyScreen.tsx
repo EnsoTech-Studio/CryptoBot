@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api, type StrategyDraft } from "../../../lib/api";
 import { SAMPLE_PROMPT, SAMPLE_URL, SAVE_FORM } from "../../../lib/strategy-authoring";
@@ -24,8 +24,22 @@ export function StrategyScreen() {
   const [draft, setDraft] = useState<StrategyDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const review = strategyDraftReview(draft);
+  const draftId = draft?.draft_id;
+  const draftStatus = draft?.status;
+
+  useEffect(() => {
+    if (!draftId || ["REVIEW_REQUIRED", "APPROVED", "REJECTED", "FAILED"].includes(draftStatus ?? "")) return;
+    const timer = window.setInterval(() => {
+      void api.strategyDraft(draftId).then((next) => {
+        setDraft(next);
+        if (next.strategy_spec) setName(next.strategy_spec.display_name);
+      }).catch(() => undefined);
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [draftId, draftStatus]);
 
   async function createDraft(source: { type: "text"; text: string } | { type: "approved_url"; url: string }) {
     if (!user) {
@@ -63,6 +77,19 @@ export function StrategyScreen() {
     }
   }
 
+  async function cancelDraft() {
+    if (!draft || ["REVIEW_REQUIRED", "APPROVED", "REJECTED", "FAILED", "CANCELLED"].includes(draft.status)) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      setDraft(await api.cancelStrategyDraft(draft.draft_id));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Không thể hủy strategy draft.");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   return (
     <section className={styles.screen} aria-label="Không gian tạo strategy từ prompt hoặc URL">
       <div className={styles.stack}>
@@ -96,8 +123,10 @@ export function StrategyScreen() {
               draft={draft}
               canSave={Boolean(user && review.canApprove)}
               saving={saving}
+              cancelling={cancelling}
               status={draft?.status ?? null}
               onSave={() => void approveDraft()}
+              onCancel={() => void cancelDraft()}
             />
           </div>
         </div>

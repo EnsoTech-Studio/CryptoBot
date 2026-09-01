@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker")]
+    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker", "agent-worker")]
     [string[]]$Services = @()
 )
 

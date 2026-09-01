@@ -1,6 +1,6 @@
 .screen {
   min-width: 0;
-  margin: 0 var(--screen-right-overflow) 0 var(--screen-left-offset);
+  margin: 0 24px 0 8px;
 }
 
 @media (min-width: 1041px) and (max-height: 800px) {
@@ -10,7 +10,7 @@
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 336px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   align-items: start;
   gap: 18px;
 }
@@ -330,16 +330,16 @@
 
 .bboTableWrap { overflow-x: auto; padding: 2px 10px 5px; }
 .bboTable { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 9px; white-space: nowrap; }
-.bboTable th { border-bottom: 1px solid var(--line-1); padding: 4px 3px; color: var(--ink-3); font-weight: var(--weight-semibold); line-height: 1.1; text-align: right; }
+.bboTable th { border-bottom: 1px solid var(--line-1); padding: 3px; color: var(--ink-3); font-weight: var(--weight-semibold); line-height: 1.1; text-align: right; }
 .bboTable th:first-child, .bboTable td:first-child { text-align: left; }
-.bboTable td { border-bottom: 1px solid var(--line-1); padding: 5px 3px; color: var(--ink-2); line-height: 1.1; text-align: right; }
+.bboTable td { border-bottom: 1px solid var(--line-1); padding: 4px 3px; color: var(--ink-2); line-height: 1.1; text-align: right; }
 .bboTable tr:last-child td { border-bottom: 0; }
 .bboTable .bid { color: var(--data-up); }
 .bboTable .ask { color: var(--data-down); }
 .emptyInfo { margin: 0; padding: 17px 13px 19px; color: var(--ink-3); font-size: 9px; line-height: 1.5; }
 
 .legend { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, .65fr); gap: 9px 12px; min-height: 116px; padding: 11px 13px 13px; }
-.legend span { display: flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 9px; }
+.legend span { display: flex; align-items: center; gap: 5px; color: var(--ink-2); font-size: 8px; }
 .legend .signalBadge { min-width: 34px; min-height: 18px; border: 0; padding: 0 5px; font-size: 8px; }
 .legend i { display: inline-block; flex: 0 0 auto; }
 .legend b { flex: 0 0 auto; }

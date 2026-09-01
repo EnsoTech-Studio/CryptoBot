@@ -75,6 +75,12 @@ class StrategyDraftCreateIn(ContractModel):
     name_hint: str | None = Field(default=None, max_length=120)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
+    @model_validator(mode="after")
+    def validate_authoring_mode(self) -> "StrategyDraftCreateIn":
+        if self.mode == "custom_python" and self.source.type != "text":
+            raise ValueError("custom Python requires a text source")
+        return self
+
 
 class StrategyApprovalIn(ContractModel):
     reviewer_id: UUID
@@ -85,6 +91,10 @@ class StrategyApprovalIn(ContractModel):
     decision: Literal["approve", "reject"]
     reason: str = Field(min_length=1, max_length=2_000)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class StrategyDraftActionIn(ContractModel):
+    action: Literal["cancel"]
 
 
 class StrategyDraftOut(ContractModel):
@@ -155,6 +165,9 @@ class ExperimentMetricsOut(ContractModel):
     win_rate_pct: float
     max_drawdown_pct: float
     trade_count: int
+    wins: int = 0
+    losses: int = 0
+    net_profit: float = 0
     profit_factor: float | None = None
     sharpe_ratio: float | None = None
     score: float | None = None
@@ -204,20 +217,32 @@ class CandleOut(ContractModel):
 
 class TradeOut(ContractModel):
     sequence_no: int
+    symbol: str
+    quote_currency: str
     side: str
     signal_t: datetime | None = None
     entry_time: datetime
     entry_price: float
     quantity: float
+    entry_notional: float
     fee_paid: float
+    spread_cost: float
     slippage_cost: float
     exit_time: datetime | None = None
     exit_price: float | None = None
+    exit_notional: float | None = None
+    gross_pnl: float | None = None
+    net_pnl: float | None = None
     pnl_absolute: float | None = None
     pnl_percent: float | None = None
     exit_reason: str | None = None
     sl_price: float | None = None
     tp_price: float | None = None
+
+
+class TradePageOut(ContractModel):
+    trades: list[TradeOut]
+    next_cursor: int | None = None
 
 
 class EquityPointOut(ContractModel):
@@ -231,6 +256,15 @@ class OverlayPointOut(ContractModel):
     signal: str
     confidence: float | None = None
     child_signals: dict[str, Any] | None = None
+
+
+class ExecutionMarkerOut(ContractModel):
+    sequence_no: int
+    t: datetime
+    line_until: datetime | None = None
+    overlay_type: str
+    price: float
+    exit_reason: str | None = None
 
 
 class SearchStopConditions(ContractModel):

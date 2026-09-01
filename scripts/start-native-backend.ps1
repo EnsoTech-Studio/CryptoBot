@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$EnvFile = ".env",
-    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker")]
+    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker", "agent-worker")]
     [string[]]$Services = @(),
     [switch]$SkipAI,
     [switch]$SkipWorkers,
@@ -16,7 +16,7 @@ $binaryDirectory = Join-Path $runtimeDirectory "bin"
 $logDirectory = Join-Path $runtimeDirectory "logs"
 $statePath = Join-Path $runtimeDirectory "native-backend-processes.json"
 $venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
-$allServices = @("research", "ai", "worker", "event-worker", "news-worker", "api")
+$allServices = @("research", "ai", "worker", "event-worker", "news-worker", "agent-worker", "api")
 $trackedProcesses = [System.Collections.Generic.List[object]]::new()
 $newProcesses = [System.Collections.Generic.List[object]]::new()
 
@@ -285,7 +285,7 @@ if ($SkipAI) {
     $targetServices = @($targetServices | Where-Object { $_ -ne "ai" })
 }
 if ($SkipWorkers) {
-    $targetServices = @($targetServices | Where-Object { $_ -notin @("worker", "event-worker", "news-worker") })
+    $targetServices = @($targetServices | Where-Object { $_ -notin @("worker", "event-worker", "news-worker", "agent-worker") })
 }
 if ($targetServices.Count -eq 0) {
     throw "No services selected after applying skip switches."
@@ -308,7 +308,7 @@ foreach ($service in $servicesToStart) {
     }
 }
 
-$databaseServices = @("api", "research", "worker", "event-worker", "news-worker")
+$databaseServices = @("api", "research", "worker", "event-worker", "news-worker", "agent-worker")
 $needsDatabase = @($servicesToStart | Where-Object { $_ -in $databaseServices }).Count -gt 0
 $apiBinary = Join-Path $binaryDirectory "cryptobot-api.exe"
 $go = $null
@@ -365,6 +365,9 @@ try {
     }
     if ($servicesToStart -contains "news-worker") {
         Start-BackendProcess -Name "news-worker" -FilePath $venvPython -Arguments @("-m", "app.news_worker") -WorkingDirectory $repoRoot
+    }
+    if ($servicesToStart -contains "agent-worker") {
+        Start-BackendProcess -Name "agent-worker" -FilePath $venvPython -Arguments @("-m", "app.agent_worker") -WorkingDirectory $repoRoot
     }
     if ($servicesToStart -contains "api") {
         if ($runningNames -contains "research") {

@@ -117,6 +117,23 @@ def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
     assert "Never use `name`, `alias`, `type`, `params`, `entry`, or `condition`" in observed["messages"][0]["content"]
 
 
+def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    observed = {}
+
+    def requester(request, _timeout):
+        observed.update(json.loads(request.data))
+        return json.dumps({"choices": [{"message": {"content": json.dumps({"artifact": "class Strategy:\n    def analyze(self, candles):\n        return ()"})}}]}).encode()
+
+    repaired = Predictor(requester).repair_python(
+        "class Strategy:\n    def analyze(self, candles):\n        return []", "strategy_sandbox_failed"
+    )
+
+    assert repaired.endswith("return ()")
+    assert observed["response_format"]["json_schema"]["name"] == "strategy_python_repair"
+    assert "untrusted code" in observed["messages"][0]["content"]
+
+
 def test_near_spec_is_normalized_before_contract_validation() -> None:
     result = _canonicalize_strategy_spec(
         {

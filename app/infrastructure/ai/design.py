@@ -99,3 +99,19 @@ class StrategyDesignHTTPAdapter:
             return StrategySpecResponse.model_validate(response.json())
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise StrategyDesignUnavailable("strategy design inference is unavailable") from exc
+
+    def repair_python(self, artifact: str, error_code: str, request_id: str | None = None) -> str:
+        headers = {"X-Request-ID": request_id} if request_id else {}
+        try:
+            response = self._client.post(
+                self._base_url + "/strategy/python-repair",
+                json={"artifact": artifact, "error_code": error_code},
+                headers=headers,
+            )
+            response.raise_for_status()
+            repaired = response.json()["artifact"]
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            raise StrategyDesignUnavailable("strategy repair inference is unavailable") from exc
+        if not isinstance(repaired, str) or not repaired.strip():
+            raise StrategyDesignUnavailable("strategy repair inference returned an invalid artifact")
+        return repaired.strip()

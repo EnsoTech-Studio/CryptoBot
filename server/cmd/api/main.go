@@ -83,7 +83,25 @@ func main() {
 		postgresadapter.NewStore(marketPool.Pool),
 		keys,
 		application.MarketCallbacks{
-			Kline: hub.PublishKline, BBO: hub.PublishBBO, Status: hub.PublishStatus,
+			Kline: func(update domainmarket.KlineUpdate) {
+				sequences := hub.PublishKline(update)
+				if !update.Final {
+					return
+				}
+				for key, sequence := range sequences {
+					go func(key string, sequence uint64) {
+						ctx, cancel := context.WithTimeout(runtimeCtx, cfg.ResearchTimeout)
+						defer cancel()
+						delta, deltaErr := researchClient.ChartOverlayDelta(ctx, key)
+						if deltaErr != nil {
+							logger.Warn("chart overlay delta unavailable", "key", key, "error", deltaErr)
+							return
+						}
+						hub.PublishOverlay(key, sequence, delta)
+					}(key, sequence)
+				}
+			},
+			BBO: hub.PublishBBO, Status: hub.PublishStatus,
 		},
 	)
 	if serviceErr != nil {

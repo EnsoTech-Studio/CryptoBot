@@ -54,6 +54,8 @@ export type OverlayMarker = {
 };
 
 export type ExecutionMarker = {
+  sequence_no?: number;
+  selected?: boolean;
   t: string;
   line_until?: string;
   overlay_type: "entry" | "exit" | "stop_loss" | "take_profit" | string;
@@ -120,6 +122,9 @@ export type Metrics = {
   win_rate_pct: number;
   max_drawdown_pct: number;
   trade_count: number;
+  wins: number;
+  losses: number;
+  net_profit: number;
   profit_factor: number;
   sharpe_ratio: number;
   score: number | null;
@@ -151,17 +156,24 @@ export type ExperimentSummary = {
 export type Trade = {
   id: string;
   sequence_no: number;
+  symbol: string;
+  quote_currency: string;
   side: string;
   entry_time: string;
   exit_time: string;
   entry_price: number;
   exit_price: number;
   quantity: number;
+  entry_notional: number;
+  exit_notional: number | null;
   /* Research returns these; the adapter used to drop them, which made the
      reference ledger's Phi / Slippage / Stoploss / TakeProfit columns
      impossible to fill truthfully. */
   fee_paid: number;
+  spread_cost: number;
   slippage_cost: number;
+  gross_pnl: number | null;
+  net_pnl: number | null;
   sl_price: number | null;
   tp_price: number | null;
   pnl: number;
@@ -233,15 +245,22 @@ type ErrorPayload = {
 type Numeric = number | string;
 type ResearchTrade = {
   sequence_no: number;
+  symbol: string;
+  quote_currency: string;
   side: string;
   signal_t: string | null;
   entry_time: string;
   entry_price: number;
   quantity: number;
+  entry_notional: number;
   fee_paid: number;
+  spread_cost: number;
   slippage_cost: number;
   exit_time: string | null;
   exit_price: number | null;
+  exit_notional: number | null;
+  gross_pnl: number | null;
+  net_pnl: number | null;
   pnl_absolute: number | null;
   pnl_percent: number | null;
   exit_reason: string | null;
@@ -258,6 +277,14 @@ type ResearchOverlay = {
   signal: string;
   confidence: number | null;
   child_signals: Record<string, unknown> | null;
+};
+type ResearchExecutionMarker = {
+  sequence_no: number;
+  t: string;
+  line_until?: string;
+  overlay_type: string;
+  price: number;
+  exit_reason?: string;
 };
 type ResearchSearchRun = {
   search_run_id: string;
@@ -413,23 +440,35 @@ export const api = {
   createStrategyDraft(
     source: { type: "text"; text: string } | { type: "approved_url"; url: string },
     nameHint?: string,
+    mode: StrategyDraft["mode"] = "dsl",
   ) {
     return request<StrategyDraft>("/api/v1/strategy-drafts", {
       method: "POST",
       body: JSON.stringify({
-        mode: "dsl",
+        mode,
         source,
         name_hint: nameHint || undefined,
         idempotency_key: `strategy-draft-${Date.now()}`,
       }),
-    }, 30_000);
+    });
   },
   strategyDrafts(limit = 10) {
     return request<{ drafts: StrategyDraft[] }>(`/api/v1/strategy-drafts?limit=${Math.min(20, Math.max(1, limit))}`);
   },
+  strategyDraft(draftId: string) {
+    return request<StrategyDraft>(`/api/v1/strategy-drafts/${encodeURIComponent(draftId)}`);
+  },
+  cancelStrategyDraft(draftId: string) {
+    return request<StrategyDraft>(`/api/v1/strategy-drafts/${encodeURIComponent(draftId)}/actions`, {
+      method: "POST",
+      body: JSON.stringify({ action: "cancel" }),
+    });
+  },
   approveStrategyDraft(
     draft: StrategyDraft,
-    reason = "Đã kiểm tra spec, artifact và sandbox fingerprint.",
+    reason = draft.mode === "custom_python"
+      ? "Đã kiểm tra custom artifact; cần build/deploy, không hot-load vào runtime."
+      : "Đã kiểm tra spec, artifact và sandbox fingerprint.",
   ) {
     if (!draft.spec_hash || !draft.artifact_hash || !draft.sandbox_report_hash) {
       throw new Error("Draft chưa có đủ fingerprint để approve");
@@ -557,19 +596,30 @@ export const api = {
       })),
     }));
   },
-  experimentTrades(id: string) {
-    return request<{ trades: ResearchTrade[] }>(`/api/v1/experiments/${id}/trades`).then((payload) => ({
+  experimentTrades(id: string, afterSequence?: number, limit = 100) {
+    const query = new URLSearchParams({ limit: String(Math.min(200, Math.max(1, limit))) });
+    if (afterSequence !== undefined) query.set("after_sequence", String(afterSequence));
+    return request<{ trades: ResearchTrade[]; next_cursor: number | null }>(
+      `/api/v1/experiments/${id}/trades?${query}`,
+    ).then((payload) => ({
       trades: payload.trades.map((trade) => ({
         id: `${id}-${trade.sequence_no}`,
         sequence_no: trade.sequence_no,
+        symbol: trade.symbol,
+        quote_currency: trade.quote_currency,
         side: trade.side,
         entry_time: trade.entry_time,
         exit_time: trade.exit_time ?? trade.entry_time,
         entry_price: trade.entry_price,
         exit_price: trade.exit_price ?? trade.entry_price,
         quantity: trade.quantity,
+        entry_notional: trade.entry_notional,
+        exit_notional: trade.exit_notional ?? null,
         fee_paid: trade.fee_paid ?? 0,
+        spread_cost: trade.spread_cost ?? 0,
         slippage_cost: trade.slippage_cost ?? 0,
+        gross_pnl: trade.gross_pnl ?? null,
+        net_pnl: trade.net_pnl ?? null,
         sl_price: trade.sl_price ?? null,
         tp_price: trade.tp_price ?? null,
         pnl: trade.pnl_absolute ?? 0,
@@ -577,6 +627,7 @@ export const api = {
         exit_reason: trade.exit_reason ?? "open",
         signal_t: trade.signal_t ?? trade.entry_time,
       })),
+      next_cursor: payload.next_cursor,
     }));
   },
   experimentEquity(id: string) {
@@ -594,7 +645,7 @@ export const api = {
     });
   },
   experimentOverlays(id: string) {
-    return request<{ overlays: ResearchOverlay[] }>(
+    return request<{ overlays: ResearchOverlay[]; execution_markers: ResearchExecutionMarker[] }>(
       `/api/v1/experiments/${id}/overlays`,
     ).then((payload) => ({
       series: [] as OverlaySeries[],
@@ -604,7 +655,7 @@ export const api = {
         confidence: item.confidence,
         evidence: item.child_signals,
       })),
-      execution_markers: [] as ExecutionMarker[],
+      execution_markers: payload.execution_markers ?? [],
     }));
   },
   /* Takes the visible draft. The previous signature ignored its arguments and

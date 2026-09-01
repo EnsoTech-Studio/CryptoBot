@@ -56,6 +56,23 @@ class StrategySpecResponse(BaseModel):
     warmup_bars: int = Field(ge=1, le=10_000)
 
 
+class StrategyPythonRepairRequest(BaseModel):
+    artifact: str = Field(min_length=1, max_length=20_000)
+    error_code: str = Field(min_length=1, max_length=128)
+
+    @field_validator("artifact", "error_code")
+    @classmethod
+    def fields_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+
+class StrategyPythonRepairResponse(BaseModel):
+    artifact: str = Field(min_length=1, max_length=20_000)
+
+
 class NewsExtractionRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
 

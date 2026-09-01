@@ -41,6 +41,34 @@ func TestPublishBBOSamplesHighFrequencyUpdatesForTheUI(t *testing.T) {
 	}
 }
 
+func TestPublishKlineProvidesSequenceForSameSequenceOverlayDelta(t *testing.T) {
+	hub := NewMemoryHub(nil)
+	key := "binance_usdm|ETHUSDT|5m|ma_cross@v1|sha256:test"
+	client := &hubClient{id: "test", send: make(chan []byte, 2), subscriptions: map[string]struct{}{key: {}}}
+	hub.clients[client.id] = client
+	update := domainmarket.KlineUpdate{
+		Market:   domainmarket.MarketKey{Provider: "binance_usdm", Symbol: "ETHUSDT", Timeframe: "5m"},
+		OpenTime: time.Unix(1_700_000_000, 0).UTC(), CloseTime: time.Unix(1_700_000_300, 0).UTC(),
+		Open: decimal.NewFromInt(100), High: decimal.NewFromInt(101), Low: decimal.NewFromInt(99),
+		Close: decimal.NewFromInt(100), Volume: decimal.NewFromInt(10), Final: true,
+	}
+
+	sequences := hub.PublishKline(update)
+	if sequences[key] != 1 {
+		t.Fatalf("expected key sequence 1, got %#v", sequences)
+	}
+	hub.PublishOverlay(key, sequences[key], map[string]any{"revised_from": "2023-11-14T22:13:20Z"})
+
+	kline := decodeFrame(t, <-client.send)
+	delta := decodeFrame(t, <-client.send)
+	if kline["type"] != "kline" || delta["type"] != "overlay_delta" {
+		t.Fatalf("unexpected frames: %#v %#v", kline, delta)
+	}
+	if kline["sequence"] != float64(1) || delta["sequence"] != float64(1) {
+		t.Fatalf("expected shared sequence 1: %#v %#v", kline, delta)
+	}
+}
+
 func decodeFrame(t *testing.T, payload []byte) map[string]any {
 	t.Helper()
 	var frame map[string]any
@@ -67,6 +95,26 @@ func TestReplayReturnsOnlyMissingSequences(t *testing.T) {
 	case extra := <-client.send:
 		t.Fatalf("unexpected replay frame: %s", extra)
 	default:
+	}
+}
+
+func TestReplayKeepsOverlayDeltaWithTheLastReceivedKlineSequence(t *testing.T) {
+	hub := NewMemoryHub(nil)
+	client := &hubClient{send: make(chan []byte, 2), subscriptions: map[string]struct{}{}}
+	history := []outboundFrame{
+		{sequence: 10, payload: mustJSON(map[string]any{"type": "kline", "sequence": 10})},
+		{sequence: 10, payload: mustJSON(map[string]any{"type": "overlay_delta", "sequence": 10})},
+	}
+
+	hub.replay(client, "binance_usdm|ETHUSDT|5m", 10, history)
+	select {
+	case payload := <-client.send:
+		frame := decodeFrame(t, payload)
+		if frame["type"] != "overlay_delta" {
+			t.Fatalf("expected same-sequence overlay delta, got %#v", frame)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected same-sequence overlay delta to be replayed")
 	}
 }
 

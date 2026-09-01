@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, status
 
-from app.schemas import NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategySpecRequest, StrategySpecResponse
+from app.schemas import NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
 from app.services.predictor import predictor
 
 app = FastAPI(
@@ -43,6 +43,19 @@ def design_strategy(payload: StrategySpecRequest) -> StrategySpecResponse:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "strategy_design_unavailable"},
+        ) from exc
+
+
+@app.post("/strategy/python-repair", response_model=StrategyPythonRepairResponse)
+def repair_strategy_python(payload: StrategyPythonRepairRequest) -> StrategyPythonRepairResponse:
+    try:
+        return StrategyPythonRepairResponse(
+            artifact=predictor.repair_python(payload.artifact, payload.error_code)
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "strategy_repair_unavailable"},
         ) from exc
 
 

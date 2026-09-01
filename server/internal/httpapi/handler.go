@@ -115,8 +115,41 @@ func (h *Handler) callResearch(
 		contentType = "application/json"
 	}
 	w.Header().Set("Content-Type", contentType)
+	if response.ContentDisposition != "" {
+		w.Header().Set("Content-Disposition", response.ContentDisposition)
+	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(response.Body)
+	return true
+}
+
+func (h *Handler) streamResearch(w http.ResponseWriter, r *http.Request, path string, principal *principal) bool {
+	if h.research == nil {
+		writeError(w, http.StatusBadGateway, "research_unavailable", "Research service is unavailable")
+		return false
+	}
+	userID, userRole := "", ""
+	if principal != nil {
+		userID, userRole = principal.ID, principal.Role
+	}
+	response, err := h.research.StreamWithMetadata(
+		r.Context(), http.MethodGet, path, r.URL.Query(), r.Header.Get("X-Request-ID"), userID, userRole, r.Header.Get("X-Correlation-ID"),
+	)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "research_unavailable", "Research service is unavailable")
+		return false
+	}
+	defer response.Body.Close()
+	contentType := response.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	if response.ContentDisposition != "" {
+		w.Header().Set("Content-Disposition", response.ContentDisposition)
+	}
+	w.WriteHeader(response.StatusCode)
+	_, _ = io.Copy(w, response.Body)
 	return true
 }
 
@@ -459,27 +492,7 @@ func (h *Handler) chartOverlays(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	if h.marketReader == nil {
-		writeError(w, http.StatusServiceUnavailable, "market_gateway_unavailable", "Market gateway is unavailable")
-		return
-	}
-	checkpoint, err := h.marketReader.LoadCheckpoint(
-		r.Context(),
-		marketKey(q(r, "provider", defaultProvider), q(r, "symbol", defaultSymbol), q(r, "timeframe", "5m")),
-	)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "overlay_unavailable", "Overlay state is unavailable")
-		return
-	}
-	sequence := uint64(0)
-	if checkpoint.LastSourceSequence != nil {
-		sequence = *checkpoint.LastSourceSequence
-	}
-	key := marketKey(q(r, "provider", defaultProvider), q(r, "symbol", defaultSymbol), q(r, "timeframe", "5m"))
-	writeJSON(w, http.StatusOK, map[string]any{
-		"series": []any{}, "markers": []any{}, "seq": sequence,
-		"last_closed_at": checkpoint.LastClosedAt, "is_stale": marketCheckpointStale(checkpoint, string(key.Timeframe), time.Now().UTC()),
-	})
+	h.callResearch(w, r, http.MethodGet, "/api/v1/markets/chart-overlays", nil, nil)
 }
 
 func (h *Handler) marketStatus(w http.ResponseWriter, r *http.Request) {
@@ -627,7 +640,26 @@ func (h *Handler) strategyDraftByID(w http.ResponseWriter, r *http.Request) {
 		h.callResearch(w, r, http.MethodGet, "/api/v1/strategy-drafts/"+parts[0], nil, &principal)
 		return
 	}
-	if parts[1] != "approval" || !allowMethod(w, r, http.MethodPost) || !h.requireCSRF(w, r) {
+	if len(parts) != 2 || !allowMethod(w, r, http.MethodPost) || !h.requireCSRF(w, r) {
+		return
+	}
+	if parts[1] == "actions" {
+		var body strategyDraftActionRequest
+		if err := readJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+			return
+		}
+		if body.Action != "cancel" {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_action", "action must be cancel")
+			return
+		}
+		h.callResearch(w, r, http.MethodPost, "/api/v1/strategy-drafts/"+parts[0]+"/actions", map[string]any{
+			"action": body.Action,
+		}, &principal)
+		return
+	}
+	if parts[1] != "approval" {
+		writeError(w, http.StatusNotFound, "not_found", "Strategy draft action not found")
 		return
 	}
 	var body strategyApprovalRequest
@@ -761,6 +793,10 @@ func (h *Handler) experimentByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	if len(parts) == 2 && parts[1] == "trades" && r.URL.Query().Get("format") == "csv" {
+		h.streamResearch(w, r, "/api/v1/experiments/"+strings.Join(parts, "/"), &principal)
 		return
 	}
 	h.callResearch(w, r, http.MethodGet, "/api/v1/experiments/"+strings.Join(parts, "/"), nil, &principal)

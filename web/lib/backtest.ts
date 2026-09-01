@@ -1,5 +1,5 @@
 import type { MarketSelection } from "./market";
-import type { ExecutionSettings, Strategy, Trade } from "./api";
+import type { ExecutionMarker, ExecutionSettings, Strategy, Trade } from "./api";
 
 /* The visible filter strip on ui-reference/backtest.jpg is the request. Before
    this type existed the eight controls were decoration and createExperiment
@@ -21,6 +21,16 @@ export type BacktestDraft = {
 };
 
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
+
+export function isExecutionMarkerSelected(marker: ExecutionMarker, sequenceNo: number | null): boolean {
+  return sequenceNo !== null && marker.sequence_no === sequenceNo;
+}
+
+export function needsMoreTradesForPage(
+  loadedCount: number, page: number, pageSize: number, nextCursor: number | null,
+): boolean {
+  return nextCursor !== null && loadedCount < page * pageSize;
+}
 
 export function defaultBacktestStrategyId(strategies: Strategy[]): string {
   return strategies.find((strategy) => strategy.strategy_id === "ma_cross")?.strategy_id
@@ -89,6 +99,15 @@ export type DerivedKpis = {
   totalFees: number;
   totalSlippage: number;
 };
+
+export function resolvedTradeKpis(
+  metrics: { wins: number; losses: number; net_profit: number } | null,
+  fallback: DerivedKpis,
+) {
+  return metrics
+    ? { wins: metrics.wins, losses: metrics.losses, netProfit: metrics.net_profit }
+    : { wins: fallback.wins, losses: fallback.losses, netProfit: fallback.totalProfitAbs };
+}
 
 export function deriveKpis(trades: Trade[]): DerivedKpis {
   const settled = trades.filter((trade) => trade.exit_reason !== "open");

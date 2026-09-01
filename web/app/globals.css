@@ -1151,6 +1151,9 @@ td span {
   fill: var(--data-series-1);
 }
 
+.exec-marker.selected { stroke-width: 3.5; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-blue) 65%, transparent)); }
+.exec-label.selected { fill: var(--accent-blue); font-weight: 700; }
+
 .axis-label,
 .price-label,
 .empty-chart,

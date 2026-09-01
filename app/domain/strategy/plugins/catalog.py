@@ -30,6 +30,7 @@ from .composite_root import CompositeRoot
 from .macd import MACDStrategy
 from .news_sentiment import NewsSentimentStrategy
 from .rsi import RSIStrategy
+from .smc import SMCMarketStructureStrategy
 from .support_resistance import SupportResistanceStrategy
 
 DEFAULT_FAST = 20
@@ -105,6 +106,7 @@ def register_all(registry: Registry) -> None:
     registry.register(RSIStrategy)
     registry.register(BollingerStrategy)
     registry.register(SupportResistanceStrategy)
+    registry.register(SMCMarketStructureStrategy)
     registry.register(NewsSentimentStrategy)
     registry.register(MACDStrategy)
     registry.register(CompositeRoot)

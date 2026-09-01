@@ -8,7 +8,7 @@ import json
 import os
 import re
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from uuid import UUID
 
 from ..errors import ApplicationError
@@ -17,6 +17,7 @@ from ..infrastructure.ai import StrategyDesignUnavailable
 from ..infrastructure.news.rss import NewsProviderError, _pinned_https_get
 from ..infrastructure.news.security import assert_public_https, sanitize_text
 from ..schemas import StrategyApprovalIn, StrategyDraftCreateIn, StrategySpecResponse
+from .agent_tools import AgentWorkflow, ToolRegistry
 
 _INDICATOR_ALIASES = {
     "bollinger_bands": "bollinger",
@@ -28,6 +29,7 @@ _ALLOWED_INDICATORS = {"sma", "ema", "rsi", "bollinger", "macd", "support_resist
 _FORBIDDEN = re.compile(r"(?:__import__|subprocess|socket|requests|urllib|eval\s*\(|exec\s*\(|SELECT\s|INSERT\s)", re.I)
 _COMPARISON_OPERATORS = {"crosses_above", "crosses_below", "above", "below", "equals"}
 _MAX_DESIGN_ATTEMPTS = 3
+_MAX_SOURCE_REDIRECTS = 3
 
 
 def _sha256(value: str) -> str:
@@ -172,6 +174,31 @@ def preflight_dsl(spec: StrategySpecResponse, artifact: str) -> dict[str, Any]:
     }
 
 
+def preflight_custom_python(artifact: str) -> dict[str, Any]:
+    """Policy-check an advanced proposal without executing it in this process."""
+    try:
+        tree = ast.parse(artifact, mode="exec")
+    except SyntaxError as exc:
+        raise ApplicationError("custom_python_policy_failed", "custom Python has invalid syntax", 422) from exc
+    if any(isinstance(node, (ast.Import, ast.ImportFrom)) for node in ast.walk(tree)):
+        raise ApplicationError("custom_python_policy_failed", "custom Python imports are not allowed", 422)
+    forbidden_names = {"eval", "exec", "compile", "open", "input", "globals", "locals", "vars", "getattr", "setattr", "delattr"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and (node.id.startswith("__") or node.id in forbidden_names):
+            raise ApplicationError("custom_python_policy_failed", "custom Python uses a forbidden API", 422)
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            raise ApplicationError("custom_python_policy_failed", "custom Python uses a forbidden API", 422)
+    strategy = next((node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Strategy"), None)
+    if strategy is None or not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "analyze" for node in strategy.body):
+        raise ApplicationError("custom_python_policy_failed", "custom Python must define Strategy.analyze", 422)
+    return {
+        "status": "passed",
+        "policy_version": "custom-python-policy-v1",
+        "fixture_version": "custom-python-syntax-v1",
+        "checks": ["ast_policy", "strategy_analyze_contract"],
+    }
+
+
 def stabilize_generated_id(spec: StrategySpecResponse, _source_hash: str) -> StrategySpecResponse:
     """Make published IDs deterministic and collision-resistant per immutable spec."""
     slug = re.sub(r"[^a-z0-9]+", "-", spec.strategy_id.removeprefix("generated.").lower()).strip("-")
@@ -184,23 +211,159 @@ def stabilize_generated_id(spec: StrategySpecResponse, _source_hash: str) -> Str
 
 
 class StrategyAuthoringService:
-    def __init__(self, store: object, designer: object) -> None:
+    def __init__(self, store: object, designer: object, sandbox: object | None = None) -> None:
         self._store = store
         self._designer = designer
+        self._sandbox = sandbox
+        self._tools = ToolRegistry()
 
     def close(self) -> None:
         close = getattr(self._designer, "close", None)
         if close is not None:
             close()
 
-    def create(self, request: StrategyDraftCreateIn, correlation_id: str | None = None) -> dict[str, Any]:
-        if request.mode != "dsl":
-            raise ApplicationError(
-                "custom_python_requires_review", "custom Python authoring is an advanced review path", 422
-            )
+    def submit(self, request: StrategyDraftCreateIn, correlation_id: str | None = None) -> dict[str, Any]:
         source_text = self._source_text(request)
+        return self._store.create_pending_strategy_draft(
+            request=request,
+            source_text=source_text,
+            source_hash=_sha256(source_text),
+            correlation_id=correlation_id,
+        )
+
+    def create(
+        self,
+        request: StrategyDraftCreateIn,
+        correlation_id: str | None = None,
+        *,
+        pending_draft_id: UUID | None = None,
+        job_id: UUID | None = None,
+        lease_token: UUID | None = None,
+        source_text: str | None = None,
+        expected_source_hash: str | None = None,
+        resume_state: str = "DRAFT_CREATED",
+        resume_aggregate_version: int = 0,
+    ) -> dict[str, Any]:
+        if pending_draft_id is not None and (job_id is None or lease_token is None):
+            raise ApplicationError("agent_job_invalid", "claimed agent job metadata is required", 422)
+        workflow = AgentWorkflow()
+        tool_invocations: list[dict[str, str]] = []
+        persisted_state = resume_state
+        persisted_aggregate_version = resume_aggregate_version
+        caught_up = pending_draft_id is None or resume_state == workflow.state
+
+        def advance(target: str) -> None:
+            nonlocal persisted_state, persisted_aggregate_version, caught_up
+            previous_state = workflow.state
+            workflow.transition(target)
+            if pending_draft_id is None:
+                return
+            if not caught_up:
+                if target == persisted_state:
+                    caught_up = True
+                return
+            persisted_aggregate_version = self._store.advance_agent_run_state(
+                job_id, lease_token, previous_state, persisted_aggregate_version, target
+            )
+            persisted_state = target
+
+        advance("SOURCE_READY")
+        advance("SPEC_GENERATING")
+
+        def require(role: str, tool: str) -> None:
+            self._tools.require(role, tool, workflow.state)
+            tool_invocations.append({"role": role, "tool_name": tool, "state": workflow.state})
+
+        require("StrategyDesignerAgent", "source.get_document")
+        source_text = source_text if source_text is not None else self._source_text(request)
         source_hash = _sha256(source_text)
+        if expected_source_hash is not None and expected_source_hash != source_hash:
+            raise ApplicationError("agent_source_changed", "queued draft source no longer matches its hash", 409)
+        attempts: list[dict[str, Any]] = []
+        if request.mode == "custom_python":
+            advance("SPEC_VALIDATING")
+            require("StrategyDesignerAgent", "strategy.save_draft_spec")
+            spec = {
+                "schema_version": "custom-python/v1",
+                "display_name": request.name_hint or "Custom Python strategy",
+                "deployment_required": True,
+                "source_hash": source_hash,
+            }
+            artifact = source_text
+            report: dict[str, Any] | None = None
+            prior_artifact_hashes = {_sha256(artifact)}
+            for attempt_no in range(1, _MAX_DESIGN_ATTEMPTS + 1):
+                advance("CODE_GENERATING")
+                require(
+                    "StrategyImplementationAgent",
+                    "artifact.create_custom_draft" if attempt_no == 1 else "artifact.save_version",
+                )
+                if attempt_no == 1:
+                    require("StrategyImplementationAgent", "artifact.save_version")
+                artifact_hash = _sha256(artifact)
+                advance("POLICY_CHECKING")
+                require("StrategyImplementationAgent", "artifact.run_policy_check")
+                report = preflight_custom_python(artifact)
+                advance("SANDBOX_TESTING")
+                require("StrategyImplementationAgent", "sandbox.run_contract_tests")
+                try:
+                    if self._sandbox is not None:
+                        sandbox_report = self._sandbox.run_python_contract(artifact)
+                        report = {**report, **sandbox_report, "checks": [*report["checks"], *sandbox_report.get("checks", [])]}
+                except ApplicationError as exc:
+                    attempts.append(
+                        {"attempt_no": attempt_no, "input_hash": _sha256(artifact), "output_hash": None,
+                         "status": "failed", "error_code": exc.code}
+                    )
+                    if exc.code != "strategy_sandbox_failed" or attempt_no == _MAX_DESIGN_ATTEMPTS:
+                        advance("FAILED")
+                        raise
+                    advance("REPAIRING")
+                    require("StrategyRepairAgent", "agent.get_attempt_context")
+                    require("StrategyRepairAgent", "sandbox.get_test_report")
+                    require("StrategyRepairAgent", "artifact.apply_code_patch")
+                    artifact = self._designer.repair_python(artifact, exc.code, correlation_id)
+                    if not isinstance(artifact, str) or not artifact.strip():
+                        advance("FAILED")
+                        raise ApplicationError("strategy_repair_invalid", "repair agent returned no Python artifact", 422)
+                    artifact = artifact.strip()
+                    if _sha256(artifact) in prior_artifact_hashes:
+                        advance("FAILED")
+                        raise ApplicationError("strategy_repair_no_progress", "repair agent made no progress", 422)
+                    prior_artifact_hashes.add(_sha256(artifact))
+                    continue
+                attempts.append(
+                    {"attempt_no": attempt_no, "input_hash": _sha256(artifact), "output_hash": artifact_hash,
+                     "status": "passed", "error_code": None}
+                )
+                break
+            assert report is not None
+            require("StrategyImplementationAgent", "draft.mark_review_required")
+            advance("REVIEW_REQUIRED")
+            result = {
+                "request": request,
+                "source_hash": source_hash,
+                "spec": spec,
+                "artifact": artifact,
+                "artifact_hash": artifact_hash,
+                "report": report,
+                "report_hash": _sha256(_canonical(report)),
+                "model": "user-custom-python",
+                "model_version": "custom-python/v1",
+                "prompt_hash": source_hash,
+                "attempts_used": len(attempts),
+                "attempts": attempts,
+                "workflow_states": workflow.history,
+                "tool_invocations": tool_invocations,
+                "correlation_id": correlation_id,
+            }
+            if pending_draft_id is not None:
+                return self._store.complete_pending_strategy_draft(
+                    draft_id=pending_draft_id, job_id=job_id, lease_token=lease_token, **result
+                )
+            return self._store.create_strategy_draft(**result)
         if request.source.type == "dsl":
+            advance("SPEC_VALIDATING")
             spec = StrategySpecResponse.model_validate(request.source.spec)
             designer_model = "user-dsl"
             designer_version = "strategy-spec/v1"
@@ -210,38 +373,123 @@ class StrategyAuthoringService:
             designer_version = "groq"
             design_input = source_text
             for attempts_used in range(1, _MAX_DESIGN_ATTEMPTS + 1):
+                candidate: StrategySpecResponse | None = None
                 try:
-                    spec = normalize_spec(stabilize_generated_id(self._designer.design(design_input, correlation_id), source_hash))
+                    candidate = self._designer.design(design_input, correlation_id)
+                    spec = normalize_spec(stabilize_generated_id(candidate, source_hash))
+                    advance("SPEC_VALIDATING")
+                    require("StrategyDesignerAgent", "strategy.validate_spec")
                     validate_spec(spec)
+                    attempts.append(
+                        {
+                            "attempt_no": attempts_used,
+                            "input_hash": _sha256(design_input),
+                            "output_hash": _sha256(_canonical(spec.model_dump())),
+                            "status": "passed",
+                            "error_code": None,
+                        }
+                    )
                     break
                 except StrategyDesignUnavailable as exc:
+                    workflow.transition("FAILED")
                     raise ApplicationError("strategy_design_unavailable", str(exc), 503) from exc
                 except ApplicationError as exc:
+                    attempts.append(
+                        {
+                            "attempt_no": attempts_used,
+                            "input_hash": _sha256(design_input),
+                            "output_hash": _sha256(_canonical(candidate.model_dump())) if candidate else None,
+                            "status": "failed",
+                            "error_code": exc.code,
+                        }
+                    )
                     if attempts_used == _MAX_DESIGN_ATTEMPTS:
+                        workflow.transition("FAILED")
                         raise ApplicationError(
                             "strategy_design_invalid", "designer could not produce an executable strategy spec", 422
                         ) from exc
+                    require("StrategyDesignerAgent", "strategy.get_validation_errors")
                     design_input = f"{source_text}\n\nValidation feedback: {exc}. Return a corrected strategy-spec/v1 JSON only."
+                    advance("REPAIRING")
+                    advance("SPEC_GENERATING")
         if request.source.type == "dsl":
             spec = normalize_spec(stabilize_generated_id(spec, source_hash))
+            require("StrategyDesignerAgent", "strategy.validate_spec")
             validate_spec(spec)
+            attempts.append(
+                {
+                    "attempt_no": 1,
+                    "input_hash": source_hash,
+                    "output_hash": _sha256(_canonical(spec.model_dump())),
+                    "status": "passed",
+                    "error_code": None,
+                }
+            )
+        require("StrategyDesignerAgent", "strategy.save_draft_spec")
+        advance("CODE_GENERATING")
+        require("StrategyImplementationAgent", "artifact.compile_from_spec")
         artifact = compile_dsl(spec)
         artifact_hash = _sha256(artifact)
+        require("StrategyImplementationAgent", "artifact.save_version")
+        advance("POLICY_CHECKING")
+        require("StrategyImplementationAgent", "artifact.run_policy_check")
+        advance("SANDBOX_TESTING")
+        require("StrategyImplementationAgent", "sandbox.run_contract_tests")
         report = preflight_dsl(spec, artifact)
+        if self._sandbox is not None:
+            sandbox_report = self._sandbox.run_contract(artifact)
+            report = {
+                **report,
+                **sandbox_report,
+                "checks": [*report["checks"], *sandbox_report.get("checks", [])],
+            }
         report_hash = _sha256(_canonical(report))
-        return self._store.create_strategy_draft(
-            request=request,
-            source_hash=source_hash,
-            spec=spec.model_dump(),
-            artifact=artifact,
-            artifact_hash=artifact_hash,
-            report=report,
-            report_hash=report_hash,
-            model=designer_model,
-            model_version=designer_version,
-            prompt_hash=_sha256(source_text),
-            attempts_used=attempts_used,
-            correlation_id=correlation_id,
+        require("StrategyImplementationAgent", "draft.mark_review_required")
+        advance("REVIEW_REQUIRED")
+        result = {
+            "request": request,
+            "source_hash": source_hash,
+            "spec": spec.model_dump(),
+            "artifact": artifact,
+            "artifact_hash": artifact_hash,
+            "report": report,
+            "report_hash": report_hash,
+            "model": designer_model,
+            "model_version": designer_version,
+            "prompt_hash": _sha256(source_text),
+            "attempts_used": attempts_used,
+            "attempts": attempts,
+            "workflow_states": workflow.history,
+            "tool_invocations": tool_invocations,
+            "correlation_id": correlation_id,
+        }
+        if pending_draft_id is not None:
+            return self._store.complete_pending_strategy_draft(
+                draft_id=pending_draft_id,
+                job_id=job_id,
+                lease_token=lease_token,
+                **result,
+            )
+        return self._store.create_strategy_draft(**result)
+
+    def process_claimed_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        payload = job["payload_json"]
+        if not isinstance(payload, dict):
+            raise ApplicationError("agent_job_invalid", "agent job payload is invalid", 422)
+        source_text = payload.get("source_text")
+        source_hash = payload.get("source_hash")
+        if not isinstance(source_text, str) or not isinstance(source_hash, str):
+            raise ApplicationError("agent_job_invalid", "agent job source is invalid", 422)
+        return self.create(
+            StrategyDraftCreateIn.model_validate(payload["request"]),
+            payload.get("correlation_id"),
+            pending_draft_id=job["draft_id"],
+            job_id=job["id"],
+            lease_token=job["lease_token"],
+            source_text=source_text,
+            expected_source_hash=source_hash,
+            resume_state=str(job.get("state", "DRAFT_CREATED")),
+            resume_aggregate_version=int(job.get("aggregate_version", 0)),
         )
 
     def get(self, draft_id: UUID, owner_id: UUID) -> dict[str, Any]:
@@ -274,8 +522,18 @@ def _fetch_approved_url(url: str) -> str:
     if origin not in allowed:
         raise ApplicationError("source_rejected", "URL origin is not on the authoring allowlist", 422)
     try:
-        host, addresses = assert_public_https(url, origin)
-        status, headers, payload = _pinned_https_get(url, host, addresses)
+        current = url
+        for redirect in range(_MAX_SOURCE_REDIRECTS + 1):
+            host, addresses = assert_public_https(current, origin)
+            status, headers, payload = _pinned_https_get(current, host, addresses)
+            if status not in {301, 302, 303, 307, 308}:
+                break
+            if redirect == _MAX_SOURCE_REDIRECTS:
+                raise ApplicationError("source_rejected", "approved URL redirected too often", 422)
+            location = headers.get("location", "")
+            if not location:
+                raise ApplicationError("source_rejected", "approved URL redirect has no location", 422)
+            current = urljoin(current, location)
     except (NewsProviderError, ValueError, OSError) as exc:
         raise ApplicationError("source_rejected", "URL failed outbound security validation", 422) from exc
     if status < 200 or status >= 300:

@@ -11,7 +11,7 @@
 .stack {
   display: grid;
   min-width: 0;
-  grid-template-columns: 370px 248px minmax(0, 1fr) 340px;
+  grid-template-columns: 370px 248px minmax(0, 1fr) 334px;
   gap: 12px;
 }
 
@@ -181,7 +181,7 @@
 .jsonBlock { scrollbar-width: none; }
 .jsonBlock::-webkit-scrollbar { display: none; }
 
-.importsPanel { grid-column: 1 / span 3; grid-row: 2; height: 157px; margin-top: 7px; overflow: hidden; }
+.importsPanel { grid-column: 1 / span 3; grid-row: 2; height: 157px; overflow: hidden; }
 
 .jsonKey { color: var(--code-string); }
 .jsonString { color: var(--tint-brand-ink); }

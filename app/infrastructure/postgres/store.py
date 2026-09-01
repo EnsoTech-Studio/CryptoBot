@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ...domain.common import hash_canonical_json
+from ...domain.market import Candle
 from ...domain.news import ApprovedSource, CollectedItem
 from ...domain.sentiment import Result as SentimentResult
 from ...errors import conflict, not_found, validation
@@ -80,6 +81,14 @@ class Store:
                 "SELECT status,count(*) AS count FROM search_runs GROUP BY status"
             ).fetchall():
                 metrics[f"research_search_runs_{row['status']}"] = float(row["count"])
+            for row in connection.execute(
+                "SELECT lower(state) AS state,count(*) AS count FROM agent_runs GROUP BY state"
+            ).fetchall():
+                metrics[f"research_agent_runs_{row['state']}"] = float(row["count"])
+            for row in connection.execute(
+                "SELECT status,count(*) AS count FROM sandbox_runs GROUP BY status"
+            ).fetchall():
+                metrics[f"research_sandbox_runs_{row['status']}"] = float(row["count"])
             for row in connection.execute(
                 """
                 SELECT dispatch_status::text AS status,count(*) AS count
@@ -207,9 +216,11 @@ class Store:
         model_version: str,
         prompt_hash: str,
         attempts_used: int,
+        attempts: list[dict[str, Any]],
+        workflow_states: list[str],
+        tool_invocations: list[dict[str, str]],
         correlation_id: str | None = None,
     ) -> dict[str, Any]:
-        spec_hash = hash_canonical_json(spec)
         existing_id: UUID | None = None
         with self._connect() as connection:
             if request.idempotency_key:
@@ -225,7 +236,7 @@ class Store:
                 INSERT INTO strategy_drafts(
                     owner_id,source_type,source_ref,source_hash,mode,name_hint,
                     current_revision,status,idempotency_key
-                ) VALUES (%s,%s,%s,%s,%s,%s,1,'REVIEW_REQUIRED',%s) RETURNING id
+                ) VALUES (%s,%s,%s,%s,%s,%s,0,'DRAFT_CREATED',%s) RETURNING id
                 """,
                 (
                     request.owner_id,
@@ -238,48 +249,580 @@ class Store:
                 ),
                 ).fetchone()
                 draft_id = draft["id"]
-                connection.execute(
-                """
-                INSERT INTO strategy_draft_revisions(draft_id,revision,spec_json,spec_hash,created_by)
-                VALUES (%s,1,%s,%s,'designer')
-                """,
-                (draft_id, Jsonb(spec), spec_hash),
-                )
                 agent = connection.execute(
                 """
                 INSERT INTO agent_runs(
                     draft_id,agent_type,state,model,model_version,prompt_hash,tool_policy_version,attempts_used
-                ) VALUES (%s,'StrategyDesignerAgent','review_required',%s,%s,%s,'typed-tools-v1',%s)
+                ) VALUES (%s,'StrategyDesignerAgent','DRAFT_CREATED',%s,%s,%s,'typed-tools-v2',0)
                 RETURNING id
                 """,
-                (draft_id, model, model_version, prompt_hash, attempts_used),
+                (draft_id, model, model_version, prompt_hash),
                 ).fetchone()
-                artifact_row = connection.execute(
-                """
-                INSERT INTO strategy_artifacts(
-                    draft_id,revision,language,source_text,artifact_hash,compiler_version
-                ) VALUES (%s,1,'python',%s,%s,'dsl-compiler-v1') RETURNING id
-                """,
-                (draft_id, artifact, artifact_hash),
-                ).fetchone()
-                connection.execute(
-                """
-                INSERT INTO sandbox_runs(
-                    artifact_id,policy_version,fixture_version,status,report_json
-                ) VALUES (%s,'dsl-policy-v1','strategy-contract-v1','passed',%s)
-                """,
-                (artifact_row["id"], Jsonb({**report, "report_hash": report_hash})),
-                )
-                connection.execute(
-                """
-                INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload)
-                VALUES ('StrategyDraftReviewRequired','strategy_draft',%s,%s,%s)
-                """,
-                (draft_id, correlation_id, Jsonb({"agent_run_id": str(agent["id"]), "spec_hash": spec_hash})),
+                self._persist_authoring_result(
+                    connection,
+                    draft_id=draft_id,
+                    agent_run_id=agent["id"],
+                    source_hash=source_hash,
+                    spec=spec,
+                    artifact=artifact,
+                    artifact_hash=artifact_hash,
+                    report=report,
+                    report_hash=report_hash,
+                    model=model,
+                    model_version=model_version,
+                    prompt_hash=prompt_hash,
+                    attempts_used=attempts_used,
+                    attempts=attempts,
+                    workflow_states=workflow_states,
+                    tool_invocations=tool_invocations,
+                    correlation_id=correlation_id,
                 )
         if existing_id is not None:
             return self.get_strategy_draft(existing_id, request.owner_id)
         return self.get_strategy_draft(draft_id, request.owner_id)
+
+    def _persist_authoring_result(
+        self,
+        connection: psycopg.Connection[dict[str, Any]],
+        *,
+        draft_id: UUID,
+        agent_run_id: UUID,
+        source_hash: str,
+        spec: dict[str, Any],
+        artifact: str,
+        artifact_hash: str,
+        report: dict[str, Any],
+        report_hash: str,
+        model: str,
+        model_version: str,
+        prompt_hash: str,
+        attempts_used: int,
+        attempts: list[dict[str, Any]],
+        workflow_states: list[str],
+        tool_invocations: list[dict[str, str]],
+        correlation_id: str | None,
+        persist_workflow: bool = True,
+    ) -> None:
+        spec_hash = hash_canonical_json(spec)
+        connection.execute(
+            """
+            INSERT INTO strategy_draft_revisions(draft_id,revision,spec_json,spec_hash,created_by)
+            VALUES (%s,1,%s,%s,'designer')
+            """,
+            (draft_id, Jsonb(spec), spec_hash),
+        )
+        connection.execute(
+            """
+            UPDATE strategy_drafts
+            SET current_revision=1,status='REVIEW_REQUIRED',updated_at=now()
+            WHERE id=%s AND source_hash=%s
+            """,
+            (draft_id, source_hash),
+        )
+        if persist_workflow:
+            connection.execute(
+                """
+                UPDATE agent_runs
+                SET state='REVIEW_REQUIRED',model=%s,model_version=%s,prompt_hash=%s,
+                    tool_policy_version='typed-tools-v2',attempts_used=%s,
+                    aggregate_version=aggregate_version+%s,updated_at=now()
+                WHERE id=%s
+                """,
+                (model, model_version, prompt_hash, attempts_used, len(workflow_states) - 1, agent_run_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE agent_runs
+                SET model=%s,model_version=%s,prompt_hash=%s,
+                    tool_policy_version='typed-tools-v2',attempts_used=%s,updated_at=now()
+                WHERE id=%s
+                """,
+                (model, model_version, prompt_hash, attempts_used, agent_run_id),
+            )
+        for attempt in attempts:
+            connection.execute(
+                """
+                INSERT INTO agent_attempts(
+                    agent_run_id,attempt_no,stage,status,input_hash,output_hash,error_code
+                ) VALUES (%s,%s,'spec_generation',%s,%s,%s,%s)
+                """,
+                (
+                    agent_run_id,
+                    attempt["attempt_no"],
+                    attempt["status"],
+                    attempt["input_hash"],
+                    attempt["output_hash"],
+                    attempt["error_code"],
+                ),
+            )
+        if persist_workflow:
+            last_transition = connection.execute(
+                """
+                SELECT sequence_no,state FROM agent_run_transitions
+                WHERE agent_run_id=%s ORDER BY sequence_no DESC LIMIT 1
+                """,
+                (agent_run_id,),
+            ).fetchone()
+            states_to_record = workflow_states
+            sequence_no = 0
+            if last_transition is not None:
+                sequence_no = last_transition["sequence_no"] + 1
+                if workflow_states and last_transition["state"] == workflow_states[0]:
+                    states_to_record = workflow_states[1:]
+            for state in states_to_record:
+                connection.execute(
+                    """
+                    INSERT INTO agent_run_transitions(agent_run_id,sequence_no,state)
+                    VALUES (%s,%s,%s)
+                    """,
+                    (agent_run_id, sequence_no, state),
+                )
+                sequence_no += 1
+        for sequence_no, invocation in enumerate(tool_invocations):
+            request_hash = hash_canonical_json(
+                {
+                    "role": invocation["role"],
+                    "tool_name": invocation["tool_name"],
+                    "state": invocation["state"],
+                }
+            )
+            connection.execute(
+                """
+                INSERT INTO tool_invocations(
+                    agent_run_id,sequence_no,role,tool_name,tool_version,state,request_hash,result_hash,status
+                ) VALUES (%s,%s,%s,%s,'v1',%s,%s,%s,'allowed')
+                """,
+                (
+                    agent_run_id,
+                    sequence_no,
+                    invocation["role"],
+                    invocation["tool_name"],
+                    invocation["state"],
+                    request_hash,
+                    hash_canonical_json({"ok": True}),
+                ),
+            )
+        artifact_row = connection.execute(
+            """
+            INSERT INTO strategy_artifacts(
+                draft_id,revision,language,source_text,artifact_hash,compiler_version
+            ) VALUES (%s,1,'python',%s,%s,%s) RETURNING id
+            """,
+            (
+                draft_id,
+                artifact,
+                artifact_hash,
+                "custom-python-review-v1" if spec.get("schema_version") == "custom-python/v1" else "dsl-compiler-v1",
+            ),
+        ).fetchone()
+        connection.execute(
+            """
+            INSERT INTO sandbox_runs(
+                artifact_id,policy_version,fixture_version,status,report_json
+            ) VALUES (%s,%s,%s,'passed',%s)
+            """,
+            (
+                artifact_row["id"],
+                report.get("policy_version", "dsl-policy-v1"),
+                report.get("fixture_version", "strategy-contract-v1"),
+                Jsonb({**report, "report_hash": report_hash}),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload)
+            VALUES ('StrategyDraftReviewRequired','strategy_draft',%s,%s,%s)
+            """,
+            (draft_id, correlation_id, Jsonb({"agent_run_id": str(agent_run_id), "spec_hash": spec_hash})),
+        )
+
+    def create_pending_strategy_draft(
+        self,
+        *,
+        request: StrategyDraftCreateIn,
+        source_text: str,
+        source_hash: str,
+        correlation_id: str | None = None,
+    ) -> dict[str, Any]:
+        existing_id: UUID | None = None
+        with self._connect() as connection:
+            if request.idempotency_key:
+                existing = connection.execute(
+                    "SELECT id FROM strategy_drafts WHERE owner_id=%s AND idempotency_key=%s",
+                    (request.owner_id, request.idempotency_key),
+                ).fetchone()
+                if existing:
+                    existing_id = existing["id"]
+            if existing_id is None:
+                draft = connection.execute(
+                    """
+                    INSERT INTO strategy_drafts(
+                        owner_id,source_type,source_ref,source_hash,mode,name_hint,
+                        current_revision,status,idempotency_key
+                    ) VALUES (%s,%s,%s,%s,%s,%s,0,'DRAFT_CREATED',%s) RETURNING id
+                    """,
+                    (
+                        request.owner_id,
+                        request.source.type,
+                        request.source.text or request.source.url or "dsl",
+                        source_hash,
+                        request.mode,
+                        request.name_hint,
+                        request.idempotency_key,
+                    ),
+                ).fetchone()
+                draft_id = draft["id"]
+                agent = connection.execute(
+                    """
+                    INSERT INTO agent_runs(
+                        draft_id,agent_type,state,model,model_version,prompt_hash,tool_policy_version,attempts_used
+                    ) VALUES (%s,'StrategyDesignerAgent','DRAFT_CREATED','pending','pending',%s,'typed-tools-v2',0)
+                    RETURNING id
+                    """,
+                    (draft_id, source_hash),
+                ).fetchone()
+                connection.execute(
+                    """
+                    INSERT INTO agent_run_transitions(agent_run_id,sequence_no,state)
+                    VALUES (%s,0,'DRAFT_CREATED')
+                    """,
+                    (agent["id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO agent_jobs(agent_run_id,payload_json)
+                    VALUES (%s,%s)
+                    """,
+                    (
+                        agent["id"],
+                        Jsonb(
+                            {
+                                "request": request.model_dump(mode="json"),
+                                "source_text": source_text,
+                                "source_hash": source_hash,
+                                "correlation_id": correlation_id,
+                            }
+                        ),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload)
+                    VALUES ('StrategyDraftQueued','strategy_draft',%s,%s,%s)
+                    """,
+                    (draft_id, correlation_id, Jsonb({"agent_run_id": str(agent["id"])})),
+                )
+        if existing_id is not None:
+            return self.get_strategy_draft(existing_id, request.owner_id)
+        return self.get_strategy_draft(draft_id, request.owner_id)
+
+    def claim_agent_job(self, worker_id: str, lease: timedelta) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE agent_jobs job
+                SET status='failed',last_error_code='lease_expired',updated_at=now()
+                WHERE job.status='leased' AND job.lease_expires_at < now()
+                  AND job.attempts >= job.max_attempts
+                """
+            )
+            row = connection.execute(
+                """
+                WITH candidate AS (
+                    SELECT job.id
+                    FROM agent_jobs job
+                    JOIN agent_runs run ON run.id=job.agent_run_id
+                    WHERE run.cancellation_requested=false
+                      AND job.attempts < job.max_attempts
+                      AND (
+                        (job.status='queued' AND job.available_at <= now())
+                        OR (job.status='leased' AND job.lease_expires_at < now())
+                      )
+                    ORDER BY job.enqueued_at
+                    FOR UPDATE OF job SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE agent_jobs job
+                SET status='leased',leased_by=%s,lease_token=gen_random_uuid(),
+                    lease_expires_at=now()+%s,attempts=job.attempts+1,updated_at=now()
+                FROM candidate
+                WHERE job.id=candidate.id
+                RETURNING job.id,job.agent_run_id,job.payload_json,job.lease_token,
+                    (SELECT draft_id FROM agent_runs WHERE id=job.agent_run_id) AS draft_id,
+                    (SELECT state FROM agent_runs WHERE id=job.agent_run_id) AS state,
+                    (SELECT aggregate_version FROM agent_runs WHERE id=job.agent_run_id) AS aggregate_version
+                """,
+                (worker_id, lease),
+            ).fetchone()
+        return row
+
+    def advance_agent_run_state(
+        self,
+        job_id: UUID,
+        lease_token: UUID,
+        expected_state: str,
+        expected_aggregate_version: int,
+        target_state: str,
+    ) -> int:
+        """Persist one fenced workflow transition and its public progress event."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                UPDATE agent_runs run
+                SET state=%s,aggregate_version=aggregate_version+1,updated_at=now()
+                FROM agent_jobs job
+                WHERE job.id=%s AND job.status='leased' AND job.lease_token=%s
+                  AND job.agent_run_id=run.id
+                  AND run.cancellation_requested=false
+                  AND run.state=%s AND run.aggregate_version=%s
+                RETURNING run.id,run.draft_id,run.aggregate_version,
+                          job.payload_json->>'correlation_id' AS correlation_id
+                """,
+                (target_state, job_id, lease_token, expected_state, expected_aggregate_version),
+            ).fetchone()
+            if row is None:
+                raise conflict("agent_state_conflict", "agent run state or lease is no longer current")
+            connection.execute(
+                "UPDATE strategy_drafts SET status=%s,updated_at=now() WHERE id=%s",
+                (target_state, row["draft_id"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO agent_run_transitions(agent_run_id,sequence_no,state)
+                VALUES (%s,%s,%s)
+                """,
+                (row["id"], row["aggregate_version"], target_state),
+            )
+            connection.execute(
+                """
+                INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload)
+                VALUES ('AgentRunProgressed','strategy_draft',%s,%s,%s)
+                """,
+                (
+                    row["draft_id"],
+                    row["correlation_id"],
+                    Jsonb({"agent_run_id": str(row["id"]), "state": target_state,
+                           "aggregate_version": row["aggregate_version"]}),
+                ),
+            )
+        return row["aggregate_version"]
+
+    def complete_pending_strategy_draft(
+        self,
+        *,
+        draft_id: UUID,
+        job_id: UUID,
+        lease_token: UUID,
+        request: StrategyDraftCreateIn,
+        source_hash: str,
+        spec: dict[str, Any],
+        artifact: str,
+        artifact_hash: str,
+        report: dict[str, Any],
+        report_hash: str,
+        model: str,
+        model_version: str,
+        prompt_hash: str,
+        attempts_used: int,
+        attempts: list[dict[str, Any]],
+        workflow_states: list[str],
+        tool_invocations: list[dict[str, str]],
+        correlation_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT job.agent_run_id,run.draft_id,run.state,draft.owner_id,draft.source_hash
+                FROM agent_jobs job
+                JOIN agent_runs run ON run.id=job.agent_run_id
+                JOIN strategy_drafts draft ON draft.id=run.draft_id
+                WHERE job.id=%s AND job.status='leased' AND job.lease_token=%s
+                FOR UPDATE OF job,run,draft
+                """,
+                (job_id, lease_token),
+            ).fetchone()
+            if row is None or row["draft_id"] != draft_id or row["owner_id"] != request.owner_id:
+                raise conflict("agent_lease_lost", "agent job lease is no longer valid")
+            if row["state"] != "REVIEW_REQUIRED":
+                raise conflict("agent_state_conflict", "agent run has not passed every required gate")
+            if row["source_hash"] != source_hash:
+                raise conflict("agent_source_changed", "draft source no longer matches the queued job")
+            self._persist_authoring_result(
+                connection,
+                draft_id=draft_id,
+                agent_run_id=row["agent_run_id"],
+                source_hash=source_hash,
+                spec=spec,
+                artifact=artifact,
+                artifact_hash=artifact_hash,
+                report=report,
+                report_hash=report_hash,
+                model=model,
+                model_version=model_version,
+                prompt_hash=prompt_hash,
+                attempts_used=attempts_used,
+                attempts=attempts,
+                workflow_states=workflow_states,
+                tool_invocations=tool_invocations,
+                correlation_id=correlation_id,
+                persist_workflow=False,
+            )
+            connection.execute(
+                """
+                UPDATE agent_jobs
+                SET status='completed',leased_by=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+                WHERE id=%s AND lease_token=%s
+                """,
+                (job_id, lease_token),
+            )
+        return self.get_strategy_draft(draft_id, request.owner_id)
+
+    def heartbeat_agent_job(self, job_id: UUID, lease_token: UUID, lease: timedelta) -> bool:
+        with self._connect() as connection:
+            updated = connection.execute(
+                """
+                UPDATE agent_jobs SET lease_expires_at=now()+%s,updated_at=now()
+                WHERE id=%s AND status='leased' AND lease_token=%s
+                """,
+                (lease, job_id, lease_token),
+            )
+        return updated.rowcount == 1
+
+    def retry_agent_job(self, job_id: UUID, lease_token: UUID, error_code: str) -> bool:
+        terminal = False
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT attempts,max_attempts FROM agent_jobs
+                WHERE id=%s AND status='leased' AND lease_token=%s
+                FOR UPDATE
+                """,
+                (job_id, lease_token),
+            ).fetchone()
+            if row is None:
+                return False
+            terminal = row["attempts"] >= row["max_attempts"]
+            if not terminal:
+                connection.execute(
+                    """
+                    UPDATE agent_jobs
+                    SET status='queued',available_at=now()+(interval '1 second' * power(2, attempts)),
+                        last_error_code=%s,leased_by=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+                    WHERE id=%s AND lease_token=%s
+                    """,
+                    (error_code[:64], job_id, lease_token),
+                )
+        if terminal:
+            return self.fail_agent_job(job_id, lease_token, error_code)
+        return True
+
+    def fail_agent_job(self, job_id: UUID, lease_token: UUID, error_code: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT job.agent_run_id,run.draft_id
+                FROM agent_jobs job JOIN agent_runs run ON run.id=job.agent_run_id
+                WHERE job.id=%s AND job.status='leased' AND job.lease_token=%s
+                FOR UPDATE OF job,run
+                """,
+                (job_id, lease_token),
+            ).fetchone()
+            if row is None:
+                return False
+            connection.execute(
+                """
+                UPDATE agent_jobs
+                SET status='failed',last_error_code=%s,leased_by=NULL,lease_token=NULL,
+                    lease_expires_at=NULL,updated_at=now()
+                WHERE id=%s
+                """,
+                (error_code[:64], job_id),
+            )
+            connection.execute(
+                """
+                UPDATE agent_runs
+                SET state='FAILED',aggregate_version=aggregate_version+1,updated_at=now()
+                WHERE id=%s
+                """,
+                (row["agent_run_id"],),
+            )
+            next_sequence = connection.execute(
+                "SELECT COALESCE(max(sequence_no),-1)+1 AS sequence_no FROM agent_run_transitions WHERE agent_run_id=%s",
+                (row["agent_run_id"],),
+            ).fetchone()["sequence_no"]
+            connection.execute(
+                "INSERT INTO agent_run_transitions(agent_run_id,sequence_no,state) VALUES (%s,%s,'FAILED')",
+                (row["agent_run_id"], next_sequence),
+            )
+            connection.execute(
+                "UPDATE strategy_drafts SET status='FAILED',updated_at=now() WHERE id=%s",
+                (row["draft_id"],),
+            )
+        return True
+
+    def cancel_strategy_draft(self, draft_id: UUID, owner_id: UUID) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT draft.status,run.id AS agent_run_id,job.id AS job_id
+                FROM strategy_drafts draft
+                JOIN agent_runs run ON run.draft_id=draft.id
+                JOIN agent_jobs job ON job.agent_run_id=run.id
+                WHERE draft.id=%s AND draft.owner_id=%s
+                ORDER BY run.created_at DESC
+                LIMIT 1
+                FOR UPDATE OF draft,run,job
+                """,
+                (draft_id, owner_id),
+            ).fetchone()
+            if row is None:
+                raise not_found("strategy_draft")
+            if row["status"] == "CANCELLED":
+                return self.get_strategy_draft(draft_id, owner_id)
+            if row["status"] in {"REVIEW_REQUIRED", "APPROVED", "REJECTED", "FAILED"}:
+                raise conflict("strategy_draft_terminal", "strategy draft is already terminal")
+            connection.execute(
+                """
+                UPDATE strategy_drafts SET status='CANCELLED',updated_at=now() WHERE id=%s
+                """,
+                (draft_id,),
+            )
+            connection.execute(
+                """
+                UPDATE agent_runs
+                SET state='CANCELLED',cancellation_requested=true,cancelled_at=now(),
+                    aggregate_version=aggregate_version+1,updated_at=now()
+                WHERE id=%s
+                """,
+                (row["agent_run_id"],),
+            )
+            sequence_no = connection.execute(
+                "SELECT COALESCE(max(sequence_no),-1)+1 AS sequence_no FROM agent_run_transitions WHERE agent_run_id=%s",
+                (row["agent_run_id"],),
+            ).fetchone()["sequence_no"]
+            connection.execute(
+                "INSERT INTO agent_run_transitions(agent_run_id,sequence_no,state) VALUES (%s,%s,'CANCELLED')",
+                (row["agent_run_id"], sequence_no),
+            )
+            if row["job_id"] is not None:
+                connection.execute(
+                    """
+                    UPDATE agent_jobs
+                    SET status='cancelled',last_error_code='cancelled',leased_by=NULL,
+                        lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+                    WHERE id=%s AND status IN ('queued','leased')
+                    """,
+                    (row["job_id"],),
+                )
+            connection.execute(
+                """
+                INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,payload)
+                VALUES ('StrategyDraftCancelled','strategy_draft',%s,%s)
+                """,
+                (draft_id, Jsonb({"agent_run_id": str(row["agent_run_id"])})),
+            )
+        return self.get_strategy_draft(draft_id, owner_id)
 
     def get_strategy_draft(self, draft_id: UUID, owner_id: UUID | None = None) -> dict[str, Any]:
         with self._connect() as connection:
@@ -316,7 +859,7 @@ class Store:
             "spec_hash": row["spec_hash"],
             "artifact_hash": row["artifact_hash"],
             "sandbox_report_hash": row["sandbox_report_hash"],
-            "repair_attempts_used": row["attempts_used"] or 1,
+            "repair_attempts_used": row["attempts_used"] if row["attempts_used"] is not None else 0,
             "repair_attempts_max": 3,
             "strategy_spec": row["spec_json"],
             "created_at": row["created_at"],
@@ -341,7 +884,7 @@ class Store:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT d.owner_id,d.status,d.current_revision,r.spec_json,r.spec_hash,a.artifact_hash,
+                SELECT d.owner_id,d.mode,d.status,d.current_revision,r.spec_json,r.spec_hash,a.artifact_hash,
                        s.status AS sandbox_status,s.report_json->>'report_hash' AS sandbox_report_hash
                 FROM strategy_drafts d
                 JOIN strategy_draft_revisions r ON r.draft_id=d.id AND r.revision=d.current_revision
@@ -353,6 +896,7 @@ class Store:
             ).fetchone()
             if row is None or row["owner_id"] != request.reviewer_id:
                 raise not_found("strategy_draft")
+            is_dsl = row.get("mode", "dsl") == "dsl"
             reused = False
             if request.idempotency_key:
                 existing_approval = connection.execute(
@@ -386,7 +930,7 @@ class Store:
                 raise conflict("stale_revision", "approval fingerprint does not match the frozen draft")
             if target_status == "APPROVED" and row["sandbox_status"] != "passed":
                 raise conflict("sandbox_not_passed", "strategy preflight must pass before approval")
-            if not reused and target_status == "APPROVED":
+            if not reused and target_status == "APPROVED" and is_dsl:
                 spec = row["spec_json"]
                 existing_version = connection.execute(
                     "SELECT code_fingerprint FROM strategy_versions WHERE strategy_id=%s AND version='v1'",
@@ -419,7 +963,7 @@ class Store:
                     "UPDATE strategy_drafts SET status=%s,updated_at=now() WHERE id=%s",
                     (target_status, draft_id),
                 )
-                if target_status == "APPROVED":
+                if target_status == "APPROVED" and is_dsl:
                     spec = row["spec_json"]
                     strategy_id = str(spec["strategy_id"])
                     version = "v1"
@@ -467,6 +1011,18 @@ class Store:
                         VALUES ('StrategyPublished','strategy_draft',%s,%s,%s)
                         """,
                         (draft_id, None, Jsonb({"strategy_id": strategy_id, "version": version})),
+                    )
+                elif target_status == "APPROVED":
+                    connection.execute(
+                        """
+                        INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload)
+                        VALUES ('StrategyCustomArtifactApprovedForDeployment','strategy_draft',%s,%s,%s)
+                        """,
+                        (
+                            draft_id,
+                            None,
+                            Jsonb({"artifact_hash": request.artifact_hash, "deployment_required": True}),
+                        ),
                     )
         return self.get_strategy_draft(draft_id, request.reviewer_id)
 
@@ -651,7 +1207,10 @@ class Store:
                        e.sentiment_window_sec,e.analysis_lag_sec,
                        ev.total_return_pct,ev.win_rate_pct,ev.max_drawdown_pct,
                        ev.trade_count,ev.profit_factor,ev.sharpe_ratio,
-                       ranked.score
+                       ranked.score,
+                       COALESCE(trade_summary.wins,0) AS wins,
+                       COALESCE(trade_summary.losses,0) AS losses,
+                       COALESCE(trade_summary.net_profit,0) AS net_profit
                 FROM experiments e
                 JOIN market_datasets d ON d.id=e.market_dataset_id
                 JOIN strategy_versions v ON v.id=e.strategy_version_id
@@ -662,6 +1221,12 @@ class Store:
                     SELECT l.score FROM leaderboard_entries l
                     WHERE l.evaluation_id=ev.id ORDER BY l.observed_at DESC LIMIT 1
                 ) ranked ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT count(*) FILTER (WHERE t.exit_time IS NOT NULL AND t.net_pnl > 0) AS wins,
+                           count(*) FILTER (WHERE t.exit_time IS NOT NULL AND t.net_pnl < 0) AS losses,
+                           COALESCE(sum(t.net_pnl) FILTER (WHERE t.exit_time IS NOT NULL),0) AS net_profit
+                    FROM trades t WHERE t.backtest_run_id=r.id
+                ) trade_summary ON TRUE
                 WHERE e.id=%s
                 """,
                 (experiment_id,),
@@ -697,6 +1262,9 @@ class Store:
                 "profit_factor": _float(row.pop("profit_factor")),
                 "sharpe_ratio": _float(row.pop("sharpe_ratio")),
                 "score": _float(row.pop("score")),
+                "wins": row.pop("wins"),
+                "losses": row.pop("losses"),
+                "net_profit": _float(row.pop("net_profit")),
                 "evaluator_version": row["evaluator_version"],
             }
         for key in (
@@ -707,6 +1275,9 @@ class Store:
             "profit_factor",
             "sharpe_ratio",
             "score",
+            "wins",
+            "losses",
+            "net_profit",
         ):
             row.pop(key, None)
         return row
@@ -727,30 +1298,96 @@ class Store:
             _as_float_fields(row, ("open", "high", "low", "close", "volume")) for row in rows
         ]
 
-    def list_experiment_trades(self, experiment_id: UUID) -> list[dict[str, Any]]:
+    def list_live_candles(
+        self, provider: str, symbol: str, timeframe: str, limit: int
+    ) -> list[Candle]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT t.sequence_no,t.side,t.signal_t,t.entry_time,t.entry_price,t.quantity,
-                       t.fee_paid,t.slippage_cost,t.exit_time,t.exit_price,t.pnl_absolute,
-                       t.pnl_percent,t.exit_reason,t.sl_price,t.tp_price
-                FROM trades t JOIN backtest_runs r ON r.id=t.backtest_run_id
-                WHERE r.experiment_id=%s ORDER BY t.sequence_no
+                SELECT provider,symbol,timeframe,open_time,close_time,open,high,low,close,volume,trade_count
+                FROM (
+                    SELECT provider,symbol,timeframe,open_time,close_time,open,high,low,close,volume,trade_count
+                    FROM candles WHERE provider=%s AND symbol=%s AND timeframe=%s
+                    ORDER BY open_time DESC LIMIT %s
+                ) recent ORDER BY open_time
                 """,
-                (experiment_id,),
+                (provider, symbol.upper(), timeframe, limit),
+            ).fetchall()
+        return [
+            Candle(
+                provider=row["provider"], symbol=row["symbol"], timeframe=row["timeframe"],
+                open_time=row["open_time"], close_time=row["close_time"],
+                open=float(row["open"]), high=float(row["high"]), low=float(row["low"]),
+                close=float(row["close"]), volume=float(row["volume"]), trade_count=row["trade_count"],
+            )
+            for row in rows
+        ]
+
+    def stream_checkpoint(self, provider: str, symbol: str, timeframe: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT last_closed_at,last_source_sequence,is_stale
+                FROM stream_checkpoints WHERE provider=%s AND symbol=%s AND timeframe=%s
+                """,
+                (provider, symbol.upper(), timeframe),
+            ).fetchone()
+        return row or {"last_closed_at": None, "last_source_sequence": 0, "is_stale": True}
+
+    def list_experiment_trades(
+        self, experiment_id: UUID, *, after_sequence: int | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        cursor_clause = "AND t.sequence_no > %s" if after_sequence is not None else ""
+        limit_clause = "LIMIT %s" if limit is not None else ""
+        parameters: tuple[Any, ...] = (experiment_id,)
+        if after_sequence is not None:
+            parameters += (after_sequence,)
+        if limit is not None:
+            parameters += (limit,)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT d.symbol,p.quote AS quote_currency,t.sequence_no,t.side,t.signal_t,
+                       t.entry_time,t.entry_price,t.quantity,t.entry_notional,t.fee_paid,
+                       t.spread_cost,t.slippage_cost,t.exit_time,t.exit_price,t.exit_notional,
+                       t.gross_pnl,t.net_pnl,t.pnl_absolute,t.pnl_percent,t.exit_reason,
+                       t.sl_price,t.tp_price
+                FROM trades t
+                JOIN backtest_runs r ON r.id=t.backtest_run_id
+                JOIN experiments e ON e.id=r.experiment_id
+                JOIN market_datasets d ON d.id=e.market_dataset_id
+                JOIN market_pairs p ON p.provider=d.provider AND p.symbol=d.symbol
+                WHERE r.experiment_id=%s {cursor_clause} ORDER BY t.sequence_no {limit_clause}
+                """,
+                parameters,
             ).fetchall()
         numeric = (
             "entry_price",
             "quantity",
+            "entry_notional",
             "fee_paid",
+            "spread_cost",
             "slippage_cost",
             "exit_price",
+            "exit_notional",
+            "gross_pnl",
+            "net_pnl",
             "pnl_absolute",
             "pnl_percent",
             "sl_price",
             "tp_price",
         )
         return [_as_float_fields(row, numeric) for row in rows]
+
+    def list_experiment_trade_page(
+        self, experiment_id: UUID, *, after_sequence: int | None, limit: int
+    ) -> dict[str, Any]:
+        rows = self.list_experiment_trades(experiment_id, after_sequence=after_sequence, limit=limit + 1)
+        page = rows[:limit]
+        return {
+            "trades": page,
+            "next_cursor": page[-1]["sequence_no"] if len(rows) > limit else None,
+        }
 
     def list_experiment_equity(self, experiment_id: UUID) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -775,6 +1412,19 @@ class Store:
                 (experiment_id,),
             ).fetchall()
         return [_as_float_fields(row, ("confidence",)) for row in rows]
+
+    def list_experiment_execution_markers(self, experiment_id: UUID) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT t.sequence_no,t.entry_time,t.entry_price,t.exit_time,t.exit_price,t.side,t.exit_reason,
+                       t.sl_price,t.tp_price
+                FROM trades t JOIN backtest_runs r ON r.id=t.backtest_run_id
+                WHERE r.experiment_id=%s ORDER BY t.sequence_no
+                """,
+                (experiment_id,),
+            ).fetchall()
+        return [_as_float_fields(row, ("entry_price", "exit_price", "sl_price", "tp_price")) for row in rows]
 
     def create_search_run(
         self, request: SearchRunCreateIn, correlation_id: str | None = None

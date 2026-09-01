@@ -5,7 +5,7 @@ import { api } from "./api";
 import { createDraft } from "./discovery";
 
 
-test("strategy authoring keeps the browser request alive for the AI service budget", async () => {
+test("strategy authoring command uses the standard request timeout", async () => {
   const originalFetch = globalThis.fetch;
   const originalTimeout = AbortSignal.timeout;
   let timeoutMs = 0;
@@ -24,13 +24,104 @@ test("strategy authoring keeps the browser request alive for the AI service budg
 
   try {
     await api.createStrategyDraft({ type: "text", text: "Use RSI 14." });
-    assert.equal(timeoutMs, 30_000);
+    assert.equal(timeoutMs, 8_000);
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(AbortSignal, "timeout", {
       configurable: true,
       value: originalTimeout,
     });
+  }
+});
+
+test("custom Python authoring command explicitly keeps the advanced mode", async () => {
+  const originalFetch = globalThis.fetch;
+  let submitted: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    submitted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response("{}", { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.createStrategyDraft(
+      { type: "text", text: "class Strategy:\n    def analyze(self, candles): return []" },
+      "Custom review",
+      "custom_python",
+    );
+    assert.equal(submitted?.mode, "custom_python");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("strategy draft lookup requests the exact durable draft", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({}), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.strategyDraft("draft-123");
+    assert.match(requestedURL, /\/api\/v1\/strategy-drafts\/draft-123$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("trade result requests use the stable sequence cursor", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({ trades: [], next_cursor: null }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    await api.experimentTrades("experiment-1", 47, 20);
+    assert.match(requestedURL, /after_sequence=47/);
+    assert.match(requestedURL, /limit=20/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("experiment overlays preserve execution markers for trade inspection", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    overlays: [],
+    execution_markers: [{ sequence_no: 7, t: "2026-01-01T00:00:00Z", overlay_type: "long_entry", price: 100 }],
+  }), { headers: { "Content-Type": "application/json" } });
+
+  try {
+    const payload = await api.experimentOverlays("experiment-1");
+    assert.deepEqual(payload.execution_markers, [
+      { sequence_no: 7, t: "2026-01-01T00:00:00Z", overlay_type: "long_entry", price: 100 },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("strategy draft cancel posts the fixed cancel action", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  let submitted: Record<string, unknown> | undefined;
+  globalThis.fetch = async (input, init) => {
+    requestedURL = String(input);
+    submitted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({}), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.cancelStrategyDraft("draft-123");
+    assert.match(requestedURL, /\/api\/v1\/strategy-drafts\/draft-123\/actions$/);
+    assert.deepEqual(submitted, { action: "cancel" });
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

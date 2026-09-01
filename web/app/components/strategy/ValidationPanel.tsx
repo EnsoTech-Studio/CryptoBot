@@ -63,9 +63,11 @@ export function SaveLibraryPanel({
   onRemoveTag,
   canSave,
   saving,
+  cancelling,
   status,
   draft,
   onSave,
+  onCancel,
 }: {
   name: string;
   version: string;
@@ -77,12 +79,15 @@ export function SaveLibraryPanel({
   onRemoveTag: (tag: string) => void;
   canSave: boolean;
   saving: boolean;
+  cancelling: boolean;
   status: string | null;
   draft: StrategyDraft | null;
   onSave: () => void;
+  onCancel: () => void;
 }) {
+  const deploymentOnly = draft?.mode === "custom_python";
   return (
-    <Panel title="Lưu vào Strategy Library">
+    <Panel title={deploymentOnly ? "Review custom artifact" : "Lưu vào Strategy Library"}>
       <div className={styles.saveForm}>
         <Field label="Name">
           <TextInput value={name} onChange={(event) => onName(event.target.value)} />
@@ -117,9 +122,14 @@ export function SaveLibraryPanel({
           onClick={onSave}
         >
           <Icon name="save" aria-hidden="true" />
-          {saving ? "Đang lưu…" : status === "APPROVED" ? "Đã lưu Strategy" : "Lưu Strategy"}
+          {saving ? "Đang xác nhận…" : status === "APPROVED" ? (deploymentOnly ? "Chờ build/deploy" : "Đã lưu Strategy") : (deploymentOnly ? "Approve để build/deploy" : "Lưu Strategy")}
         </Button>
-        {status ? <span className={styles.saveStatus}>{status === "REVIEW_REQUIRED" ? "Đang chờ xác nhận fingerprint." : status === "APPROVED" ? "Đã approve và lưu vào thư viện." : status}</span> : null}
+        {status && !["REVIEW_REQUIRED", "APPROVED", "REJECTED", "FAILED", "CANCELLED"].includes(status) ? (
+          <Button variant="secondary" type="button" disabled={cancelling} onClick={onCancel}>
+            {cancelling ? "Đang hủy…" : "Hủy tạo draft"}
+          </Button>
+        ) : null}
+        {status ? <span className={styles.saveStatus}>{status === "REVIEW_REQUIRED" ? "Đang chờ xác nhận fingerprint." : status === "APPROVED" ? (deploymentOnly ? "Đã approve; artefact chờ pipeline build/deploy, không hot-load." : "Đã approve và lưu vào thư viện.") : status}</span> : null}
         {draft?.spec_hash && draft.artifact_hash && draft.sandbox_report_hash ? (
           <span className={styles.saveEvidence} aria-label="Fingerprint package đang review">
             <code title={draft.spec_hash}>Spec {shortFingerprint(draft.spec_hash)}</code>

@@ -202,8 +202,10 @@ class _Position:
     quantity: Decimal
     entry_time: datetime
     entry_price: Decimal
+    entry_mid_price: Decimal
     entry_fee: Decimal
     entry_slippage: Decimal
+    entry_spread: Decimal
     signal_t: datetime | None
     sl_price: Decimal | None = None
     tp_price: Decimal | None = None
@@ -320,22 +322,23 @@ class _PositionSimulator:
 
     def _fill(self, order: _PendingOrder, raw_price: Decimal) -> None:
         self.pending = None
-        effective, fee, slippage_cost = self._execution_costs(
+        effective, fee, slippage_cost, spread_cost, midpoint = self._execution_costs(
             raw_price, order.action, order.quantity
         )
         if order.kind == "entry":
-            self._open_position(order, effective, fee, slippage_cost)
+            self._open_position(order, effective, fee, slippage_cost, spread_cost, midpoint)
         else:
-            self._close_position(effective, fee, slippage_cost, EXIT_SIGNAL)
+            self._close_position(effective, fee, slippage_cost, spread_cost, midpoint, EXIT_SIGNAL)
         self._emit_order(order, "FILLED")
 
     def _execution_costs(
         self, raw_price: Decimal, action: str, quantity: Decimal
-    ) -> tuple[Decimal, Decimal, Decimal]:
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+        midpoint = (self.bid + self.ask) / 2
         adverse = raw_price * (self._snapshot.slippage_bps / _BPS)
         effective = raw_price + adverse if action == ACTION_BUY else raw_price - adverse
         fee = effective * quantity * (self._snapshot.fee_bps / _BPS)
-        return effective, fee, abs(adverse) * quantity
+        return effective, fee, abs(adverse) * quantity, abs(raw_price - midpoint) * quantity, midpoint
 
     def _open_position(
         self,
@@ -343,6 +346,8 @@ class _PositionSimulator:
         effective: Decimal,
         fee: Decimal,
         slippage_cost: Decimal,
+        spread_cost: Decimal,
+        midpoint: Decimal,
     ) -> None:
         if order.position_side == TRADE_SIDE_LONG:
             self.cash -= effective * order.quantity + fee
@@ -370,8 +375,10 @@ class _PositionSimulator:
             quantity=order.quantity,
             entry_time=self.quote_time or order.created_at,
             entry_price=effective,
+            entry_mid_price=midpoint,
             entry_fee=fee,
             entry_slippage=slippage_cost,
+            entry_spread=spread_cost,
             signal_t=order.signal_t,
             sl_price=sl_price,
             tp_price=tp_price,
@@ -385,6 +392,8 @@ class _PositionSimulator:
                 quantity=order.quantity,
                 fee_paid=fee,
                 slippage_cost=slippage_cost,
+                entry_notional=effective * order.quantity,
+                spread_cost=spread_cost,
                 signal_t=order.signal_t,
                 sl_price=sl_price,
                 tp_price=tp_price,
@@ -396,6 +405,8 @@ class _PositionSimulator:
         exit_price: Decimal,
         exit_fee: Decimal,
         exit_slippage: Decimal,
+        exit_spread: Decimal,
+        exit_midpoint: Decimal,
         exit_reason: str,
     ) -> None:
         position = self.position
@@ -405,10 +416,11 @@ class _PositionSimulator:
         else:
             self.cash -= exit_price * position.quantity + exit_fee
         direction = 1.0 if position.side == TRADE_SIDE_LONG else -1.0
+        gross_pnl = direction * (exit_midpoint - position.entry_mid_price) * position.quantity
         pnl_abs = (
-            direction * (exit_price - position.entry_price) * position.quantity
-            - position.entry_fee
-            - exit_fee
+            gross_pnl - position.entry_fee - exit_fee
+            - position.entry_slippage - exit_slippage
+            - position.entry_spread - exit_spread
         )
         pnl_pct = pnl_abs / (position.entry_price * position.quantity) * 100
         fact = self.trades[position.sequence_no - 1]
@@ -416,6 +428,10 @@ class _PositionSimulator:
         fact.exit_price = exit_price
         fact.fee_paid = position.entry_fee + exit_fee
         fact.slippage_cost = position.entry_slippage + exit_slippage
+        fact.exit_notional = exit_price * position.quantity
+        fact.spread_cost = position.entry_spread + exit_spread
+        fact.gross_pnl = gross_pnl
+        fact.net_pnl = pnl_abs
         fact.pnl_absolute = pnl_abs
         fact.pnl_percent = pnl_pct
         fact.exit_reason = exit_reason
@@ -447,10 +463,10 @@ class _PositionSimulator:
             self._emit_order(self.pending, "CANCELLED")
             self.pending = None
         action = ACTION_SELL if position.side == TRADE_SIDE_LONG else ACTION_BUY
-        effective, fee, slippage_cost = self._execution_costs(
+        effective, fee, slippage_cost, spread_cost, midpoint = self._execution_costs(
             exit_price, action, position.quantity
         )
-        self._close_position(effective, fee, slippage_cost, reason)
+        self._close_position(effective, fee, slippage_cost, spread_cost, midpoint, reason)
 
     # -- equity & settlement ----------------------------------------------------------
 
@@ -504,10 +520,10 @@ class _PositionSimulator:
             )
         exit_price = self.bid if self.position.side == TRADE_SIDE_LONG else self.ask
         action = ACTION_SELL if self.position.side == TRADE_SIDE_LONG else ACTION_BUY
-        effective, fee, slippage_cost = self._execution_costs(
+        effective, fee, slippage_cost, spread_cost, midpoint = self._execution_costs(
             exit_price, action, self.position.quantity
         )
-        self._close_position(effective, fee, slippage_cost, EXIT_END_OF_SAMPLE)
+        self._close_position(effective, fee, slippage_cost, spread_cost, midpoint, EXIT_END_OF_SAMPLE)
         # replace the pre-settlement mark at the final event time with the
         # realized-cash mark (keeps equity point timestamps unique)
         if points:

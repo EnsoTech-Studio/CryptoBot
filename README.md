@@ -45,8 +45,8 @@ PowerShell terminal without a `.` or `\` prefix.
 | `run db` | PostgreSQL only |
 | `run api` | Go API and its required research service |
 | `run research` / `run ai` | One native HTTP service |
-| `run worker` / `run event-worker` / `run news-worker` | One worker process |
-| `run workers` | All three worker processes |
+| `run worker` / `run event-worker` / `run news-worker` / `run agent-worker` | One worker process |
+| `run workers` | All four worker processes |
 | `run stop [service]` | All native services, or one named service/group |
 | `run status` | Native-process and PostgreSQL status |
 | `run logs api` | Follow the latest 100 API log lines |
@@ -71,6 +71,7 @@ Open `http://localhost:3000`, register a user, then use the workspace. The initi
 | `worker` | Canonical Python backtest executor; no public port |
 | `event-worker` | Evaluation/ranking outbox consumer; no public port |
 | `news-worker` | Allowlisted collection and sentiment retry loop; no public port |
+| `agent-worker` | Durable strategy-authoring orchestration; no public port |
 | `ai` | Native optional sentiment inference at `http://127.0.0.1:8000` |
 | `postgres` | The only development container; source of truth, queue, facts, and projections |
 

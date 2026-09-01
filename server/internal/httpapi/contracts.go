@@ -100,6 +100,10 @@ type strategyApprovalRequest struct {
 	IdempotencyKey    string `json:"idempotency_key,omitempty"`
 }
 
+type strategyDraftActionRequest struct {
+	Action string `json:"action"`
+}
+
 func (request *searchRunRequest) validate() error {
 	if request.GeneratorID == "" {
 		request.GeneratorID = "grid"

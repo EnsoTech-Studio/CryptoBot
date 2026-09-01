@@ -1032,14 +1032,16 @@ class PostgresJobDispatcher:
             """
             INSERT INTO trades (backtest_run_id, sequence_no, side, signal_t, entry_time,
                                 entry_price, exit_time, exit_price, quantity, fee_paid,
-                                slippage_cost, pnl_absolute, pnl_percent, exit_reason,
+                                slippage_cost, entry_notional, exit_notional, spread_cost,
+                                gross_pnl, net_pnl, pnl_absolute, pnl_percent, exit_reason,
                                 sl_price, tp_price)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             [
                 (
                     run_id, t.sequence_no, t.side, t.signal_t, t.entry_time, t.entry_price,
                     t.exit_time, t.exit_price, t.quantity, t.fee_paid, t.slippage_cost,
+                    t.entry_notional, t.exit_notional, t.spread_cost, t.gross_pnl, t.net_pnl,
                     t.pnl_absolute, t.pnl_percent, t.exit_reason, t.sl_price, t.tp_price,
                 )
                 for t in result.trades

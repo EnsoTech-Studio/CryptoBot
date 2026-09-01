@@ -20,9 +20,17 @@ var (
 )
 
 type Response struct {
-	StatusCode  int
-	ContentType string
-	Body        []byte
+	StatusCode         int
+	ContentType        string
+	ContentDisposition string
+	Body               []byte
+}
+
+type StreamResponse struct {
+	StatusCode         int
+	ContentType        string
+	ContentDisposition string
+	Body               io.ReadCloser
 }
 
 type Client struct {
@@ -75,6 +83,90 @@ func (c *Client) Call(
 	)
 }
 
+// StreamWithMetadata forwards a trusted service download without buffering its body.
+func (c *Client) StreamWithMetadata(
+	ctx context.Context,
+	method string,
+	path string,
+	query url.Values,
+	requestID string,
+	userID string,
+	userRole string,
+	correlationID string,
+) (StreamResponse, error) {
+	c.mu.Lock()
+	if time.Now().Before(c.openUntil) {
+		c.mu.Unlock()
+		return StreamResponse{}, ErrUnavailable
+	}
+	c.mu.Unlock()
+	target := *c.baseURL
+	target.Path = strings.TrimRight(c.baseURL.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	target.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
+	if err != nil {
+		return StreamResponse{}, fmt.Errorf("build research request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "text/csv")
+	if requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
+	}
+	if userID != "" {
+		req.Header.Set("X-User-ID", userID)
+	}
+	if userRole != "" {
+		req.Header.Set("X-User-Role", userRole)
+	}
+	if correlationID != "" {
+		req.Header.Set("X-Correlation-ID", correlationID)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		c.recordResult(err)
+		return StreamResponse{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout {
+		c.recordResult(ErrUnavailable)
+	} else {
+		c.recordResult(nil)
+	}
+	return StreamResponse{
+		StatusCode:         resp.StatusCode,
+		ContentType:        resp.Header.Get("Content-Type"),
+		ContentDisposition: resp.Header.Get("Content-Disposition"),
+		Body:               resp.Body,
+	}, nil
+}
+
+func (c *Client) ChartOverlayDelta(ctx context.Context, key string) (map[string]any, error) {
+	parts := strings.Split(key, "|")
+	if len(parts) != 5 || parts[0] == "" || parts[1] == "" || parts[2] == "" || parts[3] == "" || parts[4] == "" {
+		return nil, fmt.Errorf("invalid chart overlay subscription key")
+	}
+	response, err := c.Call(
+		ctx, http.MethodGet, "/api/v1/markets/chart-overlays/delta",
+		url.Values{
+			"provider":    {parts[0]},
+			"symbol":      {parts[1]},
+			"timeframe":   {parts[2]},
+			"strategy":    {parts[3]},
+			"config_hash": {parts[4]},
+		}, nil, "", "", "",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("chart overlay delta returned status %d", response.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body, &payload); err != nil {
+		return nil, fmt.Errorf("decode chart overlay delta: %w", err)
+	}
+	return payload, nil
+}
+
 func (c *Client) CallWithMetadata(
 	ctx context.Context,
 	method string,
@@ -102,6 +194,10 @@ func (c *Client) CallWithMetadata(
 			ctx, method, path, query, body, requestID, userID, userRole,
 			idempotencyKey, correlationID,
 		)
+	}
+	if err != nil && response.StatusCode != 0 {
+		c.recordResult(nil)
+		return response, nil
 	}
 	c.recordResult(err)
 	return response, err
@@ -173,9 +269,10 @@ func (c *Client) callOnce(
 		return Response{}, ErrResponseTooLarge
 	}
 	result := Response{
-		StatusCode:  resp.StatusCode,
-		ContentType: resp.Header.Get("Content-Type"),
-		Body:        responseBody,
+		StatusCode:         resp.StatusCode,
+		ContentType:        resp.Header.Get("Content-Type"),
+		ContentDisposition: resp.Header.Get("Content-Disposition"),
+		Body:               responseBody,
 	}
 	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable ||
 		resp.StatusCode == http.StatusGatewayTimeout {

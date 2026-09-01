@@ -43,10 +43,12 @@ import {
   REFERENCE_MARKET,
   appendMarketEvent,
   buildSubscriptionKey,
+  mergeOverlayDelta,
   marketKey,
   normalizeRealtimeFrame,
   upsertCandle,
   type RecentMarketEvent,
+  type RealtimeOverlaySeries,
 } from "../../lib/market";
 import {
   MOCK_MARKET_PAIRS,
@@ -80,6 +82,7 @@ export type Panel = {
 export type ResultBundle = {
   candles: Candle[];
   trades: Trade[];
+  nextTradeCursor: number | null;
   equity: EquityPoint[];
   series: OverlaySeries[];
   signalMarkers: OverlayMarker[];
@@ -546,6 +549,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setResult({
           candles: candles.candles ?? [],
           trades: trades.trades ?? [],
+          nextTradeCursor: trades.next_cursor,
           equity: equity.points ?? [],
           series: overlays.series ?? [],
           signalMarkers: overlays.signal_markers ?? [],
@@ -708,15 +712,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
           const sequence = frame.sequence;
           if (sequence !== undefined) {
-            if (sequence <= lastSequence) return;
-            if (lastSequence > 0 && sequence !== lastSequence + 1) {
+            if ((sequence < lastSequence && frame.type !== "overlay_delta") ||
+              (sequence === lastSequence && frame.type !== "overlay_delta")) return;
+            if (sequence > lastSequence && lastSequence > 0 && sequence !== lastSequence + 1) {
               lastSequence = 0;
               setPanel(index, { liveState: "connecting" });
               void loadPanel(index, {}, panelsRef.current[index]?.historyLimit ?? PANEL_BOOTSTRAP_CANDLE_LIMIT, selectedMarket);
               socket.close();
               return;
             }
-            lastSequence = sequence;
+            if (sequence > lastSequence) lastSequence = sequence;
           }
 
           if (frame.serverTime) {
@@ -763,6 +768,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               ...current.filter((item) => item.id !== frame.bbo!.id),
             ].slice(0, 50));
             setPanel(index, { liveState: "live" });
+          }
+          if (frame.type === "overlay_delta" && frame.overlay) {
+            setPanels((current) => current.map((currentPanel, panelIndex) => {
+              if (panelIndex !== index) return currentPanel;
+              const merged = mergeOverlayDelta({
+                series: currentPanel.series as unknown as RealtimeOverlaySeries[],
+                markers: currentPanel.markers,
+              }, frame.overlay!);
+              return {
+                ...currentPanel,
+                series: merged.series as unknown as OverlaySeries[],
+                markers: merged.markers,
+                liveState: "live",
+              };
+            }));
           }
           if (frame.type === "stream_status") {
             if (frame.reconnectNo !== undefined) {

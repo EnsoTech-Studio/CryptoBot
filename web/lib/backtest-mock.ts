@@ -1,4 +1,4 @@
-import type { Trade } from "./api";
+import type { Candle, ExecutionMarker, Trade } from "./api";
 
 /* Reference-exact ledger and KPI figures for ui-reference/backtest.jpg. Used
    only while no experiment has completed — BacktestScreen prefers the real
@@ -17,7 +17,7 @@ export const MOCK_KPIS = {
 
 /* Ten rows matching the reference table, then repeated with shifted timestamps
    so pagination has something to page through (178 total, as the KPI claims). */
-const SEED_ROWS: Array<Omit<Trade, "id" | "signal_t" | "quantity">> = [
+const SEED_ROWS: Array<Omit<Trade, "id" | "signal_t" | "quantity" | "symbol" | "quote_currency" | "entry_notional" | "exit_notional" | "spread_cost" | "gross_pnl" | "net_pnl">> = [
   { sequence_no: 1, side: "LONG", entry_time: "2025-05-01T06:15:00Z", exit_time: "2025-05-01T08:15:00Z", entry_price: 68_120.5, exit_price: 69_120.0, fee_paid: 0.05, slippage_cost: 0.03, sl_price: 67_620.0, tp_price: 69_120.0, pnl: 0.83, pnl_pct: 0.83, exit_reason: "take_profit" },
   { sequence_no: 2, side: "SHORT", entry_time: "2025-05-01T09:40:00Z", exit_time: "2025-05-01T11:40:00Z", entry_price: 69_450.2, exit_price: 68_430.1, fee_paid: 0.05, slippage_cost: 0.03, sl_price: 69_950.0, tp_price: 68_450.0, pnl: 0.87, pnl_pct: 0.87, exit_reason: "take_profit" },
   { sequence_no: 3, side: "LONG", entry_time: "2025-05-01T12:25:00Z", exit_time: "2025-05-01T14:25:00Z", entry_price: 68_600.1, exit_price: 67_980.0, fee_paid: 0.05, slippage_cost: 0.03, sl_price: 68_100.0, tp_price: 69_600.0, pnl: -0.67, pnl_pct: -0.67, exit_reason: "stop_loss" },
@@ -39,12 +39,35 @@ export const MOCK_TRADES: Trade[] = Array.from({ length: MOCK_KPIS.totalTrades }
     ...seed,
     id: `mock-trade-${index + 1}`,
     sequence_no: index + 1,
+    symbol: "BTCUSDT",
+    quote_currency: "USDT",
     quantity: 0.014,
+    entry_notional: seed.entry_price * 0.014,
+    exit_notional: seed.exit_price * 0.014,
+    spread_cost: 0,
+    gross_pnl: seed.pnl + seed.fee_paid + seed.slippage_cost,
+    net_pnl: seed.pnl,
     entry_time: new Date(Date.parse(seed.entry_time) + dayShift).toISOString(),
     exit_time: new Date(Date.parse(seed.exit_time) + dayShift).toISOString(),
     signal_t: new Date(Date.parse(seed.entry_time) + dayShift).toISOString(),
   };
 });
+
+/* Mock chart markers deliberately point at the same ledger rows as live
+   execution markers, so selection is demonstrable without a completed run. */
+export function mockExecutionMarkers(candles: Candle[]): ExecutionMarker[] {
+  const longEntry = candles[70];
+  const shortEntry = candles[116];
+  const exit = candles[166];
+  if (!longEntry || !shortEntry || !exit) return [];
+  return [
+    { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "long_entry", price: longEntry.close },
+    { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "stop_loss", price: 67_800 },
+    { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "short_entry", price: shortEntry.close },
+    { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "take_profit", price: 70_200 },
+    { sequence_no: 2, t: exit.open_time, overlay_type: "exit", price: exit.close, exit_reason: "take_profit" },
+  ];
+}
 
 export const PROFIT_FORMULA: Array<{ icon: "dollar" | "percent" | "sliders"; tone: "green" | "brand" | "amber"; label: string; caption: string; operator: "−" | "=" | null }> = [
   { icon: "dollar", tone: "green", label: "Gross Profit", caption: "Tổng lãi/lỗ trước phí", operator: "−" },

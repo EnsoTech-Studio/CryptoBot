@@ -464,7 +464,7 @@
   display: grid;
   min-width: 0;
   gap: var(--space-3);
-  padding: 0 var(--page-gutter) var(--space-5);
+  padding: 0 var(--page-gutter) 18px;
 }
 
 .content > * { min-width: 0; }

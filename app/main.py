@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import inspect
 import json
@@ -10,16 +11,17 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from io import StringIO
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from .config import Settings
-from .domain.common import hash_canonical_json
+from .domain.common import ERR_UNKNOWN_STRATEGY, DomainError, hash_canonical_json
 from .domain.strategy import Definition
 from .domain.strategy.plugins import default_registry
 from .errors import ApplicationError
@@ -36,6 +38,7 @@ from .schemas import (
     AcceptedRunOut,
     CandleOut,
     EquityPointOut,
+    ExecutionMarkerOut,
     ExperimentCreateIn,
     ExperimentSummaryOut,
     LeaderboardEntryOut,
@@ -52,13 +55,16 @@ from .schemas import (
     SentimentPredictIn,
     SentimentPredictOut,
     StrategyOut,
+    StrategyDraftActionIn,
     StrategyApprovalIn,
     StrategyDraftCreateIn,
     StrategyDraftOut,
     TradeOut,
+    TradePageOut,
 )
 from .services.news import NewsService
 from .services.authoring import StrategyAuthoringService
+from .services.chart_overlays import build_chart_overlay_delta, build_chart_overlays
 
 _registry = default_registry()
 
@@ -88,6 +94,10 @@ def _definition_payload(definition: Definition) -> dict[str, Any]:
 
 
 _strategy_payloads = [_definition_payload(item) for item in _registry.list()]
+_builtin_warmups = {
+    (item["strategy_id"], item["version"]): item["warm_up_candles"]
+    for item in _strategy_payloads
+}
 
 
 @asynccontextmanager
@@ -308,16 +318,96 @@ def metrics(request: Request, _auth: Internal) -> str:
 @app.get("/api/v1/strategies", response_model=dict[str, list[StrategyOut]])
 def list_strategies(_auth: Internal, request: Request) -> dict[str, list[dict[str, Any]]]:
     try:
-        return {"strategies": _store(request).list_strategies()}
+        strategies = _store(request).list_strategies()
+        return {
+            "strategies": [
+                {
+                    **strategy,
+                    "warm_up_candles": _builtin_warmups.get(
+                        (strategy["strategy_id"], strategy["version"]),
+                        strategy["warm_up_candles"],
+                    ),
+                }
+                for strategy in strategies
+            ]
+        }
     except Exception:
         return {"strategies": _strategy_payloads}
+
+
+@app.get("/api/v1/markets/chart-overlays")
+def chart_overlays(
+    _auth: Internal,
+    request: Request,
+    provider: Annotated[str, Query(min_length=1)] = "binance_usdm",
+    symbol: Annotated[str, Query(min_length=1)] = "ETHUSDT",
+    timeframe: Annotated[str, Query(min_length=1)] = "5m",
+    strategy: Annotated[str, Query(min_length=3)] = "ma_cross@v1",
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 1_000,
+) -> dict[str, Any]:
+    try:
+        strategy_id, version = strategy.rsplit("@", 1)
+        if not strategy_id or not version:
+            raise ValueError
+    except ValueError as exc:
+        raise ApplicationError("invalid_strategy", "strategy must be strategy_id@version", 422, "strategy") from exc
+
+    store = _store(request)
+    try:
+        payload = build_chart_overlays(
+            store.list_live_candles(provider, symbol, timeframe, limit), strategy_id, version
+        )
+    except DomainError as exc:
+        raise ApplicationError(
+            "unknown_strategy_version" if exc.code == ERR_UNKNOWN_STRATEGY else "invalid_strategy",
+            "strategy is not available" if exc.code == ERR_UNKNOWN_STRATEGY else exc.message,
+            404 if exc.code == ERR_UNKNOWN_STRATEGY else 422,
+            "strategy",
+        ) from exc
+    checkpoint = store.stream_checkpoint(provider, symbol, timeframe)
+    return {
+        **payload,
+        "seq": checkpoint["last_source_sequence"] or 0,
+        "last_closed_at": checkpoint["last_closed_at"],
+        "is_stale": checkpoint["is_stale"],
+    }
+
+
+@app.get("/api/v1/markets/chart-overlays/delta")
+def chart_overlay_delta(
+    _auth: Internal,
+    request: Request,
+    provider: Annotated[str, Query(min_length=1)] = "binance_usdm",
+    symbol: Annotated[str, Query(min_length=1)] = "ETHUSDT",
+    timeframe: Annotated[str, Query(min_length=1)] = "5m",
+    strategy: Annotated[str, Query(min_length=3)] = "ma_cross@v1",
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 1_000,
+) -> dict[str, Any]:
+    try:
+        strategy_id, version = strategy.rsplit("@", 1)
+        if not strategy_id or not version:
+            raise ValueError
+    except ValueError as exc:
+        raise ApplicationError("invalid_strategy", "strategy must be strategy_id@version", 422, "strategy") from exc
+
+    try:
+        return build_chart_overlay_delta(
+            _store(request).list_live_candles(provider, symbol, timeframe, limit), strategy_id, version
+        )
+    except DomainError as exc:
+        raise ApplicationError(
+            "unknown_strategy_version" if exc.code == ERR_UNKNOWN_STRATEGY else "invalid_strategy",
+            "strategy is not available" if exc.code == ERR_UNKNOWN_STRATEGY else exc.message,
+            404 if exc.code == ERR_UNKNOWN_STRATEGY else 422,
+            "strategy",
+        ) from exc
 
 
 @app.post("/api/v1/strategy-drafts", response_model=StrategyDraftOut, status_code=202)
 def create_strategy_draft(
     body: StrategyDraftCreateIn, _auth: Internal, request: Request
 ) -> JSONResponse:
-    result = _authoring_service(request).create(body, request.state.request_id)
+    result = _authoring_service(request).submit(body, request.state.request_id)
     return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=jsonable_encoder(result))
 
 
@@ -343,6 +433,14 @@ def approve_strategy_draft(
     draft_id: UUID, body: StrategyApprovalIn, _auth: Internal, request: Request
 ) -> dict[str, Any]:
     return _authoring_service(request).approve(draft_id, body)
+
+
+@app.post("/api/v1/strategy-drafts/{draft_id}/actions", response_model=StrategyDraftOut)
+def act_on_strategy_draft(
+    draft_id: UUID, body: StrategyDraftActionIn, _auth: Internal, owner_id: OwnerID, request: Request
+) -> dict[str, Any]:
+    assert body.action == "cancel"
+    return _store(request).cancel_strategy_draft(draft_id, owner_id)
 
 
 @app.post("/api/v1/experiments", response_model=AcceptedRunOut)
@@ -372,13 +470,73 @@ def get_experiment_candles(
     return {"candles": store.list_experiment_candles(experiment_id)}
 
 
-@app.get("/api/v1/experiments/{experiment_id}/trades", response_model=dict[str, list[TradeOut]])
+@app.get("/api/v1/experiments/{experiment_id}/trades", response_model=TradePageOut)
 def get_experiment_trades(
-    experiment_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
+    experiment_id: UUID,
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
+    after_sequence: Annotated[int | None, Query(ge=0)] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    format: Annotated[str | None, Query(pattern="^(csv)?$")] = None,
 ) -> dict[str, Any]:
     store = _store(request)
-    store.get_experiment(experiment_id, owner_id)
-    return {"trades": store.list_experiment_trades(experiment_id)}
+    experiment = store.get_experiment(experiment_id, owner_id)
+    if format == "csv":
+        return StreamingResponse(
+            _trade_csv(store, experiment_id, experiment),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="experiment-{experiment_id}-trades.csv"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    return store.list_experiment_trade_page(experiment_id, after_sequence=after_sequence, limit=limit)
+
+
+def _trade_csv(store: Store, experiment_id: UUID, experiment: dict[str, Any]):
+    execution = experiment["execution"]
+    provenance = " ".join(
+        f"{key}={value}"
+        for key, value in {
+            "experiment": experiment_id,
+            "candidate_hash": experiment["candidate_hash"],
+            "dataset": experiment["dataset_version"],
+            "initial_equity": execution["initial_equity"],
+            "fixed_notional": execution["fixed_notional"],
+            "leverage": execution["leverage"],
+            "fill_policy": execution["fill_policy"],
+            "position_policy": execution["position_policy"],
+            "open_position_at_end": execution["open_position_at_end"],
+            "fee_bps": execution["fee_bps"],
+            "slippage_bps": execution["slippage_bps"],
+            "risk_policy": json.dumps({key: execution.get(key) for key in ("stop_loss_pct", "take_profit_pct", "intrabar_priority")}, separators=(",", ":")),
+        }.items()
+    )
+    yield f"# {provenance}\n"
+    columns = [
+        "sequence_no", "symbol", "quote_currency", "side", "signal_t", "entry_time", "entry_price", "quantity",
+        "entry_notional", "fee_paid", "spread_cost", "slippage_cost", "exit_time", "exit_price", "exit_notional",
+        "gross_pnl", "net_pnl", "pnl_absolute", "pnl_percent", "exit_reason", "sl_price", "tp_price",
+    ]
+    output = StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(columns)
+    yield output.getvalue()
+    after_sequence: int | None = None
+    while True:
+        page = store.list_experiment_trade_page(experiment_id, after_sequence=after_sequence, limit=200)
+        for trade in page["trades"]:
+            output.seek(0)
+            output.truncate(0)
+            writer.writerow([
+                value.isoformat() if isinstance(value, datetime) else value
+                for value in (trade.get(column) for column in columns)
+            ])
+            yield output.getvalue()
+        after_sequence = page["next_cursor"]
+        if after_sequence is None:
+            return
 
 
 @app.get("/api/v1/experiments/{experiment_id}/equity", response_model=dict[str, list[EquityPointOut]])
@@ -390,13 +548,37 @@ def get_experiment_equity(
     return {"equity": store.list_experiment_equity(experiment_id)}
 
 
-@app.get("/api/v1/experiments/{experiment_id}/overlays", response_model=dict[str, list[OverlayPointOut]])
+@app.get("/api/v1/experiments/{experiment_id}/overlays")
 def get_experiment_overlays(
     experiment_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
 ) -> dict[str, Any]:
     store = _store(request)
     store.get_experiment(experiment_id, owner_id)
-    return {"overlays": store.list_experiment_overlays(experiment_id)}
+    execution_markers = []
+    for trade in store.list_experiment_execution_markers(experiment_id):
+        entry_type = "long_entry" if str(trade["side"]).upper().startswith("LONG") else "short_entry"
+        execution_markers.append({
+            "sequence_no": trade["sequence_no"], "t": trade["entry_time"],
+            "overlay_type": entry_type, "price": trade["entry_price"],
+        })
+        for overlay_type, price in (("stop_loss", trade["sl_price"]), ("take_profit", trade["tp_price"])):
+            if price is not None:
+                execution_markers.append({
+                    "sequence_no": trade["sequence_no"], "t": trade["entry_time"],
+                    "line_until": trade["exit_time"], "overlay_type": overlay_type, "price": price,
+                })
+        if trade["exit_time"] is not None and trade["exit_price"] is not None:
+            execution_markers.append({
+                "sequence_no": trade["sequence_no"], "t": trade["exit_time"],
+                "overlay_type": "exit", "price": trade["exit_price"], "exit_reason": trade["exit_reason"],
+            })
+    return {
+        "overlays": store.list_experiment_overlays(experiment_id),
+        "execution_markers": [
+            ExecutionMarkerOut.model_validate(marker).model_dump(mode="json", exclude_none=True)
+            for marker in execution_markers
+        ],
+    }
 
 
 @app.post("/api/v1/search-runs", response_model=SearchRunOut)

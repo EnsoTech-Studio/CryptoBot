@@ -1,7 +1,7 @@
 "use client";
 
 import { ASSUMPTIONS, MOCK_KPIS, PROFIT_FORMULA } from "../../../lib/backtest-mock";
-import type { DerivedKpis } from "../../../lib/backtest";
+import { resolvedTradeKpis, type DerivedKpis } from "../../../lib/backtest";
 import type { EquityPoint, Metrics } from "../../../lib/api";
 import { Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
@@ -22,10 +22,11 @@ export function BacktestMetrics({
   isMock: boolean;
 }) {
   const winrate = isMock ? MOCK_KPIS.winratePct : metrics?.win_rate_pct ?? 0;
-  const wins = isMock ? MOCK_KPIS.wins : kpis.wins;
-  const losses = isMock ? MOCK_KPIS.losses : kpis.losses;
+  const aggregateKpis = resolvedTradeKpis(metrics, kpis);
+  const wins = isMock ? MOCK_KPIS.wins : aggregateKpis.wins;
+  const losses = isMock ? MOCK_KPIS.losses : aggregateKpis.losses;
   const totalTrades = isMock ? MOCK_KPIS.totalTrades : metrics?.trade_count ?? kpis.settled;
-  const profitAbs = isMock ? MOCK_KPIS.totalProfitUsd : kpis.totalProfitAbs;
+  const profitAbs = isMock ? MOCK_KPIS.totalProfitUsd : aggregateKpis.netProfit;
   const profitPct = isMock ? MOCK_KPIS.totalProfitPct : metrics?.total_return_pct ?? 0;
   const drawdownPct = isMock ? MOCK_KPIS.maxDrawdownPct : metrics?.max_drawdown_pct ?? 0;
 
