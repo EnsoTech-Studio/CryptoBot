@@ -30,18 +30,25 @@ import {
   type Prediction,
   type SearchRun,
   type Strategy,
+  type StrategyDraft,
+  type StrategyExecution,
   type Trade,
   type User,
 } from "../../lib/api";
-import type { DiscoveryDraft } from "../../lib/discovery";
+import { normalizeWeights, type DiscoveryDraft } from "../../lib/discovery";
 import {
   DEFAULT_MARKET,
+  DEFAULT_PANEL_TIMEFRAMES,
+  PANEL_BOOTSTRAP_CANDLE_LIMIT,
+  REFERENCE_MARKET,
   appendMarketEvent,
   buildSubscriptionKey,
+  mergeOverlayDelta,
   marketKey,
   normalizeRealtimeFrame,
   upsertCandle,
   type RecentMarketEvent,
+  type RealtimeOverlaySeries,
 } from "../../lib/market";
 import {
   MOCK_MARKET_PAIRS,
@@ -75,6 +82,7 @@ export type Panel = {
 export type ResultBundle = {
   candles: Candle[];
   trades: Trade[];
+  nextTradeCursor: number | null;
   equity: EquityPoint[];
   series: OverlaySeries[];
   signalMarkers: OverlayMarker[];
@@ -88,9 +96,9 @@ export type InspectorTab = "metrics" | "trades" | "provenance";
 export type LoadState = "idle" | "loading" | "ready" | "unavailable";
 
 const requiredTimeframes = ["1m", "5m", "15m", "1h", "4h", "1d"];
-const defaultPanelTimeframes = ["5m", "15m", "1h", "4h"];
-const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true";
-const panelSeed = defaultPanelTimeframes.map((timeframe, index) => ({
+const referenceModeEnabled = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true";
+const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true" || referenceModeEnabled;
+const panelSeed = DEFAULT_PANEL_TIMEFRAMES.map((timeframe, index) => ({
   id: `chart-${index + 1}`,
   title: `Market view ${index + 1}`,
   timeframe,
@@ -106,6 +114,7 @@ const compositeChildren = [
 type WorkspaceValue = {
   user: User | null;
   strategies: Strategy[];
+  strategyDrafts: StrategyDraft[];
   panels: Panel[];
   focusIndex: number;
   setFocusIndex: (index: number) => void;
@@ -163,9 +172,10 @@ type WorkspaceValue = {
   setInspectorTab: (tab: InspectorTab) => void;
   openInspector: (tab: InspectorTab) => void;
   closeInspector: () => void;
+  register: (email: string, password: string, displayName: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  runBacktest: (children?: Array<{ strategy_id: string; weight: number }>, execution?: ExecutionSettings, timeframe?: string) => Promise<void>;
+  runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection) => Promise<void>;
   startSearch: (draft: DiscoveryDraft) => Promise<void>;
   searchAction: (action: "pause" | "resume" | "cancel") => Promise<void>;
   refreshStaticData: () => Promise<void>;
@@ -182,38 +192,40 @@ export function useWorkspace(): WorkspaceValue {
 }
 
 function createPanels(timeframes = requiredTimeframes, realtimeEnabled = true, seedMock = false): Panel[] {
+  const panelMarket = seedMock ? REFERENCE_MARKET : DEFAULT_MARKET;
   const available = timeframes.length > 0 ? timeframes : requiredTimeframes;
-  const defaults = defaultPanelTimeframes.filter((timeframe) => available.includes(timeframe));
+  const defaults = DEFAULT_PANEL_TIMEFRAMES.filter((timeframe) => available.includes(timeframe));
   const fallbacks = available.filter((timeframe) => !defaults.includes(timeframe));
   const chartTimeframes = [...defaults, ...fallbacks].slice(0, panelSeed.length);
   return panelSeed.map((seed, index) => ({
     ...seed,
     timeframe: chartTimeframes[index] ?? seed.timeframe,
-    ...(seedMock ? createMockPanelData(DEFAULT_MARKET, chartTimeframes[index] ?? seed.timeframe, 180) : { candles: [], series: [], markers: [] }),
+    ...(seedMock ? createMockPanelData(panelMarket, chartTimeframes[index] ?? seed.timeframe, PANEL_BOOTSTRAP_CANDLE_LIMIT) : { candles: [], series: [], markers: [] }),
     liveState: seedMock ? (realtimeEnabled ? "live" : "paused") : realtimeEnabled ? "connecting" : "paused",
     loaded: seedMock,
     historyLoading: false,
-    historyLimit: 180,
+    historyLimit: PANEL_BOOTSTRAP_CANDLE_LIMIT,
   }));
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [panels, setPanels] = useState<Panel[]>(() => createPanels(requiredTimeframes, true, false));
+  const [strategyDrafts, setStrategyDrafts] = useState<StrategyDraft[]>([]);
+  const [panels, setPanels] = useState<Panel[]>(() => createPanels(requiredTimeframes, true, referenceModeEnabled));
   const [focusIndex, setFocusIndex] = useState(0);
-  const [marketPairs, setMarketPairs] = useState<MarketPair[]>([]);
-  const [marketPairsState, setMarketPairsState] = useState<LoadState>("loading");
-  const [dataMode, setDataMode] = useState<DataMode>("live");
-  const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(DEFAULT_MARKET);
+  const [marketPairs, setMarketPairs] = useState<MarketPair[]>(referenceModeEnabled ? MOCK_MARKET_PAIRS : []);
+  const [marketPairsState, setMarketPairsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
+  const [dataMode, setDataMode] = useState<DataMode>(referenceModeEnabled ? "mock" : "live");
+  const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(referenceModeEnabled ? REFERENCE_MARKET : DEFAULT_MARKET);
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
-  const [recentTicks, setRecentTicks] = useState<DisplayTick[]>([]);
-  const [lastFrameAt, setLastFrameAt] = useState<string | undefined>();
-  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [recentTicks, setRecentTicks] = useState<DisplayTick[]>(() => referenceModeEnabled ? createMockTicks(REFERENCE_MARKET.symbol) : []);
+  const [lastFrameAt, setLastFrameAt] = useState<string | undefined>(() => referenceModeEnabled ? "2025-04-29T10:45:38.123Z" : undefined);
+  const [latencyMs, setLatencyMs] = useState<number | null>(referenceModeEnabled ? 102 : null);
   const [socketReconnectCount, setSocketReconnectCount] = useState(0);
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
-  const [marketStatusState, setMarketStatusState] = useState<LoadState>("loading");
+  const [marketStatusState, setMarketStatusState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [activeExperimentId, setActiveExperimentId] = useState<string | null>(null);
   const [experiment, setExperiment] = useState<ExperimentSummary | null>(null);
   const [result, setResult] = useState<ResultBundle | null>(null);
@@ -221,9 +233,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [search, setSearch] = useState<SearchRun | null>(null);
   const [submittedDraft, setSubmittedDraft] = useState<DiscoveryDraft | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [leaderboardState, setLeaderboardState] = useState<LoadState>("loading");
+  const [leaderboardState, setLeaderboardState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [news, setNews] = useState<NewsItem[]>([]);
-  const [newsState, setNewsState] = useState<LoadState>("loading");
+  const [newsState, setNewsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [coverage, setCoverage] = useState<WorkspaceValue["coverage"]>(null);
   const [newsDistribution, setNewsDistribution] = useState<WorkspaceValue["newsDistribution"]>(null);
   const [newsAverageScore, setNewsAverageScore] = useState<number | null>(null);
@@ -307,6 +319,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setPanels((current) => current.map((panel, panelIndex) => panelIndex === index ? { ...panel, ...patch } : panel));
   }
 
+  function resolveStrategyExecutions(children: StrategyExecution[]): StrategyExecution[] {
+    return children.map((child) => {
+      const definition = strategies.find((strategy) => strategy.strategy_id === child.strategy_id);
+      return {
+        ...child,
+        strategy_version: child.strategy_version ?? definition?.version ?? "v1",
+        parameters: child.parameters ?? definition?.default_params ?? {},
+      };
+    });
+  }
+
   function activateMockMode(market: MarketSelection = selectedMarketRef.current) {
     const catalogHasMarket = MOCK_MARKET_PAIRS.some((pair) => marketKey(pair) === marketKey(market));
     const mockPairs = catalogHasMarket ? MOCK_MARKET_PAIRS : [{
@@ -339,13 +362,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   async function loadPanel(
     index: number,
     override: Partial<Pick<Panel, "timeframe" | "strategy">> = {},
-    limit = 180,
+    limit = PANEL_BOOTSTRAP_CANDLE_LIMIT,
     explicitMarket: MarketSelection = selectedMarketRef.current,
   ) {
     const panel = { ...(panelsRef.current[index] ?? panelSeed[index]), ...override };
     const requestId = ++panelRequestIds.current[index];
     const requestMarketKey = marketKey(explicitMarket);
-    const isHistoryRequest = limit > 180;
+    const isHistoryRequest = limit > PANEL_BOOTSTRAP_CANDLE_LIMIT;
     if (isHistoryRequest) setPanel(index, { historyLoading: true, error: undefined });
 
     if (dataModeRef.current === "mock") {
@@ -433,7 +456,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           markers: [],
           liveState: realtimeEnabled ? "connecting" : "paused",
           loaded: false,
-          historyLimit: 180,
+          historyLimit: PANEL_BOOTSTRAP_CANDLE_LIMIT,
           error: undefined,
         });
         window.setTimeout(() => void loadPanel(index, { timeframe }), 0);
@@ -467,8 +490,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (candidate) setSelectedMarket({ provider: candidate.provider, symbol: candidate.symbol });
     } catch (error) {
       if (marketMockEnabled) {
-        activateMockMode(DEFAULT_MARKET);
-        setSelectedMarket(DEFAULT_MARKET);
+        activateMockMode(REFERENCE_MARKET);
+        setSelectedMarket(REFERENCE_MARKET);
         return;
       }
       dataModeRef.current = "live";
@@ -482,11 +505,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
 
   async function refreshStaticData() {
-    const [rank, newsPayload, aggregate] = await Promise.all([
+    if (referenceModeEnabled) {
+      setStrategyDrafts([]);
+      setLeaderboard([]);
+      setLeaderboardState("ready");
+      setNews([]);
+      setNewsState("ready");
+      setCoverage(null);
+      setNewsAverageScore(null);
+      setNewsDistribution(null);
+      return;
+    }
+    const [strategyPayload, draftPayload, rank, newsPayload, aggregate] = await Promise.all([
+      api.strategies().catch(() => null),
+      api.strategyDrafts().catch(() => null),
       api.leaderboard().catch(() => null),
       api.news().catch(() => null),
       api.newsAggregate().catch(() => null),
     ]);
+    setStrategies(strategyPayload?.strategies ?? []);
+    setStrategyDrafts(draftPayload?.drafts ?? []);
     setLeaderboard(rank?.entries ?? []);
     setLeaderboardState(rank ? "ready" : "unavailable");
     setNews(newsPayload?.items ?? []);
@@ -511,6 +549,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setResult({
           candles: candles.candles ?? [],
           trades: trades.trades ?? [],
+          nextTradeCursor: trades.next_cursor,
           equity: equity.points ?? [],
           series: overlays.series ?? [],
           signalMarkers: overlays.signal_markers ?? [],
@@ -544,12 +583,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     api.me()
-      .then((payload) => setUser(payload.user))
+      .then((payload) => {
+        setUser(payload.user);
+        void refreshStaticData();
+      })
       .catch(() => report("Sign in to run experiments and search loops.", "warn"));
     api.strategies().then((payload) => setStrategies(payload.strategies ?? [])).catch(() => undefined);
     const bootstrapTimer = window.setTimeout(() => {
       void refreshStaticData();
-      void retryMarketPairs();
+      if (referenceModeEnabled) activateMockMode(REFERENCE_MARKET);
+      else void retryMarketPairs();
     }, 0);
     return () => window.clearTimeout(bootstrapTimer);
     // Bootstrap once; retries are user-driven after the initial request.
@@ -582,7 +625,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       nextPanels.forEach((panel, index) => void loadPanel(index, {
         timeframe: panel.timeframe,
         strategy: panel.strategy,
-      }, 180, selectedMarket));
+      }, PANEL_BOOTSTRAP_CANDLE_LIMIT, selectedMarket));
     });
     return () => window.cancelAnimationFrame(resetFrame);
     // Pair or supported timeframe changes require a clean, guarded reload.
@@ -662,22 +705,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           if (frame.type === "resync_required") {
             lastSequence = 0;
             setPanel(index, { liveState: "connecting" });
-            void loadPanel(index, {}, panelsRef.current[index]?.historyLimit ?? 180, selectedMarket);
+            void loadPanel(index, {}, panelsRef.current[index]?.historyLimit ?? PANEL_BOOTSTRAP_CANDLE_LIMIT, selectedMarket);
             socket.close();
             return;
           }
 
           const sequence = frame.sequence;
           if (sequence !== undefined) {
-            if (sequence <= lastSequence) return;
-            if (lastSequence > 0 && sequence !== lastSequence + 1) {
+            if ((sequence < lastSequence && frame.type !== "overlay_delta") ||
+              (sequence === lastSequence && frame.type !== "overlay_delta")) return;
+            if (sequence > lastSequence && lastSequence > 0 && sequence !== lastSequence + 1) {
               lastSequence = 0;
               setPanel(index, { liveState: "connecting" });
-              void loadPanel(index, {}, panelsRef.current[index]?.historyLimit ?? 180, selectedMarket);
+              void loadPanel(index, {}, panelsRef.current[index]?.historyLimit ?? PANEL_BOOTSTRAP_CANDLE_LIMIT, selectedMarket);
               socket.close();
               return;
             }
-            lastSequence = sequence;
+            if (sequence > lastSequence) lastSequence = sequence;
           }
 
           if (frame.serverTime) {
@@ -724,6 +768,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               ...current.filter((item) => item.id !== frame.bbo!.id),
             ].slice(0, 50));
             setPanel(index, { liveState: "live" });
+          }
+          if (frame.type === "overlay_delta" && frame.overlay) {
+            setPanels((current) => current.map((currentPanel, panelIndex) => {
+              if (panelIndex !== index) return currentPanel;
+              const merged = mergeOverlayDelta({
+                series: currentPanel.series as unknown as RealtimeOverlaySeries[],
+                markers: currentPanel.markers,
+              }, frame.overlay!);
+              return {
+                ...currentPanel,
+                series: merged.series as unknown as OverlaySeries[],
+                markers: merged.markers,
+                liveState: "live",
+              };
+            }));
           }
           if (frame.type === "stream_status") {
             if (frame.reconnectNo !== undefined) {
@@ -835,6 +894,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const value: WorkspaceValue = {
     user,
     strategies,
+    strategyDrafts,
     panels,
     focusIndex,
     setFocusIndex,
@@ -873,7 +933,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     marketStatus,
     marketStatusState,
     loadHistory(index) {
-      return loadPanel(index, {}, 1_000);
+      return loadPanel(index, {}, PANEL_BOOTSTRAP_CANDLE_LIMIT);
     },
     experiment,
     result,
@@ -898,10 +958,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setInspectorTab,
     openInspector,
     closeInspector: () => setInspectorOpen(false),
+    async register(email, password, displayName) {
+      try {
+        const payload = await api.register(email, password, displayName);
+        setUser(payload.user);
+        await refreshStaticData();
+        report(`Registered as ${payload.user.email}`);
+      } catch (error) {
+        report(messageFromError(error), "error");
+      }
+    },
     async login(email, password) {
       try {
         const payload = await api.login(email, password);
         setUser(payload.user);
+        await refreshStaticData();
         report(`Signed in as ${payload.user.email}`);
       } catch (error) {
         report(messageFromError(error), "error");
@@ -911,18 +982,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         await api.logout();
         setUser(null);
+        setStrategyDrafts([]);
         report("Signed out.");
       } catch (error) {
         report(messageFromError(error), "error");
       }
     },
-    async runBacktest(children = compositeChildren, execution = DEFAULT_EXECUTION, timeframe) {
+    async runBacktest(children = compositeChildren, execution = DEFAULT_EXECUTION, timeframe, range, market) {
       try {
         const accepted = await api.createExperiment(
-          children,
-          selectedMarket,
+          resolveStrategyExecutions(children),
+          market ?? selectedMarket,
           timeframe ?? panels[0]?.timeframe ?? "5m",
           execution,
+          range,
         );
         setActiveExperimentId(accepted.experiment_id);
         setResult(null);
@@ -933,7 +1006,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
     async startSearch(draft) {
       try {
-        const accepted = await api.startSearch(draft);
+        const weights = normalizeWeights(draft.selectedStrategyIds, draft.weights);
+        const accepted = await api.startSearch(draft, resolveStrategyExecutions(
+          draft.selectedStrategyIds.map((strategy_id) => ({ strategy_id, weight: weights[strategy_id] })),
+        ));
         setSearchId(accepted.search_run_id);
         setSubmittedDraft(draft);
         report(`Search run started: ${accepted.search_run_id.slice(0, 8)}`);

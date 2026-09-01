@@ -23,6 +23,7 @@ import styles from "./discovery.module.css";
 export function DiscoveryScreen() {
   const {
     strategies,
+    dataMode,
     selectedMarket,
     panels,
     leaderboard,
@@ -46,7 +47,7 @@ export function DiscoveryScreen() {
       method: "random_search",
     };
   });
-  const availableStrategies = strategies.length > 0 ? strategies : STRATEGIES_MOCK;
+  const availableStrategies = dataMode === "mock" ? STRATEGIES_MOCK : strategies;
   const registryIds = useMemo(
     () => new Set(availableStrategies.filter((item) => !item.is_composite).map((item) => item.strategy_id)),
     [availableStrategies],
@@ -56,7 +57,11 @@ export function DiscoveryScreen() {
   /* The market and timeframe are owned by the Realtime screen, so the draft
      mirrors them rather than keeping its own stale copy. */
   const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe };
-  const issues = draftIssues(activeDraft);
+  const missingStrategies = activeDraft.selectedStrategyIds.filter((id) => !registryIds.has(id));
+  const issues = [
+    ...draftIssues(activeDraft),
+    ...(missingStrategies.length > 0 ? ["Một hoặc nhiều strategy đã chọn không còn trong registry."] : []),
+  ];
   const canSubmit = issues.length === 0;
 
   function toggleStrategy(strategyId: string) {
@@ -96,6 +101,8 @@ export function DiscoveryScreen() {
 
       <div className={styles.workspace}>
         <StrategyCatalog
+          strategies={availableStrategies}
+          referenceMode={dataMode === "mock"}
           selectedIds={activeDraft.selectedStrategyIds}
           registryIds={registryIds}
           onToggle={toggleStrategy}
@@ -112,6 +119,7 @@ export function DiscoveryScreen() {
             draft={activeDraft}
             strategies={availableStrategies}
             markers={focusMarkers}
+            referenceMode={dataMode === "mock"}
             onWeight={setWeight}
             onToggle={toggleStrategy}
           />
@@ -126,6 +134,7 @@ export function DiscoveryScreen() {
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
             entries={leaderboard}
+            referenceMode={dataMode === "mock"}
             onRefresh={() => void refreshStaticData()}
             onTrace={(id) => void loadProvenance(id)}
           />
@@ -139,6 +148,7 @@ export function DiscoveryScreen() {
               run={search}
               draft={activeDraft}
               submittedDraft={submittedDraft}
+              referenceMode={dataMode === "mock"}
               onAction={(action) => void searchAction(action)}
               onStart={() => void startSearch(activeDraft)}
               canStart={canSubmit}

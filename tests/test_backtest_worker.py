@@ -290,6 +290,14 @@ def test_quantity_is_notional_over_limit_and_fee_both_sides() -> None:
     assert trade.fee_paid == pytest.approx(fee_in + fee_out)
     assert trade.pnl_absolute == pytest.approx((100.5 - 100.0) * trade.quantity - fee_in - fee_out)
     assert trade.slippage_cost == 0.0  # fixture slippage_bps = 0
+    assert trade.entry_notional == pytest.approx(100.0 * trade.quantity)
+    assert trade.exit_notional == pytest.approx(100.5 * trade.quantity)
+    assert trade.spread_cost == pytest.approx((0.5 + 0.25) * trade.quantity)
+    assert trade.gross_pnl == pytest.approx((100.75 - 99.5) * trade.quantity)
+    assert trade.net_pnl == pytest.approx(
+        trade.gross_pnl - trade.fee_paid - trade.spread_cost - trade.slippage_cost
+    )
+    assert trade.net_pnl == pytest.approx(trade.pnl_absolute)
     # conservation: equity change equals summed trade PnL once flat
     final_equity = result.equity_points[-1].equity
     assert final_equity - 100.0 == pytest.approx(trade.pnl_absolute)

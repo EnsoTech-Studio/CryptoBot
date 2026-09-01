@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { draftIssues, normalizeWeights, createDraft } from "./discovery";
-import { backtestIssues, createBacktestDraft, deriveKpis, draftToExecution } from "./backtest";
-import type { Trade } from "./api";
+import { backtestIssues, createBacktestDraft, defaultBacktestStrategyId, defaultBacktestTimeframe, deriveKpis, draftToExecution, isExecutionMarkerSelected, needsMoreTradesForPage, resolvedTradeKpis } from "./backtest";
+import { mockExecutionMarkers } from "./backtest-mock";
+import { createMockPanelData } from "./realtime-mock";
+import type { Strategy, Trade } from "./api";
 
 const MARKET = { provider: "binance_usdm", symbol: "BTCUSDT" };
 
@@ -43,6 +45,17 @@ test("draftToExecution converts a percentage fee into integer basis points", () 
   assert.ok(Number.isInteger(execution.feeBps));
 });
 
+test("backtest draft defaults to a strategy that exists in the supplied registry", () => {
+  assert.equal(defaultBacktestStrategyId([strategy("custom")]), "custom");
+  assert.equal(defaultBacktestStrategyId([strategy("custom"), strategy("ma_cross")]), "ma_cross");
+  assert.equal(defaultBacktestStrategyId([]), "");
+});
+
+test("backtest draft falls back to a timeframe supported by its selected pair", () => {
+  assert.equal(defaultBacktestTimeframe(["1m", "5m"], "5m"), "5m");
+  assert.equal(defaultBacktestTimeframe(["1h", "4h"], "5m"), "1h");
+});
+
 test("draftToExecution drops zero stop-loss and take-profit to null", () => {
   const draft = createBacktestDraft(MARKET, "5m");
   const execution = draftToExecution({ ...draft, stopLossPct: 0, takeProfitPct: 0 });
@@ -71,18 +84,51 @@ test("deriveKpis counts only settled trades and sums real fee and slippage", () 
   assert.equal(Number(kpis.totalFees.toFixed(2)), 0.2);
 });
 
+test("trade selection only highlights matching execution markers", () => {
+  assert.equal(isExecutionMarkerSelected({ sequence_no: 7, t: "2026-01-01T00:00:00Z", overlay_type: "long_entry" }, 7), true);
+  assert.equal(isExecutionMarkerSelected({ sequence_no: 8, t: "2026-01-01T00:00:00Z", overlay_type: "exit" }, 7), false);
+  assert.equal(isExecutionMarkerSelected({ t: "2026-01-01T00:00:00Z", overlay_type: "exit" }, null), false);
+});
+
+test("mock execution markers keep a ledger sequence for chart selection", () => {
+  const { candles } = createMockPanelData(MARKET, "5m", 180);
+  const markers = mockExecutionMarkers(candles);
+  assert.ok(markers.some((marker) => isExecutionMarkerSelected(marker, 1)));
+  assert.ok(markers.some((marker) => isExecutionMarkerSelected(marker, 2)));
+});
+
+test("trade pager fetches a cursor page only when the selected page is not loaded", () => {
+  assert.equal(needsMoreTradesForPage(100, 10, 10, 100), false);
+  assert.equal(needsMoreTradesForPage(100, 11, 10, 100), true);
+  assert.equal(needsMoreTradesForPage(100, 11, 10, null), false);
+});
+
+test("backend trade aggregates take precedence over the loaded cursor page", () => {
+  const visible = deriveKpis([trade({ pnl: 1, exit_reason: "take_profit" })]);
+  assert.deepEqual(resolvedTradeKpis({ wins: 12, losses: 5, net_profit: 42.5 }, visible), {
+    wins: 12, losses: 5, netProfit: 42.5,
+  });
+});
+
 function trade(patch: Partial<Trade>): Trade {
   return {
     id: "t",
     sequence_no: 1,
+    symbol: "BTCUSDT",
+    quote_currency: "USDT",
     side: "LONG",
     entry_time: "2026-01-01T00:00:00Z",
     exit_time: "2026-01-01T01:00:00Z",
     entry_price: 100,
     exit_price: 101,
     quantity: 1,
+    entry_notional: 100,
+    exit_notional: 101,
     fee_paid: 0,
+    spread_cost: 0,
     slippage_cost: 0,
+    gross_pnl: 1,
+    net_pnl: 1,
     sl_price: null,
     tp_price: null,
     pnl: 0,
@@ -90,5 +136,20 @@ function trade(patch: Partial<Trade>): Trade {
     exit_reason: "take_profit",
     signal_t: "2026-01-01T00:00:00Z",
     ...patch,
+  };
+}
+
+function strategy(strategy_id: string): Strategy {
+  return {
+    strategy_id,
+    version: "v1",
+    display_name: strategy_id,
+    description: "",
+    parameters_schema: {},
+    default_params: {},
+    overlay_types: [],
+    warm_up_candles: 0,
+    is_composite: false,
+    code_fingerprint: strategy_id,
   };
 }

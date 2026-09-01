@@ -35,6 +35,87 @@ class StrategyOut(ContractModel):
     code_fingerprint: str
 
 
+class StrategySourceIn(ContractModel):
+    type: Literal["text", "approved_url", "dsl"]
+    text: str | None = Field(default=None, max_length=10_000)
+    url: str | None = Field(default=None, max_length=2_000)
+    spec: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_source_payload(self) -> "StrategySourceIn":
+        supplied = {
+            "text": self.text is not None,
+            "url": self.url is not None,
+            "spec": self.spec is not None,
+        }
+        expected = {"text": "text", "approved_url": "url", "dsl": "spec"}[self.type]
+        if not supplied[expected] or sum(supplied.values()) != 1:
+            raise ValueError(f"source type {self.type} requires exactly its matching payload")
+        if self.text is not None and not self.text.strip():
+            raise ValueError("source text must not be blank")
+        return self
+
+
+class StrategySpecResponse(ContractModel):
+    schema_version: str = "strategy-spec/v1"
+    strategy_id: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=120)
+    family: Literal["trend", "momentum", "volatility", "structure", "information"]
+    description: str = Field(min_length=1, max_length=2_000)
+    parameters: dict[str, dict[str, Any]]
+    indicators: list[dict[str, Any]]
+    rules: dict[str, Any]
+    warmup_bars: int = Field(ge=1, le=10_000)
+
+
+class StrategyDraftCreateIn(ContractModel):
+    owner_id: UUID
+    mode: Literal["dsl", "custom_python"] = "dsl"
+    source: StrategySourceIn
+    name_hint: str | None = Field(default=None, max_length=120)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_authoring_mode(self) -> "StrategyDraftCreateIn":
+        if self.mode == "custom_python" and self.source.type != "text":
+            raise ValueError("custom Python requires a text source")
+        return self
+
+
+class StrategyApprovalIn(ContractModel):
+    reviewer_id: UUID
+    revision: int = Field(gt=0)
+    spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sandbox_report_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["approve", "reject"]
+    reason: str = Field(min_length=1, max_length=2_000)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class StrategyDraftActionIn(ContractModel):
+    action: Literal["cancel"]
+
+
+class StrategyDraftOut(ContractModel):
+    draft_id: UUID
+    owner_id: UUID
+    source_type: str
+    mode: str
+    name_hint: str | None = None
+    status: str
+    current_revision: int
+    source_hash: str
+    spec_hash: str | None = None
+    artifact_hash: str | None = None
+    sandbox_report_hash: str | None = None
+    repair_attempts_used: int
+    repair_attempts_max: int
+    strategy_spec: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ExperimentCreateIn(ContractModel):
     owner_id: UUID
     strategy_id: str = Field(min_length=1, max_length=48)
@@ -42,6 +123,8 @@ class ExperimentCreateIn(ContractModel):
     candidate_definition: dict[str, Any] = Field(default_factory=dict)
     candidate_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     dataset_version: str = Field(min_length=1, max_length=120)
+    range_from: datetime | None = None
+    range_to: datetime | None = None
     bbo_dataset_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     initial_equity: float = Field(default=100.0, gt=0)
     fixed_notional: float = Field(default=10.0, gt=0)
@@ -61,6 +144,14 @@ class ExperimentCreateIn(ContractModel):
     analysis_lag_sec: int = Field(default=300, ge=0, le=86_400)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
+    @model_validator(mode="after")
+    def validate_replay_range(self) -> "ExperimentCreateIn":
+        if (self.range_from is None) != (self.range_to is None):
+            raise ValueError("range_from and range_to must be supplied together")
+        if self.range_from is not None and self.range_to is not None and self.range_to <= self.range_from:
+            raise ValueError("range_to must be after range_from")
+        return self
+
 
 class AcceptedRunOut(ContractModel):
     run_id: UUID
@@ -74,6 +165,9 @@ class ExperimentMetricsOut(ContractModel):
     win_rate_pct: float
     max_drawdown_pct: float
     trade_count: int
+    wins: int = 0
+    losses: int = 0
+    net_profit: float = 0
     profit_factor: float | None = None
     sharpe_ratio: float | None = None
     score: float | None = None
@@ -88,6 +182,8 @@ class ExperimentSummaryOut(ContractModel):
     candidate_hash: str
     status: str
     dataset_version: str
+    range_from: datetime
+    range_to: datetime
     provider: str
     symbol: str
     timeframe: str
@@ -121,20 +217,32 @@ class CandleOut(ContractModel):
 
 class TradeOut(ContractModel):
     sequence_no: int
+    symbol: str
+    quote_currency: str
     side: str
     signal_t: datetime | None = None
     entry_time: datetime
     entry_price: float
     quantity: float
+    entry_notional: float
     fee_paid: float
+    spread_cost: float
     slippage_cost: float
     exit_time: datetime | None = None
     exit_price: float | None = None
+    exit_notional: float | None = None
+    gross_pnl: float | None = None
+    net_pnl: float | None = None
     pnl_absolute: float | None = None
     pnl_percent: float | None = None
     exit_reason: str | None = None
     sl_price: float | None = None
     tp_price: float | None = None
+
+
+class TradePageOut(ContractModel):
+    trades: list[TradeOut]
+    next_cursor: int | None = None
 
 
 class EquityPointOut(ContractModel):
@@ -148,6 +256,15 @@ class OverlayPointOut(ContractModel):
     signal: str
     confidence: float | None = None
     child_signals: dict[str, Any] | None = None
+
+
+class ExecutionMarkerOut(ContractModel):
+    sequence_no: int
+    t: datetime
+    line_until: datetime | None = None
+    overlay_type: str
+    price: float
+    exit_reason: str | None = None
 
 
 class SearchStopConditions(ContractModel):
@@ -305,7 +422,7 @@ class NewsAggregateOut(ContractModel):
 class NewsSourceCreateIn(ContractModel):
     source_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,62}[a-z0-9]$")
     display_name: str = Field(min_length=1, max_length=120)
-    kind: Literal["rss"] = "rss"
+    kind: Literal["rss", "url"] = "rss"
     allowed_origin: str = Field(min_length=9, max_length=255)
     url_template: str = Field(min_length=9, max_length=2_000)
 

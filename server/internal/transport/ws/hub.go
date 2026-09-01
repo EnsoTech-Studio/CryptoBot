@@ -177,14 +177,22 @@ func (h *MemoryHub) replay(
 		return
 	}
 	for _, frame := range history {
-		if frame.sequence > lastSequence {
+		if frame.sequence > lastSequence ||
+			(frame.sequence == lastSequence && isOverlayDelta(frame.payload)) {
 			h.enqueue(client, frame.payload)
 		}
 	}
 }
 
-func (h *MemoryHub) PublishKline(update domainmarket.KlineUpdate) {
-	h.publishMatching(update.Market, "kline", func(key string, sequence uint64) map[string]any {
+func isOverlayDelta(payload []byte) bool {
+	var frame struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(payload, &frame) == nil && frame.Type == "overlay_delta"
+}
+
+func (h *MemoryHub) PublishKline(update domainmarket.KlineUpdate) map[string]uint64 {
+	return h.publishMatching(update.Market, "kline", func(key string, sequence uint64) map[string]any {
 		return map[string]any{
 			"type": "kline", "key": key, "sequence": sequence, "seq": sequence,
 			"server_time": time.Now().UTC(), "final": update.Final,
@@ -196,6 +204,15 @@ func (h *MemoryHub) PublishKline(update domainmarket.KlineUpdate) {
 			},
 		}
 	})
+}
+
+func (h *MemoryHub) PublishOverlay(key string, sequence uint64, delta map[string]any) {
+	delta["type"] = "overlay_delta"
+	delta["key"] = key
+	delta["sequence"] = sequence
+	delta["seq"] = sequence
+	delta["server_time"] = time.Now().UTC()
+	h.publishWithSequence(key, sequence, delta)
 }
 
 func (h *MemoryHub) PublishBBO(quote domainmarket.BBO) {
@@ -243,14 +260,17 @@ func (h *MemoryHub) publishMatching(
 	market domainmarket.MarketKey,
 	_ string,
 	build func(string, uint64) map[string]any,
-) {
+) map[string]uint64 {
 	h.mu.RLock()
 	keys := h.matchingKeys(market.Provider, market.Symbol, string(market.Timeframe))
 	h.mu.RUnlock()
+	sequences := make(map[string]uint64, len(keys))
 	for _, key := range keys {
 		sequence := h.nextSequence(key)
+		sequences[key] = sequence
 		h.publishWithSequence(key, sequence, build(key, sequence))
 	}
+	return sequences
 }
 
 func (h *MemoryHub) publish(key string, payload map[string]any) {

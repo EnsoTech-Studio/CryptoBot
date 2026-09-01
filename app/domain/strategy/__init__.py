@@ -16,6 +16,7 @@ from .contract import (
     Strategy,
 )
 from .registry import Factory, Registry
+from .generated import DeclarativeStrategy
 
 __all__ = [
     "AnalysisContext",
@@ -26,6 +27,7 @@ __all__ = [
     "CompositeDefinition",
     "CompositeSpec",
     "Definition",
+    "DeclarativeStrategy",
     "Factory",
     "Params",
     "Reference",

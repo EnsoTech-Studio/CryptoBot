@@ -2,5 +2,15 @@
 node_modules
 .next
 out
-.env.local
+
+# Local env files must never reach the image: NEXT_PUBLIC_* values are baked in
+# at build time and come from build args, not from a developer's machine.
+.env
+.env.*
+
+# Local artefacts, never build inputs.
+logs/
 *.log
+*.png
+tsconfig.tsbuildinfo
+*.md

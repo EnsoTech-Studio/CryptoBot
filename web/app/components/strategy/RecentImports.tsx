@@ -1,14 +1,20 @@
 "use client";
 
-import { IMPORT_ROWS, type ImportRow } from "../../../lib/strategy-authoring";
+import { recentImportRows, type ImportRow, type RecentImportDraft } from "../../../lib/strategy-authoring";
 import { Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./strategy.module.css";
 
-/* Bottom row. The strategy registry response has no source, tags or creation
-   timestamp, so these rows are illustrative until an authored-strategy list
-   endpoint exists. Run and menu actions are disabled for the same reason. */
-export function RecentImports() {
+export function RecentImports({
+  drafts,
+  referenceMode,
+  onRun,
+}: {
+  drafts: RecentImportDraft[];
+  referenceMode: boolean;
+  onRun: (strategyId: string) => void;
+}) {
+  const rows = recentImportRows(drafts, referenceMode);
   return (
     <Panel
       title="Chiến lược đã import gần đây"
@@ -34,9 +40,11 @@ export function RecentImports() {
             </tr>
           </thead>
           <tbody>
-            {IMPORT_ROWS.map((row) => (
-              <ImportTableRow key={row.name} row={row} />
-            ))}
+            {rows.length > 0 ? rows.map((row) => (
+              <ImportTableRow key={`${row.strategyId ?? row.name}-${row.version}`} row={row} onRun={onRun} />
+            )) : (
+              <tr><td className={styles.emptyImports} colSpan={7}>Chưa có strategy nào được import.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -44,12 +52,14 @@ export function RecentImports() {
   );
 }
 
-function ImportTableRow({ row }: { row: ImportRow }) {
+function ImportTableRow({ row, onRun }: { row: ImportRow; onRun: (strategyId: string) => void }) {
+  const canRun = row.status === "approved" && row.strategyId !== null;
+  const statusLabel = row.status === "approved" ? "Hợp lệ" : row.status === "review" ? "Chờ duyệt" : row.status === "rejected" ? "Từ chối" : "Lỗi";
   return (
     <tr>
       <td className={styles.strategyName}>{row.name}</td>
       <td>
-        <span className={`${styles.sourceTag} ${row.source === "USER_PROMPT" ? styles.sourcePrompt : styles.sourceWeb}`}>
+        <span className={`${styles.sourceTag} ${row.source === "USER_PROMPT" ? styles.sourcePrompt : row.source === "WEB_IMPORT" ? styles.sourceWeb : styles.sourceDsl}`}>
           {row.source}
         </span>
       </td>
@@ -63,17 +73,17 @@ function ImportTableRow({ row }: { row: ImportRow }) {
         </span>
       </td>
       <td>
-        <span className={styles.validCell}>
+        <span className={styles.validCell} data-state={row.status}>
           <i aria-hidden="true" />
-          {row.valid ? "Hợp lệ" : "Không hợp lệ"}
+          {statusLabel}
         </span>
       </td>
       <td>
         <span className={styles.rowActions}>
-          <button type="button" aria-label={`Chạy backtest ${row.name}`}>
+          <button type="button" aria-label={`Chạy backtest ${row.name}`} disabled={!canRun} onClick={() => row.strategyId && onRun(row.strategyId)}>
             <Icon name="play" />
           </button>
-          <button type="button" aria-label={`Tuỳ chọn khác cho ${row.name}`}>
+          <button type="button" aria-label={`Tuỳ chọn khác cho ${row.name}`} disabled>
             <Icon name="more-vertical" />
           </button>
         </span>

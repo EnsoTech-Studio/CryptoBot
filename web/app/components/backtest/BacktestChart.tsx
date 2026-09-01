@@ -1,8 +1,10 @@
 "use client";
 
 import { createMockPanelData } from "../../../lib/realtime-mock";
+import { mockExecutionMarkers } from "../../../lib/backtest-mock";
 import type { Candle, ExecutionMarker, ExperimentSummary, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
 import type { BacktestDraft } from "../../../lib/backtest";
+import { isExecutionMarkerSelected } from "../../../lib/backtest";
 import { Button, Panel } from "../ui/Foundation";
 import { ChartCanvas } from "../charts/ChartCanvas";
 import { Icon } from "../ui/Icon";
@@ -19,7 +21,12 @@ export function BacktestChart({
   markers,
   executionMarkers,
   isMock,
+  empty,
   onInspect,
+  onRun,
+  runDisabled,
+  runLabel,
+  selectedTradeSequence,
 }: {
   draft: BacktestDraft;
   experiment: ExperimentSummary | null;
@@ -28,15 +35,36 @@ export function BacktestChart({
   markers: OverlayMarker[];
   executionMarkers: ExecutionMarker[];
   isMock: boolean;
+  empty: boolean;
   onInspect: () => void;
+  onRun: () => void;
+  runDisabled: boolean;
+  runLabel: string;
+  selectedTradeSequence: number | null;
 }) {
+  if (empty) {
+    return (
+      <Panel title={`Biểu đồ Backtest (${draft.market.symbol} · ${draft.timeframe})`}>
+        <div className={styles.chartEmpty}>
+          <span>Chạy backtest để xem nến, tín hiệu và các lệnh đã khớp.</span>
+          <Button variant="primary" disabled={runDisabled} onClick={onRun}>
+            <Icon name="play" aria-hidden="true" />
+            {runLabel}
+          </Button>
+        </div>
+      </Panel>
+    );
+  }
   const mock = isMock ? createMockPanelData(draft.market, draft.timeframe, 180) : null;
   const shownCandles = mock ? mock.candles : candles;
   const shownSeries = mock
     ? [alignSeriesLast(mock.series[0], 69_135.45), createMockMa50(mock.candles, 68_912.73)]
     : series;
   const shownMarkers = mock ? mock.markers : markers;
-  const shownExecutionMarkers = mock ? createMockExecutionMarkers(mock.candles) : executionMarkers;
+  const shownExecutionMarkers = (mock ? mockExecutionMarkers(mock.candles) : executionMarkers).map((marker) => ({
+    ...marker,
+    selected: isExecutionMarkerSelected(marker, selectedTradeSequence),
+  }));
   const last = shownCandles.at(-1)?.close ?? 0;
 
   return (
@@ -107,20 +135,6 @@ function alignPointsLast(points: OverlayPoint[], target: number): OverlayPoint[]
   if (last == null) return points;
   const offset = target - last;
   return points.map((point) => ({ ...point, v: point.v == null ? null : Number((point.v + offset).toFixed(2)) }));
-}
-
-function createMockExecutionMarkers(candles: Candle[]): ExecutionMarker[] {
-  const longEntry = candles[70];
-  const shortEntry = candles[116];
-  const exit = candles[166];
-  if (!longEntry || !shortEntry || !exit) return [];
-  return [
-    { t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "long_entry", price: longEntry.close },
-    { t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "stop_loss", price: 67_800 },
-    { t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "short_entry", price: shortEntry.close },
-    { t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "take_profit", price: 70_200 },
-    { t: exit.open_time, overlay_type: "exit", price: exit.close, exit_reason: "take_profit" },
-  ];
 }
 
 function fmt(value: number) {

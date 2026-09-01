@@ -1,9 +1,17 @@
 export const DEFAULT_MARKET: MarketSelection = {
   provider: "binance_usdm",
+  symbol: "ETHUSDT",
+};
+
+export const DEFAULT_PANEL_TIMEFRAMES: readonly string[] = ["5m", "15m", "1h", "4h"];
+
+export const REFERENCE_MARKET: MarketSelection = {
+  provider: "binance_usdm",
   symbol: "BTCUSDT",
 };
 
 export const MARKET_CONFIG_HASH = `sha256:${"4".repeat(64)}`;
+export const PANEL_BOOTSTRAP_CANDLE_LIMIT = 1_000;
 
 export type Candle = {
   provider: string;
@@ -53,7 +61,7 @@ export type RecentMarketEvent = {
 };
 
 export type NormalizedRealtimeFrame = {
-  type: "subscribed" | "resync_required" | "kline" | "bbo" | "stream_status" | "error" | "unknown";
+  type: "subscribed" | "resync_required" | "kline" | "overlay_delta" | "bbo" | "stream_status" | "error" | "unknown";
   sequence?: number;
   serverTime?: string;
   final?: boolean;
@@ -71,6 +79,26 @@ export type NormalizedRealtimeFrame = {
     tradeCount: number;
   };
   bbo?: RecentMarketEvent;
+  overlay?: {
+    revisedFrom?: string;
+    series: RealtimeOverlaySeries[];
+    markers: RealtimeOverlayMarker[];
+  };
+};
+
+export type RealtimeOverlayPoint = { t: string; v: number | null };
+export type RealtimeOverlaySeries = {
+  name: string;
+  overlay_type: string;
+  pane: "main" | "sub";
+  points?: RealtimeOverlayPoint[];
+  band?: Record<string, RealtimeOverlayPoint[]>;
+};
+export type RealtimeOverlayMarker = {
+  t: string;
+  overlay_type: string;
+  confidence: number | null;
+  evidence: Record<string, unknown> | null;
 };
 
 export function marketRequestPath(
@@ -104,6 +132,28 @@ export function upsertCandle(candles: Candle[], candle: Candle, limit = 1_000): 
 
 export function appendMarketEvent(events: RecentMarketEvent[], event: RecentMarketEvent, limit = 50) {
   return [event, ...events.filter((item) => item.id !== event.id)].slice(0, limit);
+}
+
+export function mergeOverlayDelta(
+  current: { series: RealtimeOverlaySeries[]; markers: RealtimeOverlayMarker[] },
+  delta: { series: RealtimeOverlaySeries[]; markers: RealtimeOverlayMarker[] },
+) {
+  const series = [...current.series];
+  for (const next of delta.series) {
+    const index = series.findIndex((item) => item.name === next.name && item.overlay_type === next.overlay_type && item.pane === next.pane);
+    if (index < 0) {
+      series.push(next);
+      continue;
+    }
+    const previous = series[index];
+    series[index] = {
+      ...previous,
+      ...next,
+      ...(next.points ? { points: mergeOverlayPoints(previous.points, next.points) } : {}),
+      ...(next.band ? { band: mergeOverlayBand(previous.band, next.band) } : {}),
+    };
+  }
+  return { series, markers: mergeOverlayMarkers(current.markers, delta.markers) };
 }
 
 export function normalizeRealtimeFrame(value: unknown, market: MarketSelection): NormalizedRealtimeFrame {
@@ -170,6 +220,51 @@ export function normalizeRealtimeFrame(value: unknown, market: MarketSelection):
     }
   }
 
+  if (type === "overlay_delta") {
+    const series = asRecords(body.series).flatMap((item) => {
+      const name = optionalString(item.name);
+      const overlayType = optionalString(item.overlay_type);
+      const pane: "main" | "sub" | undefined = item.pane === "main" || item.pane === "sub" ? item.pane : undefined;
+      if (!name || !overlayType || !pane) return [];
+      const points = asRecords(item.points).flatMap((point) => {
+        const t = optionalString(point.t);
+        const v = point.v === null ? null : optionalNumber(point.v);
+        return t && (v !== undefined || point.v === null) ? [{ t, v: v as number | null }] : [];
+      });
+      const band = asRecord(item.band);
+      const normalizedBand: Record<string, RealtimeOverlayPoint[]> = {};
+      for (const bandName of ["upper", "middle", "lower"]) {
+        normalizedBand[bandName] = asRecords(band[bandName]).flatMap((point) => {
+          const t = optionalString(point.t);
+          const v = point.v === null ? null : optionalNumber(point.v);
+          return t && (v !== undefined || point.v === null) ? [{ t, v: v as number | null }] : [];
+        });
+      }
+      return [{
+        name,
+        overlay_type: overlayType,
+        pane,
+        ...(points.length > 0 ? { points } : {}),
+        ...(Object.values(normalizedBand).some((values) => values.length > 0) ? { band: normalizedBand } : {}),
+      }];
+    });
+    const markers = asRecords(body.markers).flatMap((item) => {
+      const t = optionalString(item.t);
+      const overlayType = optionalString(item.overlay_type);
+      if (!t || !overlayType) return [];
+      const evidence = item.evidence !== null && typeof item.evidence === "object"
+        ? item.evidence as Record<string, unknown>
+        : null;
+      return [{ t, overlay_type: overlayType, confidence: optionalNumber(item.confidence) ?? null, evidence }];
+    });
+    return {
+      type,
+      sequence,
+      serverTime,
+      overlay: { revisedFrom: optionalString(body.revised_from), series, markers },
+    };
+  }
+
   if (type === "stream_status") {
     return {
       type,
@@ -188,6 +283,30 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
+function mergeOverlayPoints(previous: RealtimeOverlayPoint[] = [], next: RealtimeOverlayPoint[]) {
+  return [...previous.filter((point) => !next.some((item) => item.t === point.t)), ...next]
+    .sort((a, b) => a.t.localeCompare(b.t)).slice(-1_000);
+}
+
+function mergeOverlayBand(
+  previous: Record<string, RealtimeOverlayPoint[]> = {},
+  next: Record<string, RealtimeOverlayPoint[]>,
+) {
+  return Object.fromEntries(Object.keys({ ...previous, ...next }).map((name) => [
+    name,
+    mergeOverlayPoints(previous[name], next[name] ?? []),
+  ]));
+}
+
+function mergeOverlayMarkers(previous: RealtimeOverlayMarker[], next: RealtimeOverlayMarker[]) {
+  return [...previous.filter((marker) => !next.some((item) => item.t === marker.t && item.overlay_type === marker.overlay_type)), ...next]
+    .sort((a, b) => a.t.localeCompare(b.t)).slice(-1_000);
+}
+
+function asRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
 function optionalString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -203,6 +322,7 @@ function frameType(value: unknown): NormalizedRealtimeFrame["type"] {
     case "subscribed":
     case "resync_required":
     case "kline":
+    case "overlay_delta":
     case "bbo":
     case "stream_status":
     case "error":

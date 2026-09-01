@@ -16,12 +16,12 @@ const PARAM_SUMMARY: Record<string, string> = {
 };
 
 const ROW_ICON: Record<string, IconName> = {
-  ma_cross: "chart",
+  ma_cross: "ma",
   ema_cross: "chart",
   rsi: "activity",
-  bollinger: "target",
+  bollinger: "bollinger",
   macd: "bar-chart",
-  support_resistance: "scale",
+  support_resistance: "support-resistance",
   news_sentiment: "document",
 };
 
@@ -33,17 +33,20 @@ export function WeightedVotingPanel({
   draft,
   strategies,
   markers,
+  referenceMode,
   onWeight,
   onToggle,
 }: {
   draft: DiscoveryDraft;
   strategies: Strategy[];
   markers: OverlayMarker[];
+  referenceMode: boolean;
   onWeight: (strategyId: string, weight: number) => void;
   onToggle: (strategyId: string) => void;
 }) {
   const weightsActive = draft.policy === "weighted_vote";
-  const signal = liveSignal(markers) ?? AGGREGATE_SIGNAL_MOCK;
+  const hasLiveSignal = liveSignal(markers);
+  const signal = hasLiveSignal ?? (referenceMode ? AGGREGATE_SIGNAL_MOCK : { long: 0, hold: 0, short: 0, threshold: 0.3 });
 
   return (
     <Panel
@@ -82,7 +85,7 @@ export function WeightedVotingPanel({
                 disabled={!weightsActive}
                 onChange={(value) => onWeight(id, value)}
               />
-              <SignalCell value={signalFor(id, markers)} />
+              <SignalCell value={signalFor(id, markers, referenceMode)} />
             </div>
           );
         })}
@@ -110,8 +113,8 @@ export function WeightedVotingPanel({
         <div className={styles.aggregateFoot}>
           <span>Ngưỡng vào lệnh: |score| ≥ {signal.threshold.toFixed(2)}</span>
           <em>
-            Cập nhật realtime
-            <i className={styles.liveDot} aria-hidden="true" />
+            {hasLiveSignal ? "Cập nhật realtime" : "Chưa có tín hiệu realtime"}
+            {hasLiveSignal ? <i className={styles.liveDot} aria-hidden="true" /> : null}
           </em>
         </div>
       </div>
@@ -132,9 +135,9 @@ function SignalCell({ value }: { value: "long" | "short" | "hold" }) {
 /* Overlay markers are the only real per-strategy signal the API exposes
    (GET /api/v1/markets/chart-overlays). It returns an empty array today, so
    every row falls back to HOLD rather than inventing a direction. */
-function signalFor(strategyId: string, markers: OverlayMarker[]): "long" | "short" | "hold" {
+function signalFor(strategyId: string, markers: OverlayMarker[], referenceMode: boolean): "long" | "short" | "hold" {
   const marker = markers.find((item) => item.overlay_type.startsWith(strategyId));
-  if (!marker) return strategyId === "ma_cross" || strategyId === "rsi" ? "long" : "hold";
+  if (!marker) return referenceMode && (strategyId === "ma_cross" || strategyId === "rsi") ? "long" : "hold";
   if (marker.overlay_type.includes("buy")) return "long";
   if (marker.overlay_type.includes("sell")) return "short";
   return "hold";

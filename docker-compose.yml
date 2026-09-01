@@ -1,9 +1,10 @@
 name: cryptobot
 
-# Development infrastructure only. Application services run natively via
-# scripts/start-native-backend.ps1.
+# Optional local PostgreSQL for offline development. When .env contains
+# Supabase/external database URLs, backend.ps1 skips this container.
 services:
   postgres:
+    profiles: ["local-db"]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: "${POSTGRES_USER:-cryptobot}"

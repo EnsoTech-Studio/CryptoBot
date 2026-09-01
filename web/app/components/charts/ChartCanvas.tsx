@@ -323,14 +323,14 @@ function renderExecutionMarkers(
     if (marker.overlay_type === "entry" || marker.overlay_type.endsWith("_entry")) {
       const label = marker.overlay_type.startsWith("short") ? "SHORT Entry" : marker.overlay_type.startsWith("long") ? "LONG Entry" : "ENTRY";
       return [
-        <circle key={`entry-${index}`} cx={cx} cy={cy} r="5" className="exec-marker entry" />,
-        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className="exec-label">{label}</text>,
+        <circle key={`entry-${index}`} cx={cx} cy={cy} r="5" className={`exec-marker entry${marker.selected ? " selected" : ""}`} />,
+        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className={`exec-label${marker.selected ? " selected" : ""}`}>{label}</text>,
       ];
     }
     if (marker.overlay_type === "exit") {
       return [
-        <path key={`exit-${index}`} d={crossPath(cx, cy)} className={`exec-marker exit ${marker.exit_reason ?? ""}`} />,
-        <text key={`exit-${index}-label`} x={cx + 8} y={cy + 13} className="exec-label">EXIT</text>,
+        <path key={`exit-${index}`} d={crossPath(cx, cy)} className={`exec-marker exit ${marker.exit_reason ?? ""}${marker.selected ? " selected" : ""}`} />,
+        <text key={`exit-${index}-label`} x={cx + 8} y={cy + 13} className={`exec-label${marker.selected ? " selected" : ""}`}>EXIT</text>,
       ];
     }
     return [];

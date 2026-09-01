@@ -1,33 +1,74 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { PAGE_SIZES } from "../../../lib/backtest";
-import type { Trade } from "../../../lib/api";
+import { needsMoreTradesForPage, PAGE_SIZES } from "../../../lib/backtest";
+import { api, type Trade } from "../../../lib/api";
 import { Panel, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./backtest.module.css";
 
-/* Trade ledger with client-side pagination over the loaded result. The plan
-   permits client paging because the API returns the whole trade list for one
-   experiment in a single response. */
+/* Trade ledger uses cursor pagination after the initial result page. */
 export function TradeLedger({
   trades,
   symbol,
+  csvExportUrl,
+  selectedTradeSequence,
+  onSelectTrade,
+  experimentId,
+  nextTradeCursor,
+  totalTrades,
 }: {
   trades: Trade[];
   symbol: string;
+  csvExportUrl?: string;
+  selectedTradeSequence: number | null;
+  onSelectTrade: (sequenceNo: number) => void;
+  experimentId?: string;
+  nextTradeCursor: number | null;
+  totalTrades?: number;
 }) {
   const [pageSize, setPageSize] = useState<number>(10);
   const [page, setPage] = useState(1);
+  const [loadedTrades, setLoadedTrades] = useState(trades);
+  const [cursor, setCursor] = useState(nextTradeCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingRef = useRef(false);
 
-  const totalPages = Math.max(1, Math.ceil(trades.length / pageSize));
+  const knownTotal = cursor === null ? loadedTrades.length : Math.max(loadedTrades.length, totalTrades ?? 0);
+  const totalPages = Math.max(1, Math.ceil(knownTotal / pageSize));
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
-  const rows = trades.slice(start, start + pageSize);
+  const rows = loadedTrades.slice(start, start + pageSize);
+
+  useEffect(() => {
+    if (!experimentId || loadingRef.current || !needsMoreTradesForPage(loadedTrades.length, currentPage, pageSize, cursor)) return;
+    let cancelled = false;
+    loadingRef.current = true;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setLoadingMore(true);
+      return api.experimentTrades(experimentId, cursor ?? undefined);
+    }).then((next) => {
+      if (!cancelled) {
+        setLoadedTrades((current) => [...current, ...next.trades.filter((trade) => !current.some((item) => item.sequence_no === trade.sequence_no))]);
+        setCursor(next.next_cursor);
+      }
+    }).catch(() => undefined).finally(() => {
+      loadingRef.current = false;
+      if (!cancelled) setLoadingMore(false);
+    });
+    return () => { cancelled = true; };
+  }, [cursor, currentPage, experimentId, loadedTrades.length, pageSize]);
 
   return (
-    <Panel title="Danh sách lệnh giao dịch">
+    <Panel
+      title="Danh sách lệnh giao dịch"
+      action={csvExportUrl ? (
+        <a className={styles.expandButton} href={csvExportUrl} download>
+          <Icon name="download" aria-hidden="true" /> Xuất CSV
+        </a>
+      ) : null}
+    >
       <div className={styles.ledgerWrap}>
         <table className={styles.ledger}>
           <thead>
@@ -54,9 +95,18 @@ export function TradeLedger({
               </tr>
             ) : (
               rows.map((trade) => (
-                <tr key={trade.id}>
+                <tr
+                  key={trade.id}
+                  className={trade.sequence_no === selectedTradeSequence ? styles.ledgerSelected : undefined}
+                  onClick={() => onSelectTrade(trade.sequence_no)}
+                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelectTrade(trade.sequence_no); }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Highlight trade ${trade.sequence_no} on chart`}
+                  aria-pressed={trade.sequence_no === selectedTradeSequence}
+                >
                   <td className={styles.numeric}>{trade.sequence_no}</td>
-                  <td>{symbol}</td>
+                  <td>{trade.symbol || symbol}</td>
                   <td>{ledgerDate(trade.entry_time)}</td>
                   <td>
                     <span className={`${styles.sideTag} ${isLong(trade.side) ? styles.sideLong : styles.sideShort}`}>
@@ -97,7 +147,7 @@ export function TradeLedger({
             </Select>
           </span>
           <span className={styles.rangeLabel}>
-            {trades.length === 0 ? "0 lệnh" : `${start + 1}–${Math.min(start + pageSize, trades.length)} của ${trades.length} lệnh`}
+            {loadedTrades.length === 0 ? "0 lệnh" : `${start + 1}–${Math.min(start + pageSize, knownTotal)} của ${knownTotal} lệnh${loadingMore ? " (đang tải…)" : ""}`}
           </span>
         </span>
 

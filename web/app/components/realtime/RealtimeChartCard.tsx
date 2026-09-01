@@ -10,8 +10,6 @@ import styles from "./realtime.module.css";
 export function RealtimeChartCard({ panel, index }: { panel: Panel; index: number }) {
   const {
     selectedMarket,
-    availableTimeframes,
-    panelHandlers,
     focusIndex,
     setFocusIndex,
     loadHistory,
@@ -48,21 +46,8 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
               <span className={styles.srStatus}>{panel.liveState === "live" ? "Live" : panel.liveState === "connecting" ? "Syncing" : panel.liveState === "paused" ? "Paused" : "Stale"}</span>
             </span>
           </button>
-          <label className={styles.chartTimeframeControl}>
-            <span>Timeframe</span>
-            <select
-              value={panel.timeframe}
-              aria-label={`Timeframe biểu đồ ${index + 1}`}
-              onChange={(event) => {
-                setFocusIndex(index);
-                panelHandlers(index).onTimeframe(event.target.value);
-              }}
-            >
-              {availableTimeframes.map((timeframe) => (
-                <option key={timeframe} value={timeframe}>{timeframe}</option>
-              ))}
-            </select>
-          </label>
+          <span className={styles.chartSeparator} aria-hidden="true">·</span>
+          <span className={styles.timeframeText}>{panel.timeframe}</span>
         </div>
         <div className={styles.quote}>
           <strong>{lastCandle ? formatPrice(lastCandle.close) : "—"}</strong>

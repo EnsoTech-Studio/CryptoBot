@@ -1,7 +1,7 @@
 "use client";
 
 import { ASSUMPTIONS, MOCK_KPIS, PROFIT_FORMULA } from "../../../lib/backtest-mock";
-import type { DerivedKpis } from "../../../lib/backtest";
+import { resolvedTradeKpis, type DerivedKpis } from "../../../lib/backtest";
 import type { EquityPoint, Metrics } from "../../../lib/api";
 import { Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
@@ -22,10 +22,11 @@ export function BacktestMetrics({
   isMock: boolean;
 }) {
   const winrate = isMock ? MOCK_KPIS.winratePct : metrics?.win_rate_pct ?? 0;
-  const wins = isMock ? MOCK_KPIS.wins : kpis.wins;
-  const losses = isMock ? MOCK_KPIS.losses : kpis.losses;
+  const aggregateKpis = resolvedTradeKpis(metrics, kpis);
+  const wins = isMock ? MOCK_KPIS.wins : aggregateKpis.wins;
+  const losses = isMock ? MOCK_KPIS.losses : aggregateKpis.losses;
   const totalTrades = isMock ? MOCK_KPIS.totalTrades : metrics?.trade_count ?? kpis.settled;
-  const profitAbs = isMock ? MOCK_KPIS.totalProfitUsd : kpis.totalProfitAbs;
+  const profitAbs = isMock ? MOCK_KPIS.totalProfitUsd : aggregateKpis.netProfit;
   const profitPct = isMock ? MOCK_KPIS.totalProfitPct : metrics?.total_return_pct ?? 0;
   const drawdownPct = isMock ? MOCK_KPIS.maxDrawdownPct : metrics?.max_drawdown_pct ?? 0;
 
@@ -68,7 +69,7 @@ export function BacktestMetrics({
       <div className={styles.kpiCell}>
         <span className={styles.kpiLabel}>Max Drawdown</span>
         <span className={`${styles.kpiValue} ${styles.loss}`}>
-          {drawdownPct.toFixed(2)}<em>USD</em>
+          {drawdownPct.toFixed(2)}<em>%</em>
         </span>
         <span className={`${styles.kpiCaption} ${styles.loss}`}>{drawdownPct.toFixed(2)}%</span>
         <span className={styles.kpiSpark}>
@@ -81,7 +82,7 @@ export function BacktestMetrics({
         <span className={styles.kpiValue}>{totalTrades}</span>
         <span className={styles.kpiCaption}>100%</span>
         <span className={styles.kpiSpark}>
-          <Bars count={9} />
+          <Bars count={totalTrades > 0 ? 9 : 0} />
         </span>
       </div>
 
@@ -134,10 +135,10 @@ function Donut({ ratio }: { ratio: number }) {
   );
 }
 
-/* Real equity when a run completed; otherwise a fixed illustrative curve so the
-   cell keeps the reference's shape instead of collapsing to a flat line. */
+/* Reference mode keeps its illustrative curve. Live runs with no result remain
+   flat instead of suggesting a performance path that never happened. */
 function Sparkline({ points, rising, isMock }: { points: number[]; rising: boolean; isMock: boolean }) {
-  const series = isMock || points.length < 2 ? illustrative(rising) : points;
+  const series = isMock ? illustrative(rising) : points.length < 2 ? [0, 0] : points;
   const min = Math.min(...series);
   const max = Math.max(...series);
   const span = max - min || 1;

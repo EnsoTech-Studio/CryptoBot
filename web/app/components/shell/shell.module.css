@@ -344,11 +344,9 @@
 
 .headerSource { grid-area: source; }
 
-/* The references use compact gutters on the authoring-oriented routes. */
-.pageHeader { padding-left: 40px; padding-right: 20px; }
-.pageHeader[data-route="/strategies"] { padding-left: 32px; padding-right: 20px; }
-.pageHeader[data-route="/backtests"] { padding-left: 31px; padding-right: 20px; }
-.pageHeader[data-route="/news"] { padding-left: 17px; padding-right: 22px; }
+/* Every route shares the same header grid. Route-specific padding made the
+   title and source badge drift relative to the content below it. */
+.pageHeader { padding-left: var(--page-gutter); padding-right: var(--page-gutter); }
 
 .sourceStatus {
   display: inline-flex;
@@ -466,7 +464,7 @@
   display: grid;
   min-width: 0;
   gap: var(--space-3);
-  padding: 0 var(--page-gutter) var(--space-5);
+  padding: 0 var(--page-gutter) 18px;
 }
 
 .content > * { min-width: 0; }

@@ -2,10 +2,10 @@
    strip, a 40/60 chart + ledger row, then six KPI cells beside the profit
    formula and assumptions panels. */
 
-.screen { min-width: 0; margin: 0 -10px 0 0; padding-top: 22px; }
+.screen { min-width: 0; margin: 0 var(--screen-right-overflow) 0 var(--screen-left-offset); padding-top: 22px; }
 
 @media (min-width: 1041px) and (max-height: 800px) {
-  .screen { margin-right: 0; }
+  .screen { margin-right: 0; margin-left: 0; }
 }
 
 .stack {
@@ -119,6 +119,7 @@
 }
 
 .chartViewport svg { display: block; width: 100%; height: auto; }
+.chartEmpty { display: grid; min-height: 390px; place-items: center; align-content: center; gap: 12px; color: var(--ink-3); font-size: 13px; text-align: center; }
 
 .expandButton {
   display: grid;
@@ -179,6 +180,7 @@
 
 .ledger tbody tr:last-child td { border-bottom: 0; }
 .ledger tbody tr:hover { background: var(--surface-2); }
+.ledger tbody tr.ledgerSelected { background: var(--tint-blue-bg); outline: 1px solid var(--accent-blue); outline-offset: -1px; }
 
 .numeric { font-family: var(--font-mono); text-align: right; }
 .money { font-family: var(--font-mono); text-align: right; font-weight: var(--weight-semibold); }
@@ -241,8 +243,8 @@
 .pager button:hover:not(:disabled) { border-color: var(--line-3); color: var(--ink-1); }
 .pager button:disabled { color: var(--ink-3); cursor: not-allowed; opacity: 0.55; }
 .pager button > svg { width: 14px; height: 14px; }
-.pageActive { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
-.pageActive:hover { color: var(--brand-ink); }
+.pager button.pageActive { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
+.pager button.pageActive:hover { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
 .pageGap { border: 0; background: transparent; color: var(--ink-3); cursor: default; }
 
 /* --- KPI + explanation row ------------------------------------------------ */
@@ -262,7 +264,6 @@
   overflow: hidden;
 }
 
-.runAction { display: none; }
 .metricsRow > * { min-height: 0; overflow: hidden; }
 
 .kpiCell {
@@ -371,7 +372,6 @@
   .metricsRow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .formulaPanel, .assumptionPanel { grid-column: span 3; }
   .metricsRow { height: auto; overflow: visible; }
-  .runAction { display: block; }
 }
 
 @media (max-width: 1600px) {

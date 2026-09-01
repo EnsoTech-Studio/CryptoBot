@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.services.predictor import NewsExtraction, Prediction
 
 
 client = TestClient(main.app)
@@ -34,24 +35,43 @@ def test_predict_rejects_blank_text() -> None:
     assert response.status_code == 422
 
 
+def test_news_extract_returns_structured_source_excerpt(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main.predictor,
+        "extract_news",
+        lambda _: NewsExtraction("Bitcoin market update", "Bitcoin liquidity improved after spot demand increased.", "openai/gpt-oss-120b", "test"),
+    )
+
+    response = client.post("/news/extract", json={"text": "Bitcoin market update. Bitcoin liquidity improved after spot demand increased."})
+
+    assert response.status_code == 200
+    assert response.json()["body"].startswith("Bitcoin liquidity")
+
+
 def test_predict_rejects_oversized_text() -> None:
     response = client.post("/predict", json={"text": "a" * 10_001})
 
     assert response.status_code == 422
 
 
-def test_predict_returns_sentiment_result() -> None:
+def test_predict_returns_sentiment_result(monkeypatch) -> None:
+    monkeypatch.setattr(main.predictor, "predict", lambda _: Prediction(
+        "POSITIVE", 0.84, "openai/gpt-oss-120b", "groq-test"
+    ))
     response = client.post("/predict", json={"text": "market sentiment is positive"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["model"] == "sentiment-v1"
-    assert payload["model_version"] == "2026-08-01"
+    assert payload["model"] == "openai/gpt-oss-120b"
+    assert payload["model_version"] == "groq-test"
     assert payload["label"] in {"POSITIVE", "NEUTRAL", "NEGATIVE"}
 
 
 def test_predict_returns_configured_model_version(monkeypatch) -> None:
     monkeypatch.setenv("SENTIMENT_MODEL_VERSION", "test-2026-08-16")
+    monkeypatch.setattr(main.predictor, "predict", lambda _: Prediction(
+        "POSITIVE", 0.84, "openai/gpt-oss-120b", "test-2026-08-16"
+    ))
 
     response = client.post("/predict", json={"text": "market sentiment is positive"})
 

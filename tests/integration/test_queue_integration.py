@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import math
 import os
+import signal
+import subprocess
+import sys
+import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -52,6 +57,7 @@ def dispatcher():
         cur.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
     d._conn.commit()
     yield d
+    d._conn.rollback()
     with d._conn.cursor() as cur:
         cur.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
     d._conn.commit()
@@ -68,9 +74,11 @@ def zigzag(n: int, period: int = 8, base: float = 100.0, amp: float = 5.0):
     return [base + amp * math.sin(2 * math.pi * i / period) for i in range(n)]
 
 
-def seed_experiment(d, candidate: dict, strategy_id: str = "composite") -> tuple:
+def seed_experiment(
+    d, candidate: dict, strategy_id: str = "composite", candle_count: int = 60
+) -> tuple:
     """Seed users → pair → dataset (candles+BBO) → strategies → experiment → job."""
-    closes = zigzag(60)
+    closes = zigzag(candle_count)
     candles = [
         (T0 + timedelta(minutes=i), T0 + timedelta(minutes=i, seconds=59, milliseconds=999),
          c, c + 0.1, c - 0.1, c, 10.0, 5)
@@ -134,11 +142,11 @@ def seed_experiment(d, candidate: dict, strategy_id: str = "composite") -> tuple
             """
             INSERT INTO experiments (owner_id, strategy_version_id, candidate_definition,
                                      candidate_hash, market_dataset_id, bbo_dataset_hash,
-                                     evaluator_version)
-            VALUES (%s, %s, %s, %s, %s, %s, 'v1') RETURNING id
+                                     evaluator_version, replay_range_from, replay_range_to)
+            VALUES (%s, %s, %s, %s, %s, %s, 'v1', %s, %s) RETURNING id
             """,
             (user_id, versions[strategy_id], psycopg.types.json.Jsonb(candidate),
-             "c" * 64, dataset_id, "b" * 64),
+             "c" * 64, dataset_id, "b" * 64, candles[0][0], candles[-1][1]),
         )
         experiment_id = cur.fetchone()[0]
         cur.execute(
@@ -182,7 +190,81 @@ def _process_job(d, job_id):
     return job
 
 
+def _wait_for_job_status(d, job_id, expected: str, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_status = None
+    while time.monotonic() < deadline:
+        last_status = _rows(
+            d, "SELECT status FROM backtest_jobs WHERE id = %s", (job_id,)
+        )[0][0]
+        if last_status == expected:
+            return
+        time.sleep(0.01)
+    pytest.fail(f"job {job_id} did not become {expected}; last status was {last_status}")
+
+
+def _queue_worker_process(worker_id: str) -> subprocess.Popen[str]:
+    environment = {
+        **os.environ,
+        "DATABASE_URL": DATABASE_URL,
+        "WORKER_ID": worker_id,
+        "WORKER_LEASE_SECONDS": "1",
+        "WORKER_HEARTBEAT_SECONDS": "0.1",
+        "POLL_INTERVAL_S": "0.01",
+    }
+    return subprocess.Popen(
+        [sys.executable, "-m", "app.worker", "queue"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def _event_worker_process(worker_id: str) -> subprocess.Popen[str]:
+    environment = {
+        **os.environ,
+        "DATABASE_URL": DATABASE_URL,
+        "EVENT_WORKER_ID": worker_id,
+        "EVENT_LEASE_SECONDS": "1",
+    }
+    return subprocess.Popen(
+        [sys.executable, "-m", "app.event_worker"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def _stop_worker(process: subprocess.Popen[str]) -> None:
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+
+
+def _wait_for_event_status(d, event_id, expected: str, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_status = None
+    while time.monotonic() < deadline:
+        last_status = _rows(
+            d, "SELECT dispatch_status FROM domain_events WHERE event_id = %s", (event_id,)
+        )[0][0]
+        if last_status == expected:
+            return
+        time.sleep(0.01)
+    pytest.fail(f"event {event_id} did not become {expected}; last status was {last_status}")
+
+
 def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
+    from app.infrastructure.postgres.store import Store
+
     job_id, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
     _process_job(dispatcher, job_id)
 
@@ -209,6 +291,36 @@ def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
     assert trades[0][0] > 0
     assert signals[0][0] == signals_count
     assert equity[0][0] > 0
+    trade_costs = _rows(
+        dispatcher,
+        """
+        SELECT entry_notional,exit_notional,fee_paid,spread_cost,slippage_cost,
+               gross_pnl,net_pnl,pnl_absolute
+        FROM trades WHERE backtest_run_id=%s AND exit_time IS NOT NULL LIMIT 1
+        """,
+        (run_id,),
+    )[0]
+    assert all(value is not None for value in trade_costs)
+    assert float(trade_costs[6]) == pytest.approx(float(trade_costs[7]))
+    assert float(trade_costs[6]) == pytest.approx(
+        float(trade_costs[5]) - float(trade_costs[2])
+        - float(trade_costs[3]) - float(trade_costs[4])
+    )
+    projected_trade = Store(DATABASE_URL).list_experiment_trades(experiment_id)[0]
+    assert {
+        "symbol", "quote_currency", "entry_notional", "exit_notional", "spread_cost",
+        "gross_pnl", "net_pnl", "pnl_absolute",
+    } <= set(projected_trade)
+    first_page = Store(DATABASE_URL).list_experiment_trade_page(experiment_id, after_sequence=None, limit=1)
+    assert len(first_page["trades"]) == 1
+    assert first_page["next_cursor"] == first_page["trades"][0]["sequence_no"]
+    second_page = Store(DATABASE_URL).list_experiment_trade_page(
+        experiment_id, after_sequence=first_page["next_cursor"], limit=1
+    )
+    assert second_page["trades"] == [] or second_page["trades"][0]["sequence_no"] > first_page["next_cursor"]
+    execution_markers = Store(DATABASE_URL).list_experiment_execution_markers(experiment_id)
+    assert execution_markers and execution_markers[0]["entry_time"] is not None
+    assert execution_markers[0]["entry_price"] is not None
     # equity PK holds (collapse verified by insert succeeding)
 
     # composite evidence: child_signals carries score + children (AC-09)
@@ -229,6 +341,10 @@ def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
     )
     assert len(evaluation) == 1
     assert evaluation[0][0] == "v1"
+    metrics = Store(DATABASE_URL).get_experiment(experiment_id)["metrics"]
+    assert metrics is not None
+    assert metrics["wins"] + metrics["losses"] <= metrics["trade_count"]
+    assert isinstance(metrics["net_profit"], float)
 
     # outbox: BacktestStarted + BacktestCompleted + StrategyEvaluated, aggregate columns set
     events = dict(
@@ -247,6 +363,139 @@ def test_end_to_end_composite_claim_run_complete_evaluate(dispatcher) -> None:
         " AND NOT EXISTS (SELECT 1 FROM backtest_runs r WHERE r.id = e.aggregate_id)",
     )
     assert orphans[0][0] == 0
+
+
+def test_real_worker_sigkill_reclaims_expired_lease_without_duplicate_result(dispatcher) -> None:
+    """A replacement process completes an abandoned real worker lease exactly once."""
+    # A larger deterministic fixture gives the controller time to observe the
+    # real worker's lease before terminating its process.
+    job_id, experiment_id = seed_experiment(
+        dispatcher, COMPOSITE_CANDIDATE, candle_count=8_000
+    )
+    crashed = _queue_worker_process("crash-rehearsal-worker")
+    recovered = None
+    try:
+        _wait_for_job_status(dispatcher, job_id, "leased")
+        crashed.kill()
+        crashed.wait(timeout=3)
+
+        # The claimed job must remain durable until its short test lease can
+        # be reclaimed by a newly started process.
+        assert _rows(
+            dispatcher,
+            "SELECT status FROM backtest_jobs WHERE id = %s",
+            (job_id,),
+        )[0][0] == "leased"
+        time.sleep(1.15)
+
+        recovered = _queue_worker_process("recovery-rehearsal-worker")
+        _wait_for_job_status(dispatcher, job_id, "completed", timeout_s=15)
+    finally:
+        _stop_worker(crashed)
+        if recovered is not None:
+            _stop_worker(recovered)
+
+    job = _rows(
+        dispatcher,
+        "SELECT status, attempt, leased_by FROM backtest_jobs WHERE id = %s",
+        (job_id,),
+    )[0]
+    assert job == ("completed", 2, None)
+    run = _rows(
+        dispatcher,
+        "SELECT status, worker_id, attempt FROM backtest_runs WHERE experiment_id = %s",
+        (experiment_id,),
+    )
+    assert run == [("completed", "recovery-rehearsal-worker", 2)]
+    assert _rows(
+        dispatcher,
+        "SELECT count(*) FROM domain_events WHERE event_type = 'BacktestCompleted'",
+    )[0][0] == 1
+
+
+def test_real_event_worker_sigkill_reclaims_expired_outbox_lease(dispatcher) -> None:
+    """An outbox event survives a killed worker and is evaluated once by its replacement."""
+    from app.worker import BacktestWorker, WorkerConfig
+
+    job_id, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    job = dispatcher.claim("event-rehearsal-producer", timedelta(seconds=120))
+    assert job is not None and job.id == job_id
+    BacktestWorker(
+        dispatcher,
+        config=WorkerConfig(worker_id="event-rehearsal-producer", event_consumers=()),
+    )._process(job)
+    run_id = _rows(
+        dispatcher, "SELECT id FROM backtest_runs WHERE experiment_id = %s", (experiment_id,)
+    )[0][0]
+    event_id = _rows(
+        dispatcher,
+        "SELECT event_id FROM domain_events WHERE event_type = 'BacktestCompleted' "
+        "AND aggregate_id = %s",
+        (run_id,),
+    )[0][0]
+
+    # Hold only the first worker inside its evaluation transaction. The trigger
+    # is dropped after SIGKILL, so the replacement can finish normally.
+    with dispatcher._conn.cursor() as cur:
+        cur.execute(
+            "CREATE FUNCTION crash_rehearsal_pause_evaluation() RETURNS trigger "
+            "LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$"
+        )
+        cur.execute(
+            "CREATE TRIGGER crash_rehearsal_pause_evaluation BEFORE INSERT ON evaluations "
+            "FOR EACH ROW EXECUTE FUNCTION crash_rehearsal_pause_evaluation()"
+        )
+    dispatcher._conn.commit()
+
+    crashed = _event_worker_process("event-crash-rehearsal-worker")
+    recovered = None
+    try:
+        _wait_for_event_status(dispatcher, event_id, "claimed")
+        crashed.kill()
+        crashed.wait(timeout=3)
+        assert _rows(
+            dispatcher,
+            "SELECT dispatch_status FROM domain_events WHERE event_id = %s",
+            (event_id,),
+        ) == [("claimed",)]
+        assert _rows(
+            dispatcher,
+            "SELECT count(*) FROM evaluations WHERE backtest_run_id = %s",
+            (run_id,),
+        ) == [(0,)]
+
+        with dispatcher._conn.cursor() as cur:
+            cur.execute("DROP TRIGGER crash_rehearsal_pause_evaluation ON evaluations")
+            cur.execute("DROP FUNCTION crash_rehearsal_pause_evaluation()")
+        dispatcher._conn.commit()
+        time.sleep(1.15)
+
+        recovered = _event_worker_process("event-recovery-rehearsal-worker")
+        _wait_for_event_status(dispatcher, event_id, "delivered", timeout_s=10)
+    finally:
+        _stop_worker(crashed)
+        if recovered is not None:
+            _stop_worker(recovered)
+        with dispatcher._conn.cursor() as cur:
+            cur.execute("DROP TRIGGER IF EXISTS crash_rehearsal_pause_evaluation ON evaluations")
+            cur.execute("DROP FUNCTION IF EXISTS crash_rehearsal_pause_evaluation()")
+        dispatcher._conn.commit()
+
+    assert _rows(
+        dispatcher,
+        "SELECT dispatch_status, attempt, claimed_by FROM domain_events WHERE event_id = %s",
+        (event_id,),
+    ) == [("delivered", 2, None)]
+    assert _rows(
+        dispatcher,
+        "SELECT count(*) FROM evaluations WHERE backtest_run_id = %s",
+        (run_id,),
+    ) == [(1,)]
+    assert _rows(
+        dispatcher,
+        "SELECT consumer_id FROM event_consumptions WHERE event_id = %s",
+        (event_id,),
+    ) == [("event-recovery-rehearsal-worker",)]
 
 
 def test_fail_after_complete_never_flips_completed_run(dispatcher) -> None:
@@ -349,10 +598,12 @@ def test_claim_enforces_per_user_concurrency_quota(dispatcher) -> None:
             """
             INSERT INTO experiments(
                 owner_id,strategy_version_id,candidate_definition,candidate_hash,
-                market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id
+                market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id,
+                replay_range_from,replay_range_to
             )
             SELECT owner_id,strategy_version_id,candidate_definition,%s,
-                   market_dataset_id,bbo_dataset_hash,evaluator_version,%s
+                   market_dataset_id,bbo_dataset_hash,evaluator_version,%s,
+                   replay_range_from,replay_range_to
             FROM experiments WHERE id=%s RETURNING id
             """,
             ("d" * 64, "quota-correlation", first_experiment_id),
@@ -389,6 +640,46 @@ def test_database_rejects_invalid_search_stop_contract(dispatcher) -> None:
                 (owner_id, dataset_id),
             )
     dispatcher._conn.rollback()
+
+
+def test_search_run_uses_its_immutable_dataset_range(dispatcher) -> None:
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import SearchRunCreateIn
+
+    _, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_version = _rows(
+        dispatcher,
+        "SELECT owner_id,dataset_version FROM experiments e JOIN market_datasets d ON d.id=e.market_dataset_id WHERE e.id=%s",
+        (experiment_id,),
+    )[0]
+    request = SearchRunCreateIn.model_validate({
+        "owner_id": owner_id,
+        "generator_id": "random_search",
+        "search_space": {
+            "strategy_ids": ["ma_cross"],
+            "cardinality": [1],
+            "policies": ["weighted_vote"],
+            "parameter_grid": {},
+        },
+        "stop_conditions": {"max_candidates": 1},
+        "dataset_version": dataset_version,
+        "seed": 7,
+    })
+
+    created = Store(DATABASE_URL).create_search_run(request)
+
+    assert created["generated"] == 1
+    assert _rows(
+        dispatcher,
+        """
+        SELECT e.replay_range_from,e.replay_range_to,d.range_from,d.range_to
+        FROM experiments e
+        JOIN search_candidates c ON c.experiment_id=e.id
+        JOIN market_datasets d ON d.id=e.market_dataset_id
+        WHERE c.search_run_id=%s
+        """,
+        (created["search_run_id"],),
+    ) == [(T0, T0 + timedelta(minutes=59, seconds=59, milliseconds=999), T0, T0 + timedelta(minutes=59, seconds=59, milliseconds=999))]
 
 
 def test_lost_lease_mid_persist_rolls_back_completely(dispatcher) -> None:
@@ -598,3 +889,515 @@ def test_research_http_create_is_async_idempotent_and_queryable(dispatcher) -> N
         assert correlation == [("itest-http-create", "itest-http-create")]
     finally:
         app.state.store = previous_store
+
+
+def test_identical_dsl_drafts_are_reviewable_by_different_owners() -> None:
+    """Identical safe artifacts are evidence per draft, not a global singleton."""
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn, StrategySpecResponse
+    from app.services.authoring import StrategyAuthoringService
+
+    owner_ids = []
+    with psycopg.connect(DATABASE_URL) as connection:
+        with connection.cursor() as cur:
+            for index in range(2):
+                cur.execute(
+                    "INSERT INTO users (email, password_hash, display_name, role) "
+                    "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+                    (f"same-dsl-{uuid4().hex[:12]}-{index}@test.local", "x", "Same DSL Tester"),
+                )
+                owner_ids.append(cur.fetchone()[0])
+
+    strategy_suffix = uuid4().hex[:8]
+
+    class Designer:
+        def design(self, _text, _request_id):
+            return StrategySpecResponse.model_validate(
+                {
+                    "strategy_id": f"generated.same-dsl-{strategy_suffix}",
+                    "display_name": "Same DSL",
+                    "family": "momentum",
+                    "description": "Long below 30, short above 70.",
+                    "parameters": {},
+                    "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+                    "rules": {
+                        "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                        "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+                        "exit": {"op": "opposite_signal"},
+                    },
+                    "warmup_bars": 14,
+                }
+            )
+
+    try:
+        service = StrategyAuthoringService(Store(DATABASE_URL), Designer())
+        drafts = [
+            service.create(
+                StrategyDraftCreateIn(
+                    owner_id=owner_id,
+                    source=StrategySourceIn(type="text", text="Use RSI 14 for reversal entries."),
+                    idempotency_key=f"same-dsl-{index}",
+                )
+            )
+            for index, owner_id in enumerate(owner_ids)
+        ]
+
+        assert [draft["status"] for draft in drafts] == ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+        assert drafts[0]["draft_id"] != drafts[1]["draft_id"]
+        assert drafts[0]["artifact_hash"] == drafts[1]["artifact_hash"]
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id IN (%s, %s)", owner_ids)
+
+
+def test_authoring_submission_persists_one_durable_job_without_calling_the_model() -> None:
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn
+    from app.services.authoring import StrategyAuthoringService
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        owner_id = connection.execute(
+            "INSERT INTO users (email, password_hash, display_name, role) "
+            "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+            (f"agent-submit-{uuid4().hex[:12]}@test.local", "x", "Agent Submit Tester"),
+        ).fetchone()[0]
+
+    class DesignerThatMustNotRun:
+        def design(self, _text, _request_id):
+            raise AssertionError("the durable agent worker, not submission, may call the model")
+
+    request = StrategyDraftCreateIn(
+        owner_id=owner_id,
+        source=StrategySourceIn(type="text", text="Use RSI below 30 for long."),
+        idempotency_key=f"agent-submit-{uuid4().hex}",
+    )
+    store = Store(DATABASE_URL)
+    service = StrategyAuthoringService(store, DesignerThatMustNotRun())
+    try:
+        first = service.submit(request, "integration-agent-submit")
+        second = service.submit(request, "integration-agent-submit-retry")
+
+        assert first["draft_id"] == second["draft_id"]
+        assert first["status"] == "DRAFT_CREATED"
+        with psycopg.connect(DATABASE_URL) as connection:
+            rows = connection.execute(
+                """
+                SELECT run.state,run.attempts_used,job.status
+                FROM agent_runs run
+                JOIN agent_jobs job ON job.agent_run_id=run.id
+                WHERE run.draft_id=%s
+                """,
+                (first["draft_id"],),
+            ).fetchall()
+        assert rows == [("DRAFT_CREATED", 0, "queued")]
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id=%s", (owner_id,))
+
+
+def test_agent_orchestrator_completes_a_claimed_dsl_submission() -> None:
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn
+    from app.services.agent_orchestrator import AgentOrchestrator
+    from app.services.authoring import StrategyAuthoringService
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        owner_id = connection.execute(
+            "INSERT INTO users (email, password_hash, display_name, role) "
+            "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+            (f"agent-worker-{uuid4().hex[:12]}@test.local", "x", "Agent Worker Tester"),
+        ).fetchone()[0]
+
+    dsl = {
+        "strategy_id": "generated.agent-worker-rsi",
+        "display_name": "Agent Worker RSI",
+        "family": "momentum",
+        "description": "Long below 30, short above 70.",
+        "parameters": {},
+        "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+        "rules": {
+            "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+            "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+            "exit": {"op": "opposite_signal"},
+        },
+        "warmup_bars": 14,
+    }
+    store = Store(DATABASE_URL)
+    service = StrategyAuthoringService(store, object())
+    request = StrategyDraftCreateIn(
+        owner_id=owner_id,
+        source=StrategySourceIn(type="dsl", spec=dsl),
+        idempotency_key=f"agent-worker-{uuid4().hex}",
+    )
+    try:
+        pending = service.submit(request, "integration-agent-worker")
+
+        assert AgentOrchestrator(store, service).process_once("agent-worker-test") is True
+
+        completed = store.get_strategy_draft(pending["draft_id"], owner_id)
+        assert completed["status"] == "REVIEW_REQUIRED"
+        assert completed["artifact_hash"]
+        with psycopg.connect(DATABASE_URL) as connection:
+            rows = connection.execute(
+                """
+                SELECT run.state,job.status
+                FROM agent_runs run
+                JOIN agent_jobs job ON job.agent_run_id=run.id
+                WHERE run.draft_id=%s
+                """,
+                (pending["draft_id"],),
+            ).fetchall()
+        assert rows == [("REVIEW_REQUIRED", "completed")]
+        with psycopg.connect(DATABASE_URL) as connection:
+            tools = connection.execute(
+                """
+                SELECT invocation.tool_name,invocation.state
+                FROM tool_invocations invocation
+                JOIN agent_runs run ON run.id=invocation.agent_run_id
+                WHERE run.draft_id=%s
+                ORDER BY invocation.sequence_no
+                """,
+                (pending["draft_id"],),
+            ).fetchall()
+        assert tools == [
+            ("source.get_document", "SPEC_GENERATING"),
+            ("strategy.validate_spec", "SPEC_VALIDATING"),
+            ("strategy.save_draft_spec", "SPEC_VALIDATING"),
+            ("artifact.compile_from_spec", "CODE_GENERATING"),
+            ("artifact.save_version", "CODE_GENERATING"),
+            ("artifact.run_policy_check", "POLICY_CHECKING"),
+            ("sandbox.run_contract_tests", "SANDBOX_TESTING"),
+            ("draft.mark_review_required", "SANDBOX_TESTING"),
+        ]
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id=%s", (owner_id,))
+
+
+def test_agent_state_transition_is_fenced_by_lease_state_and_aggregate_version() -> None:
+    from datetime import timedelta
+
+    from app.errors import ApplicationError
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn
+    from app.services.authoring import StrategyAuthoringService
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        owner_id = connection.execute(
+            "INSERT INTO users (email, password_hash, display_name, role) "
+            "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+            (f"agent-cas-{uuid4().hex[:12]}@test.local", "x", "Agent CAS Tester"),
+        ).fetchone()[0]
+
+    store = Store(DATABASE_URL)
+    request = StrategyDraftCreateIn(
+        owner_id=owner_id,
+        source=StrategySourceIn(type="dsl", spec={
+            "strategy_id": "generated.agent-cas-rsi", "display_name": "Agent CAS RSI",
+            "family": "momentum", "description": "Long below 30, short above 70.",
+            "parameters": {}, "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+            "rules": {
+                "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+                "exit": {"op": "opposite_signal"},
+            }, "warmup_bars": 14,
+        }),
+        idempotency_key=f"agent-cas-{uuid4().hex}",
+    )
+    try:
+        pending = StrategyAuthoringService(store, object()).submit(request)
+        job = store.claim_agent_job("agent-cas-test", timedelta(seconds=30))
+        assert job is not None
+
+        assert store.advance_agent_run_state(
+            job["id"], job["lease_token"], "DRAFT_CREATED", 0, "SOURCE_READY"
+        ) == 1
+        with pytest.raises(ApplicationError) as error:
+            store.advance_agent_run_state(
+                job["id"], job["lease_token"], "DRAFT_CREATED", 0, "SPEC_GENERATING"
+            )
+        assert error.value.code == "agent_state_conflict"
+        assert store.get_strategy_draft(pending["draft_id"], owner_id)["status"] == "SOURCE_READY"
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id=%s", (owner_id,))
+
+
+def test_reclaimed_agent_job_continues_from_its_persisted_state_checkpoint() -> None:
+    from datetime import timedelta
+
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn
+    from app.services.agent_orchestrator import AgentOrchestrator
+    from app.services.authoring import StrategyAuthoringService
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        owner_id = connection.execute(
+            "INSERT INTO users (email, password_hash, display_name, role) "
+            "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+            (f"agent-resume-{uuid4().hex[:12]}@test.local", "x", "Agent Resume Tester"),
+        ).fetchone()[0]
+
+    dsl = {
+        "strategy_id": "generated.agent-resume-rsi", "display_name": "Agent Resume RSI",
+        "family": "momentum", "description": "Long below 30, short above 70.",
+        "parameters": {}, "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+        "rules": {
+            "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+            "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+            "exit": {"op": "opposite_signal"},
+        }, "warmup_bars": 14,
+    }
+    store = Store(DATABASE_URL)
+    try:
+        pending = StrategyAuthoringService(store, object()).submit(
+            StrategyDraftCreateIn(
+                owner_id=owner_id, source=StrategySourceIn(type="dsl", spec=dsl),
+                idempotency_key=f"agent-resume-{uuid4().hex}",
+            )
+        )
+        first_lease = store.claim_agent_job("agent-resume-first", timedelta(seconds=30))
+        assert first_lease is not None
+        store.advance_agent_run_state(
+            first_lease["id"], first_lease["lease_token"], "DRAFT_CREATED", 0, "SOURCE_READY"
+        )
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute(
+                "UPDATE agent_jobs SET lease_expires_at=now()-interval '1 second' WHERE id=%s",
+                (first_lease["id"],),
+            )
+
+        assert AgentOrchestrator(store, StrategyAuthoringService(store, object())).process_once("agent-resume-second")
+        assert store.get_strategy_draft(pending["draft_id"], owner_id)["status"] == "REVIEW_REQUIRED"
+        with psycopg.connect(DATABASE_URL) as connection:
+            transitions = connection.execute(
+                """
+                SELECT transition.state FROM agent_run_transitions transition
+                JOIN agent_runs run ON run.id=transition.agent_run_id
+                WHERE run.draft_id=%s ORDER BY transition.sequence_no
+                """,
+                (pending["draft_id"],),
+            ).fetchall()
+        assert [row[0] for row in transitions] == [
+            "DRAFT_CREATED", "SOURCE_READY", "SPEC_GENERATING", "SPEC_VALIDATING",
+            "CODE_GENERATING", "POLICY_CHECKING", "SANDBOX_TESTING", "REVIEW_REQUIRED",
+        ]
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id=%s", (owner_id,))
+
+
+def test_cancelled_authoring_draft_is_not_claimed_by_the_agent_worker() -> None:
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn
+    from app.services.agent_orchestrator import AgentOrchestrator
+    from app.services.authoring import StrategyAuthoringService
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        owner_id = connection.execute(
+            "INSERT INTO users (email, password_hash, display_name, role) "
+            "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+            (f"agent-cancel-{uuid4().hex[:12]}@test.local", "x", "Agent Cancel Tester"),
+        ).fetchone()[0]
+
+    class DesignerThatMustNotRun:
+        def design(self, _text, _request_id):
+            raise AssertionError("cancelled drafts must not reach the model")
+
+    store = Store(DATABASE_URL)
+    service = StrategyAuthoringService(store, DesignerThatMustNotRun())
+    request = StrategyDraftCreateIn(
+        owner_id=owner_id,
+        source=StrategySourceIn(type="text", text="Use RSI below 30 for long."),
+        idempotency_key=f"agent-cancel-{uuid4().hex}",
+    )
+    try:
+        pending = service.submit(request)
+
+        cancelled = store.cancel_strategy_draft(pending["draft_id"], owner_id)
+
+        assert cancelled["status"] == "CANCELLED"
+        assert AgentOrchestrator(store, service).process_once("cancelled-agent-worker") is False
+        with psycopg.connect(DATABASE_URL) as connection:
+            rows = connection.execute(
+                """
+                SELECT run.state,job.status
+                FROM agent_runs run JOIN agent_jobs job ON job.agent_run_id=run.id
+                WHERE run.draft_id=%s
+                """,
+                (pending["draft_id"],),
+            ).fetchall()
+        assert rows == [("CANCELLED", "cancelled")]
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id=%s", (owner_id,))
+
+
+def test_approved_dsl_strategy_is_resolved_by_the_backtest_worker(dispatcher) -> None:
+    """An approved strategy must run from its persisted immutable runtime spec."""
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import (
+        ExperimentCreateIn,
+        StrategyApprovalIn,
+        StrategyDraftCreateIn,
+        StrategySourceIn,
+        StrategySpecResponse,
+    )
+    from app.services.authoring import StrategyAuthoringService
+
+    seed_job_id, seed_experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_version = _rows(
+        dispatcher,
+        "SELECT owner_id, d.dataset_version FROM experiments e JOIN market_datasets d ON d.id=e.market_dataset_id WHERE e.id=%s",
+        (seed_experiment_id,),
+    )[0]
+    with dispatcher._conn.cursor() as cur:
+        cur.execute("UPDATE backtest_jobs SET status='cancelled' WHERE id=%s", (seed_job_id,))
+    dispatcher._conn.commit()
+
+    class Designer:
+        def design(self, _text, _request_id):
+            return StrategySpecResponse.model_validate(
+                {
+                    "strategy_id": "generated.integration-rsi",
+                    "display_name": "Integration RSI",
+                    "family": "momentum",
+                    "description": "Long below 30, short above 70.",
+                    "parameters": {},
+                    "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+                    "rules": {
+                        "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                        "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+                        "exit": {"op": "opposite_signal"},
+                    },
+                    "warmup_bars": 14,
+                }
+            )
+
+    store = Store(DATABASE_URL)
+    draft = StrategyAuthoringService(store, Designer()).create(
+        StrategyDraftCreateIn(
+            owner_id=owner_id,
+            source=StrategySourceIn(type="text", text="Use RSI 14 for reversal entries."),
+            idempotency_key="integration-generated-rsi",
+        ),
+        "integration-authoring",
+    )
+    assert draft["status"] == "REVIEW_REQUIRED"
+    assert _rows(
+        dispatcher,
+        """
+        SELECT attempt.attempt_no,attempt.status,attempt.error_code
+        FROM agent_attempts attempt
+        JOIN agent_runs run ON run.id=attempt.agent_run_id
+        WHERE run.draft_id=%s
+        ORDER BY attempt.attempt_no
+        """,
+        (draft["draft_id"],),
+    ) == [(1, "passed", None)]
+    assert _rows(
+        dispatcher,
+        """
+        SELECT transition.sequence_no,transition.state
+        FROM agent_run_transitions transition
+        JOIN agent_runs run ON run.id=transition.agent_run_id
+        WHERE run.draft_id=%s
+        ORDER BY transition.sequence_no
+        """,
+        (draft["draft_id"],),
+    ) == list(enumerate([
+        "DRAFT_CREATED", "SOURCE_READY", "SPEC_GENERATING", "SPEC_VALIDATING",
+        "CODE_GENERATING", "POLICY_CHECKING", "SANDBOX_TESTING", "REVIEW_REQUIRED",
+    ]))
+
+    approved = store.approve_strategy_draft(
+        draft["draft_id"],
+        StrategyApprovalIn(
+            reviewer_id=owner_id,
+            revision=draft["current_revision"],
+            spec_hash=draft["spec_hash"],
+            artifact_hash=draft["artifact_hash"],
+            sandbox_report_hash=draft["sandbox_report_hash"],
+            decision="approve",
+            reason="Reviewed immutable DSL artifact.",
+            idempotency_key="integration-generated-rsi-approval",
+        ),
+    )
+    assert approved["status"] == "APPROVED"
+    assert [item["draft_id"] for item in store.list_strategy_drafts(owner_id, 3)] == [draft["draft_id"]]
+
+    accepted = store.create_experiment(
+        ExperimentCreateIn(
+            owner_id=owner_id,
+            strategy_id=approved["strategy_spec"]["strategy_id"],
+            strategy_version="v1",
+            dataset_version=dataset_version,
+            range_from=T0,
+            range_to=T0 + timedelta(minutes=59, seconds=59, milliseconds=999),
+            idempotency_key="integration-generated-rsi-experiment",
+        ),
+        "integration-authoring-backtest",
+    )
+    job = dispatcher.claim("generated-rsi-worker", timedelta(seconds=120))
+    assert job is not None and job.id == accepted["run_id"]
+    from app.worker import BacktestWorker, WorkerConfig
+
+    BacktestWorker(dispatcher, config=WorkerConfig(worker_id="generated-rsi-worker"))._process(job)
+    assert _rows(dispatcher, "SELECT status FROM backtest_jobs WHERE id=%s", (job.id,)) == [("completed",)]
+
+
+def test_approved_custom_python_artifact_requires_deployment_and_never_enters_the_registry(dispatcher) -> None:
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyApprovalIn, StrategyDraftCreateIn, StrategySourceIn
+    from app.services.authoring import StrategyAuthoringService
+
+    with dispatcher._conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (email,password_hash,display_name,role) VALUES (%s,%s,%s,'RESEARCHER') RETURNING id",
+            (f"custom-review-{uuid4().hex[:12]}@test.local", "x", "Custom Review Tester"),
+        )
+        owner_id = cur.fetchone()[0]
+    dispatcher._conn.commit()
+
+    class DesignerThatMustNotRun:
+        def design(self, _text, _request_id):
+            raise AssertionError("custom Python must not call the DSL designer")
+
+    store = Store(DATABASE_URL)
+    try:
+        draft = StrategyAuthoringService(store, DesignerThatMustNotRun()).create(
+            StrategyDraftCreateIn(
+                owner_id=owner_id,
+                mode="custom_python",
+                name_hint="Review-only custom strategy",
+                source=StrategySourceIn(type="text", text="class Strategy:\n    def analyze(self, candles): return []\n"),
+            )
+        )
+        approved = store.approve_strategy_draft(
+            draft["draft_id"],
+            StrategyApprovalIn(
+                reviewer_id=owner_id,
+                revision=draft["current_revision"],
+                spec_hash=draft["spec_hash"],
+                artifact_hash=draft["artifact_hash"],
+                sandbox_report_hash=draft["sandbox_report_hash"],
+                decision="approve",
+                reason="Approved for the external build and deployment pipeline.",
+            ),
+        )
+
+        assert approved["status"] == "APPROVED"
+        assert _rows(dispatcher, "SELECT count(*) FROM strategy_versions WHERE code_fingerprint=%s", (draft["artifact_hash"],)) == [(0,)]
+        assert _rows(
+            dispatcher,
+            "SELECT event_type FROM domain_events WHERE aggregate_id=%s ORDER BY occurred_at DESC LIMIT 1",
+            (draft["draft_id"],),
+        ) == [("StrategyCustomArtifactApprovedForDeployment",)]
+        metrics = store.operational_metrics()
+        assert metrics["research_agent_runs_review_required"] == 1
+        assert metrics["research_sandbox_runs_passed"] == 1
+    finally:
+        with dispatcher._conn.cursor() as cur:
+            cur.execute("DELETE FROM strategy_drafts WHERE owner_id=%s", (owner_id,))
+            cur.execute("DELETE FROM users WHERE id=%s", (owner_id,))
+        dispatcher._conn.commit()

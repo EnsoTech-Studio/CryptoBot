@@ -92,6 +92,11 @@ class TradeFact:
     quantity: Decimal
     fee_paid: Decimal
     slippage_cost: Decimal
+    entry_notional: Decimal | None = None
+    exit_notional: Decimal | None = None
+    spread_cost: Decimal = 0.0
+    gross_pnl: Decimal | None = None
+    net_pnl: Decimal | None = None
     signal_t: datetime | None = None
     exit_time: datetime | None = None
     exit_price: Decimal | None = None

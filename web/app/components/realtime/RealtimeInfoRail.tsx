@@ -1,6 +1,7 @@
 "use client";
 
 import { formatPrice } from "../../../lib/format";
+import { dataSourceLabel } from "../../../lib/data-mode";
 import { useWorkspace, type ConnectionLabel } from "../../providers/workspace";
 import { StatusDot } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
@@ -37,7 +38,7 @@ export function RealtimeInfoRail() {
           </span>
         </div>
         <dl className={styles.telemetry}>
-          <div><dt>Nguồn dữ liệu</dt><dd>{dataMode === "mock" ? "Deterministic mock (không phải Binance)" : selectedMarket.provider}</dd></div>
+          <div><dt>Nguồn dữ liệu</dt><dd>{dataMode === "mock" ? dataSourceLabel(dataMode) : selectedMarket.provider}</dd></div>
           <div><dt>Độ trễ (Latency)</dt><dd>{latencyMs == null ? "—" : `${latencyMs} ms`}</dd></div>
           <div><dt>Dữ liệu cuối</dt><dd>{lastFrameAt ? formatUtcTime(lastFrameAt) : "—"}</dd></div>
           <div><dt>Kết nối</dt><dd>{marketStatusState === "loading" ? "Đang kiểm tra" : reconnectCount === 0 ? "Ổn định" : `${reconnectCount} lần kết nối lại`}</dd></div>

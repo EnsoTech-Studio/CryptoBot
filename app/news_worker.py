@@ -11,7 +11,8 @@ import time
 from datetime import UTC, datetime
 
 from .config import Settings
-from .infrastructure.news import RssNewsProvider
+from .infrastructure.ai import NewsExtractionHTTPAdapter
+from .infrastructure.news import HtmlNewsProvider, RssNewsProvider
 from .infrastructure.postgres.store import Store
 from .infrastructure.sentiment import SentimentHTTPAdapter
 from .services.news import NewsService
@@ -47,7 +48,13 @@ def main() -> int:
     settings = Settings.from_env()
     store = Store(settings.database_url)
     analyzer = SentimentHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
-    service = NewsService(store, RssNewsProvider(), analyzer)
+    service = NewsService(
+        store, {"rss": RssNewsProvider(), "url": HtmlNewsProvider()}, analyzer,
+        NewsExtractionHTTPAdapter(
+            settings.ai_service_url, settings.ai_timeout_s,
+            model=settings.sentiment_model, model_version=settings.sentiment_model_version,
+        ),
+    )
     stop = threading.Event()
 
     def shutdown(*_: object) -> None:
@@ -98,7 +105,7 @@ def main() -> int:
                 next_sentiment = now + sentiment_interval
             stop.wait(min(1.0, max(0.05, min(next_collection, next_sentiment) - now)))
     finally:
-        analyzer.close()
+        service.close()
     return 0
 
 

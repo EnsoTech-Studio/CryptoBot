@@ -45,8 +45,8 @@ PowerShell terminal without a `.` or `\` prefix.
 | `run db` | PostgreSQL only |
 | `run api` | Go API and its required research service |
 | `run research` / `run ai` | One native HTTP service |
-| `run worker` / `run event-worker` / `run news-worker` | One worker process |
-| `run workers` | All three worker processes |
+| `run worker` / `run event-worker` / `run news-worker` / `run agent-worker` | One worker process |
+| `run workers` | All four worker processes |
 | `run stop [service]` | All native services, or one named service/group |
 | `run status` | Native-process and PostgreSQL status |
 | `run logs api` | Follow the latest 100 API log lines |
@@ -71,6 +71,7 @@ Open `http://localhost:3000`, register a user, then use the workspace. The initi
 | `worker` | Canonical Python backtest executor; no public port |
 | `event-worker` | Evaluation/ranking outbox consumer; no public port |
 | `news-worker` | Allowlisted collection and sentiment retry loop; no public port |
+| `agent-worker` | Durable strategy-authoring orchestration; no public port |
 | `ai` | Native optional sentiment inference at `http://127.0.0.1:8000` |
 | `postgres` | The only development container; source of truth, queue, facts, and projections |
 
@@ -196,6 +197,18 @@ docker compose -f docker-compose.test.yml up -d postgres-test
 py -3 -m pytest tests/integration -q
 ```
 
+Failure/recovery evidence uses the same isolated PostgreSQL test database. It
+runs the retry/idempotency baseline plus real worker-process crash rehearsals:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/failure-contract-smoke.ps1 -IncludeIntegration
+```
+
+The queue integration suite starts both a backtest worker and an event worker,
+kills each after lease acquisition, then verifies a replacement process
+reclaims the expired lease and completes exactly once. It is controlled local
+recovery evidence, not a production load benchmark.
+
 The 100k-job claim proof runs inside a transaction and rolls back all generated rows:
 
 ```powershell
@@ -235,5 +248,8 @@ Read in this order:
 2. [`blueprint/README.md`](blueprint/README.md)
 3. [`blueprint/design.md`](blueprint/design.md)
 4. [`blueprint/specs/`](blueprint/specs/)
+5. [`docs/architecture/architectural-drivers.md`](docs/architecture/architectural-drivers.md)
+6. [`docs/note-update-require-status.md`](docs/note-update-require-status.md)
+7. [`blueprint/traceability.md`](blueprint/traceability.md)
 
 The source-of-truth boundary remains: browser -> Go; Go -> research; research -> AI; no live trading.

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as marketConfig from "./market";
 import {
+  DEFAULT_MARKET,
   MARKET_CONFIG_HASH,
+  REFERENCE_MARKET,
   appendMarketEvent,
   buildSubscriptionKey,
   marketRequestPath,
+  mergeOverlayDelta,
   normalizeRealtimeFrame,
   upsertCandle,
   type Candle,
@@ -14,6 +18,18 @@ import {
 } from "./market";
 
 const market: MarketSelection = { provider: "binance_usdm", symbol: "ethusdt" };
+
+test("live startup uses the seeded replay market while reference mode keeps its BTC fixture", () => {
+  assert.equal(DEFAULT_MARKET.symbol, "ETHUSDT");
+  assert.equal(REFERENCE_MARKET.symbol, "BTCUSDT");
+});
+
+test("live dashboard starts its primary panel on the seeded replay interval", () => {
+  assert.deepEqual(
+    (marketConfig as Record<string, unknown>).DEFAULT_PANEL_TIMEFRAMES,
+    ["5m", "15m", "1h", "4h"],
+  );
+});
 
 test("marketRequestPath carries the selected market and request options", () => {
   const path = marketRequestPath("/api/v1/markets/candles", market, { timeframe: "15m", limit: 1_000 });
@@ -60,6 +76,43 @@ test("normalizeRealtimeFrame accepts flat kline frames with numeric strings", ()
   assert.equal(frame.final, true);
   assert.equal(frame.kline?.close, 104);
   assert.equal(frame.kline?.tradeCount, 8);
+});
+
+test("normalizeRealtimeFrame accepts a same-sequence overlay delta", () => {
+  const frame = normalizeRealtimeFrame({
+    type: "overlay_delta",
+    sequence: 9,
+    revised_from: "2026-08-25T10:00:00Z",
+    series: [{ name: "sma:20", overlay_type: "moving_average", pane: "main", points: [{ t: "2026-08-25T10:00:00Z", v: 104 }] }],
+    markers: [],
+  }, market);
+
+  assert.equal(frame.type, "overlay_delta");
+  assert.equal(frame.sequence, 9);
+  assert.equal(frame.overlay?.revisedFrom, "2026-08-25T10:00:00Z");
+  assert.equal(frame.overlay?.series[0].name, "sma:20");
+  assert.equal(frame.overlay?.series[0].points?.[0].v, 104);
+});
+
+test("mergeOverlayDelta replaces revised points without dropping chart history", () => {
+  const result = mergeOverlayDelta({
+    series: [{
+      name: "sma:20", overlay_type: "moving_average", pane: "main" as const,
+      points: [{ t: "2026-08-25T09:59:00Z", v: 103 }, { t: "2026-08-25T10:00:00Z", v: 104 }],
+    }],
+    markers: [],
+  }, {
+    series: [{
+      name: "sma:20", overlay_type: "moving_average", pane: "main",
+      points: [{ t: "2026-08-25T10:00:00Z", v: 105 }],
+    }],
+    markers: [],
+  });
+
+  assert.deepEqual(result.series[0].points, [
+    { t: "2026-08-25T09:59:00Z", v: 103 },
+    { t: "2026-08-25T10:00:00Z", v: 105 },
+  ]);
 });
 
 test("nested BBO payloads normalize and duplicate events are replaced", () => {

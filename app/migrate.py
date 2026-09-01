@@ -97,6 +97,9 @@ def migrate() -> list[str]:
                     if existing[0].strip() != checksum:
                         raise RuntimeError(f"applied migration changed: {path.name}")
                     connection.commit()
+                    if path.name == "003_integrity_and_roles.sql":
+                        _ensure_runtime_logins(connection)
+                        connection.commit()
                     continue
 
                 try:
@@ -106,12 +109,13 @@ def migrate() -> list[str]:
                         (path.name, checksum),
                     )
                     connection.commit()
+                    if path.name == "003_integrity_and_roles.sql":
+                        _ensure_runtime_logins(connection)
+                        connection.commit()
                 except Exception:
                     connection.rollback()
                     raise
                 applied.append(path.name)
-            _ensure_runtime_logins(connection)
-            connection.commit()
         finally:
             connection.execute("SELECT pg_advisory_unlock(hashtext(%s))", (_LOCK_NAME,))
             connection.commit()

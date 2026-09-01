@@ -17,15 +17,17 @@ export function AnalysisRail({
   distribution,
   coverage,
   averageScore,
+  referenceMode,
 }: {
   distribution: SentimentDistribution | null;
   coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number } | null;
   averageScore: number | null;
+  referenceMode: boolean;
 }) {
-  const mix = distribution ?? AGGREGATE_MOCK;
+  const mix = distribution ?? (referenceMode ? AGGREGATE_MOCK : { positive: 0, neutral: 0, negative: 0 });
   const coveragePct = coverage && coverage.items_total > 0
     ? Math.round((coverage.items_analyzed / coverage.items_total) * 100)
-    : ANALYSIS_METRICS.sourceCoveragePct;
+    : referenceMode ? ANALYSIS_METRICS.sourceCoveragePct : 0;
 
   return (
     <>
@@ -34,7 +36,7 @@ export function AnalysisRail({
         action={
           <span className={styles.headStamp}>
             <Icon name="refresh" aria-hidden="true" />
-            Cập nhật: {ANALYSIS_METRICS.updatedAt}
+            Cập nhật: {referenceMode ? ANALYSIS_METRICS.updatedAt : "—"}
           </span>
         }
       >
@@ -63,21 +65,22 @@ export function AnalysisRail({
 
         <span className={styles.railMetric}><span>Event Type (Top)</span></span>
         <div className={styles.eventChips}>
-          {EVENT_TYPES.map((event) => (
+          {(referenceMode ? EVENT_TYPES : []).map((event) => (
             <span key={event.label} className={styles.eventChip}>
               {event.label}
               <b>{event.pct}%</b>
             </span>
           ))}
+          {!referenceMode ? <span className={styles.integrationCaption}>Chưa có dữ liệu phân loại sự kiện.</span> : null}
         </div>
 
         <div className={`${styles.railMetric} ${styles.railGood}`}>
           <span>Confidence Score (TB)</span>
-          <b>{(averageScore ?? ANALYSIS_METRICS.confidenceScore).toFixed(2)}</b>
+          <b>{averageScore === null && !referenceMode ? "—" : (averageScore ?? ANALYSIS_METRICS.confidenceScore).toFixed(2)}</b>
         </div>
         <div className={`${styles.railMetric} ${styles.railBrand}`}>
           <span>Số lượng tin đã phân tích (24h)</span>
-          <b>{(coverage?.items_analyzed ?? ANALYSIS_METRICS.analyzedCount24h).toLocaleString("en-US")}</b>
+          <b>{(coverage?.items_analyzed ?? (referenceMode ? ANALYSIS_METRICS.analyzedCount24h : 0)).toLocaleString("en-US")}</b>
         </div>
         <div className={`${styles.railMetric} ${styles.railGood}`}>
           <span>Độ bao phủ nguồn</span>
@@ -85,7 +88,7 @@ export function AnalysisRail({
         </div>
         <ProgressBar value={coveragePct} label="Độ bao phủ nguồn" />
         <span className={styles.coverageFoot}>
-          Nguồn hoạt động: <b>{coverage ? `${coverage.items_analyzed} / ${coverage.items_total}` : `${ANALYSIS_METRICS.activeSources} / ${ANALYSIS_METRICS.totalSources}`}</b>
+          Tin đã phân tích: <b>{coverage ? `${coverage.items_analyzed} / ${coverage.items_total}` : referenceMode ? `${ANALYSIS_METRICS.activeSources} / ${ANALYSIS_METRICS.totalSources}` : "—"}</b>
         </span>
       </Panel>
 

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$EnvFile = ".env",
-    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker")]
+    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker", "agent-worker")]
     [string[]]$Services = @(),
     [switch]$SkipAI,
     [switch]$SkipWorkers,
@@ -16,7 +16,7 @@ $binaryDirectory = Join-Path $runtimeDirectory "bin"
 $logDirectory = Join-Path $runtimeDirectory "logs"
 $statePath = Join-Path $runtimeDirectory "native-backend-processes.json"
 $venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
-$allServices = @("research", "ai", "worker", "event-worker", "news-worker", "api")
+$allServices = @("research", "ai", "worker", "event-worker", "news-worker", "agent-worker", "api")
 $trackedProcesses = [System.Collections.Generic.List[object]]::new()
 $newProcesses = [System.Collections.Generic.List[object]]::new()
 
@@ -55,6 +55,21 @@ function Import-EnvFile {
 function Get-ProcessEnvironment {
     param([Parameter(Mandatory = $true)][string]$Name)
     return [Environment]::GetEnvironmentVariable($Name, "Process")
+}
+
+function Get-DatabaseTargetLabel {
+    $databaseUrl = Get-ProcessEnvironment "MIGRATION_DATABASE_URL"
+    if ([string]::IsNullOrWhiteSpace($databaseUrl)) {
+        $databaseUrl = Get-ProcessEnvironment "DATABASE_URL"
+    }
+    $lower = $databaseUrl.ToLowerInvariant()
+    if ($lower -match "supabase\.com|pooler\.supabase\.com") {
+        return "Supabase PostgreSQL"
+    }
+    if ($lower -match "//(localhost|127\.0\.0\.1|postgres)(:|/)" -or $lower -match "@(localhost|127\.0\.0\.1|postgres)(:|/)") {
+        return "local PostgreSQL"
+    }
+    return "configured PostgreSQL"
 }
 
 function Set-DefaultEnvironment {
@@ -161,7 +176,8 @@ function Wait-Database {
         }
         Start-Sleep -Seconds 1
     }
-    throw "PostgreSQL did not become reachable within ${TimeoutSeconds}s. Run 'docker compose up -d' first."
+    $target = Get-DatabaseTargetLabel
+    throw "$target did not become reachable within ${TimeoutSeconds}s. Check the database URL, credentials, SSL mode, and network access."
 }
 
 function Wait-HttpReady {
@@ -285,7 +301,7 @@ if ($SkipAI) {
     $targetServices = @($targetServices | Where-Object { $_ -ne "ai" })
 }
 if ($SkipWorkers) {
-    $targetServices = @($targetServices | Where-Object { $_ -notin @("worker", "event-worker", "news-worker") })
+    $targetServices = @($targetServices | Where-Object { $_ -notin @("worker", "event-worker", "news-worker", "agent-worker") })
 }
 if ($targetServices.Count -eq 0) {
     throw "No services selected after applying skip switches."
@@ -308,7 +324,7 @@ foreach ($service in $servicesToStart) {
     }
 }
 
-$databaseServices = @("api", "research", "worker", "event-worker", "news-worker")
+$databaseServices = @("api", "research", "worker", "event-worker", "news-worker", "agent-worker")
 $needsDatabase = @($servicesToStart | Where-Object { $_ -in $databaseServices }).Count -gt 0
 $apiBinary = Join-Path $binaryDirectory "cryptobot-api.exe"
 $go = $null
@@ -365,6 +381,9 @@ try {
     }
     if ($servicesToStart -contains "news-worker") {
         Start-BackendProcess -Name "news-worker" -FilePath $venvPython -Arguments @("-m", "app.news_worker") -WorkingDirectory $repoRoot
+    }
+    if ($servicesToStart -contains "agent-worker") {
+        Start-BackendProcess -Name "agent-worker" -FilePath $venvPython -Arguments @("-m", "app.agent_worker") -WorkingDirectory $repoRoot
     }
     if ($servicesToStart -contains "api") {
         if ($runningNames -contains "research") {

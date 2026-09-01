@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker")]
+    [ValidateSet("api", "research", "ai", "worker", "event-worker", "news-worker", "agent-worker")]
     [string[]]$Services = @()
 )
 
@@ -51,7 +51,7 @@ for ($index = $records.Count - 1; $index -ge 0; $index--) {
 
 if ($remaining.Count -eq 0) {
     Remove-Item -LiteralPath $statePath -Force
-    Write-Host "Requested native services stopped. PostgreSQL is still running in Docker."
+    Write-Host "Requested native services stopped. Database service was not changed."
     return
 }
 

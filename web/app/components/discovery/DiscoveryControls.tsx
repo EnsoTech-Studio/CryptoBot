@@ -56,6 +56,7 @@ export function DiscoveryProgress({
   run,
   draft,
   submittedDraft,
+  referenceMode,
   onAction,
   onStart,
   canStart,
@@ -63,15 +64,17 @@ export function DiscoveryProgress({
   run: SearchRun | null;
   draft: DiscoveryDraft;
   submittedDraft: DiscoveryDraft | null;
+  referenceMode: boolean;
   onAction: (action: "pause" | "resume" | "cancel") => void;
   onStart: () => void;
   canStart: boolean;
 }) {
   const live = run !== null;
-  const tested = run?.candidates.tested ?? PROGRESS_MOCK.tested;
+  const showMock = referenceMode && !live;
+  const tested = run?.candidates.tested ?? (showMock ? PROGRESS_MOCK.tested : 0);
   const generated = run?.candidates.generated ?? 0;
-  const maxCandidates = submittedDraft?.maxCandidates ?? (live ? draft.maxCandidates : PROGRESS_MOCK.maxIterations);
-  const iteration = live ? tested : PROGRESS_MOCK.iteration;
+  const maxCandidates = submittedDraft?.maxCandidates ?? (showMock ? PROGRESS_MOCK.maxIterations : draft.maxCandidates);
+  const iteration = live ? tested : showMock ? PROGRESS_MOCK.iteration : 0;
   const runStrategies = submittedDraft?.selectedStrategyIds ?? [];
 
   return (
@@ -88,7 +91,7 @@ export function DiscoveryProgress({
       <div className={styles.progressBlock}>
         <span className={styles.progressLabel}>Đã kiểm tra</span>
         <span className={styles.progressStat}>
-          {(live ? tested : PROGRESS_MOCK.tested).toLocaleString("en-US")} candidates
+          {tested.toLocaleString("en-US")} candidates
         </span>
       </div>
 
@@ -114,7 +117,7 @@ export function DiscoveryProgress({
               </span>
             </>
           )
-        ) : (
+        ) : showMock ? (
           <>
             <span className={styles.bestRow}>
               {PROGRESS_MOCK.best.parts.map((part, index) => (
@@ -129,7 +132,7 @@ export function DiscoveryProgress({
               <span>Winrate: {PROGRESS_MOCK.best.winratePct.toFixed(2)}%</span>
             </span>
           </>
-        )}
+        ) : <span className={styles.progressLabel}>Chưa có Discovery run.</span>}
       </div>
 
       {live ? (
@@ -144,7 +147,7 @@ export function DiscoveryProgress({
             Huỷ
           </Button>
         </div>
-      ) : (
+      ) : showMock ? (
         <div className={styles.progressMockActions}>
           <PlannedNotice>Số liệu minh hoạ theo thiết kế. Bắt đầu một run để thay bằng dữ liệu thật.</PlannedNotice>
           <div className={styles.runActions}>
@@ -154,7 +157,7 @@ export function DiscoveryProgress({
             </Button>
           </div>
         </div>
-      )}
+      ) : null}
     </Panel>
   );
 }

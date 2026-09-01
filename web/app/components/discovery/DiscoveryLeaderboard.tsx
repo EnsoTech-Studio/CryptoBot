@@ -15,14 +15,17 @@ import styles from "./discovery.module.css";
    Return (%) with the header switched — no fabricated USDT figure. */
 export function DiscoveryLeaderboard({
   entries,
+  referenceMode,
   onRefresh,
   onTrace,
 }: {
   entries: LeaderboardEntry[];
+  referenceMode: boolean;
   onRefresh: () => void;
   onTrace: (id: string) => void;
 }) {
   const live = entries.length > 0;
+  const showMock = referenceMode && !live;
 
   return (
     <Panel
@@ -38,7 +41,7 @@ export function DiscoveryLeaderboard({
             <tr>
               <th>Rank</th>
               <th>Strategy</th>
-              <th>{live ? "Return (%)" : "Profit (USDT)"}</th>
+              <th>{showMock ? "Profit (USDT)" : "Return (%)"}</th>
               <th>Winrate</th>
             </tr>
           </thead>
@@ -57,7 +60,9 @@ export function DiscoveryLeaderboard({
                     <td className={styles.winrateCell}>{entry.win_rate_pct.toFixed(2)}%</td>
                   </tr>
                 ))
-              : LEADERBOARD_MOCK.map((row) => <MockRow key={row.rank} row={row} />)}
+              : showMock
+                ? LEADERBOARD_MOCK.map((row) => <MockRow key={row.rank} row={row} />)
+                : <tr><td className={styles.leaderEmpty} colSpan={4}>Chưa có kết quả Discovery.</td></tr>}
           </tbody>
       </table>
       {live ? (

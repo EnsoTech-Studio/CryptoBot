@@ -39,6 +39,8 @@
   --space-6: 32px;
   --space-7: 48px;
   --page-gutter: clamp(16px, 1.8vw, 30px);
+  --screen-left-offset: 0;
+  --screen-right-overflow: -8px;
 
   /* Shape and layout */
   --radius-inner: 8px;
