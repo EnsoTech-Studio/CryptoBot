@@ -23,8 +23,9 @@ from .domain.common import hash_canonical_json
 from .domain.strategy import Definition
 from .domain.strategy.plugins import default_registry
 from .errors import ApplicationError
+from .infrastructure.ai import NewsExtractionHTTPAdapter, StrategyDesignHTTPAdapter
 from .infrastructure.postgres.store import Store
-from .infrastructure.news import RssNewsProvider, SsrfBlocked, assert_public_https
+from .infrastructure.news import HtmlNewsProvider, RssNewsProvider, SsrfBlocked, assert_public_https
 from .infrastructure.sentiment import (
     ContractViolation,
     SentimentHTTPAdapter,
@@ -51,9 +52,13 @@ from .schemas import (
     SentimentPredictIn,
     SentimentPredictOut,
     StrategyOut,
+    StrategyApprovalIn,
+    StrategyDraftCreateIn,
+    StrategyDraftOut,
     TradeOut,
 )
 from .services.news import NewsService
+from .services.authoring import StrategyAuthoringService
 
 _registry = default_registry()
 
@@ -98,6 +103,9 @@ async def lifespan(application: FastAPI):
     service = getattr(application.state, "news_service", None)
     if service is not None:
         service.close()
+    service = getattr(application.state, "authoring_service", None)
+    if service is not None:
+        service.close()
 
 
 app = FastAPI(
@@ -126,8 +134,26 @@ def _news_service(request: Request) -> NewsService:
     if service is None:
         settings = Settings.from_env()
         analyzer = SentimentHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
-        service = NewsService(_store(request), RssNewsProvider(), analyzer)
+        service = NewsService(
+            _store(request), {"rss": RssNewsProvider(), "url": HtmlNewsProvider()}, analyzer,
+            NewsExtractionHTTPAdapter(
+                settings.ai_service_url, settings.ai_timeout_s,
+                model=settings.sentiment_model, model_version=settings.sentiment_model_version,
+            ),
+        )
         request.app.state.news_service = service
+    return service
+
+
+def _authoring_service(request: Request) -> StrategyAuthoringService:
+    service = getattr(request.app.state, "authoring_service", None)
+    if service is None:
+        settings = Settings.from_env()
+        service = StrategyAuthoringService(
+            _store(request),
+            StrategyDesignHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s),
+        )
+        request.app.state.authoring_service = service
     return service
 
 
@@ -280,8 +306,43 @@ def metrics(request: Request, _auth: Internal) -> str:
 
 
 @app.get("/api/v1/strategies", response_model=dict[str, list[StrategyOut]])
-def list_strategies(_auth: Internal) -> dict[str, list[dict[str, Any]]]:
-    return {"strategies": _strategy_payloads}
+def list_strategies(_auth: Internal, request: Request) -> dict[str, list[dict[str, Any]]]:
+    try:
+        return {"strategies": _store(request).list_strategies()}
+    except Exception:
+        return {"strategies": _strategy_payloads}
+
+
+@app.post("/api/v1/strategy-drafts", response_model=StrategyDraftOut, status_code=202)
+def create_strategy_draft(
+    body: StrategyDraftCreateIn, _auth: Internal, request: Request
+) -> JSONResponse:
+    result = _authoring_service(request).create(body, request.state.request_id)
+    return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=jsonable_encoder(result))
+
+
+@app.get("/api/v1/strategy-drafts", response_model=dict[str, list[StrategyDraftOut]])
+def list_strategy_drafts(
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+) -> dict[str, list[dict[str, Any]]]:
+    return {"drafts": _store(request).list_strategy_drafts(owner_id, limit)}
+
+
+@app.get("/api/v1/strategy-drafts/{draft_id}", response_model=StrategyDraftOut)
+def get_strategy_draft(
+    draft_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
+) -> dict[str, Any]:
+    return _authoring_service(request).get(draft_id, owner_id)
+
+
+@app.post("/api/v1/strategy-drafts/{draft_id}/approval", response_model=StrategyDraftOut)
+def approve_strategy_draft(
+    draft_id: UUID, body: StrategyApprovalIn, _auth: Internal, request: Request
+) -> dict[str, Any]:
+    return _authoring_service(request).approve(draft_id, body)
 
 
 @app.post("/api/v1/experiments", response_model=AcceptedRunOut)

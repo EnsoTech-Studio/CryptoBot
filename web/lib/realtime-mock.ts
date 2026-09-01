@@ -5,6 +5,7 @@ import type {
   OverlayMarker,
   OverlaySeries,
 } from "./api";
+import { PANEL_BOOTSTRAP_CANDLE_LIMIT } from "./market";
 
 export type DisplayTick = {
   id: string;
@@ -59,7 +60,7 @@ const referenceMovingAverage: Record<string, number> = {
 export function createMockPanelData(
   market: MarketSelection,
   timeframe: string,
-  limit = 180,
+  limit = PANEL_BOOTSTRAP_CANDLE_LIMIT,
 ): { candles: Candle[]; series: OverlaySeries[]; markers: OverlayMarker[] } {
   const count = Math.max(40, Math.min(limit, 1_000));
   const minutes = timeframeMinutes[timeframe] ?? 1;

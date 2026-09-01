@@ -15,6 +15,7 @@ export function NewsControls({
   onAsset,
   onRefresh,
   onCrawl,
+  crawlBusy,
 }: {
   mode: SourceMode;
   asset: string;
@@ -23,6 +24,7 @@ export function NewsControls({
   onAsset: (asset: string) => void;
   onRefresh: (minutes: number) => void;
   onCrawl: () => void;
+  crawlBusy: boolean;
 }) {
   return (
     <div className={styles.controlStrip}>
@@ -79,9 +81,10 @@ export function NewsControls({
         <Button
           variant="primary"
           onClick={onCrawl}
+          disabled={crawlBusy}
         >
           <Icon name="play" aria-hidden="true" />
-          Bắt đầu crawl
+          {crawlBusy ? "Đang crawl…" : "Bắt đầu crawl"}
         </Button>
       </div>
     </div>

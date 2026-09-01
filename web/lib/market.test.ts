@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as marketConfig from "./market";
 import {
+  DEFAULT_MARKET,
   MARKET_CONFIG_HASH,
+  REFERENCE_MARKET,
   appendMarketEvent,
   buildSubscriptionKey,
   marketRequestPath,
@@ -14,6 +17,18 @@ import {
 } from "./market";
 
 const market: MarketSelection = { provider: "binance_usdm", symbol: "ethusdt" };
+
+test("live startup uses the seeded replay market while reference mode keeps its BTC fixture", () => {
+  assert.equal(DEFAULT_MARKET.symbol, "ETHUSDT");
+  assert.equal(REFERENCE_MARKET.symbol, "BTCUSDT");
+});
+
+test("live dashboard starts its primary panel on the seeded replay interval", () => {
+  assert.deepEqual(
+    (marketConfig as Record<string, unknown>).DEFAULT_PANEL_TIMEFRAMES,
+    ["5m", "15m", "1h", "4h"],
+  );
+});
 
 test("marketRequestPath carries the selected market and request options", () => {
   const path = marketRequestPath("/api/v1/markets/candles", market, { timeframe: "15m", limit: 1_000 });

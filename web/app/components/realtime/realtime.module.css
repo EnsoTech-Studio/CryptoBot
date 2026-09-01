@@ -1,10 +1,10 @@
 .screen {
   min-width: 0;
-  margin: 0 -8px 0 8px;
+  margin: 0 var(--screen-right-overflow) 0 var(--screen-left-offset);
 }
 
 @media (min-width: 1041px) and (max-height: 800px) {
-  .screen { margin-right: 0; }
+  .screen { margin-right: 0; margin-left: 0; }
 }
 
 .workspace {
@@ -173,7 +173,7 @@
   display: grid;
   min-width: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
 .chartGrid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
@@ -189,7 +189,8 @@
 .chartCard {
   display: flex;
   min-width: 0;
-  min-height: 348px;
+  height: 342px;
+  min-height: 0;
   flex-direction: column;
   overflow: hidden;
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
@@ -199,21 +200,21 @@
 
 .chartHeader {
   display: grid;
-  grid-template-columns: minmax(180px, 220px) auto minmax(38px, 1fr);
+  grid-template-columns: 40% minmax(0, 1fr) auto;
   min-width: 0;
-  min-height: 70px;
+  min-height: 43px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px 4px;
+  padding: 6px 14px 0;
 }
 
 .chartIdentityBlock {
   display: flex;
   min-width: 0;
-  flex-direction: column;
+  flex-direction: row;
   align-items: flex-start;
-  gap: 4px;
+  gap: 0;
 }
 
 .chartIdentity {
@@ -228,40 +229,9 @@
   text-align: left;
 }
 
-.chartTimeframeControl {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-3);
-  font-size: 10px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.chartTimeframeControl select {
-  min-width: 62px;
-  height: 25px;
-  border: 1px solid var(--line-1);
-  border-radius: 6px;
-  background: var(--surface-2);
-  padding: 0 22px 0 8px;
-  color: var(--ink-1);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: var(--weight-bold);
-  text-transform: none;
-}
-
-.chartTimeframeControl select:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 45%, transparent);
-  outline-offset: 1px;
-}
-
 .symbol,
 .timeframeText { color: var(--ink-1); font-family: var(--font-mono); font-size: 13px; font-weight: var(--weight-bold); letter-spacing: -0.02em; }
-.chartSeparator { color: var(--ink-3); font-size: 13px; }
+.chartSeparator { margin: 0 4px; color: var(--ink-3); font-size: 13px; }
 .timeframeText { color: var(--ink-2); }
 
 .liveState { display: inline-flex; align-items: center; color: var(--status-live); }
@@ -281,13 +251,13 @@
   white-space: nowrap;
 }
 
-.quote { display: flex; min-width: 0; align-items: baseline; gap: 6px; white-space: nowrap; }
-.quote strong { color: var(--ink-1); font-family: var(--font-mono); font-size: 13px; font-weight: var(--weight-semibold); letter-spacing: -0.025em; }
+.quote { display: flex; min-width: 0; align-items: baseline; justify-self: start; gap: 6px; white-space: nowrap; }
+.quote strong { color: var(--ink-1); font-family: var(--font-mono); font-size: 14px; font-weight: var(--weight-semibold); letter-spacing: -0.025em; }
 .quote span { font-family: var(--font-mono); font-size: 10px; font-weight: var(--weight-semibold); }
 .positive { color: var(--data-up); }
 .negative { color: var(--data-down); }
 
-.chartMeta { display: flex; min-height: 25px; align-items: center; gap: 8px; padding: 0 14px 6px; }
+.chartMeta { display: flex; min-height: 22px; align-items: center; gap: 8px; padding: 0 14px 4px; }
 
 .signalBadge { display: inline-grid; min-width: 53px; min-height: 27px; place-items: center; border: 1px solid currentColor; border-radius: 5px; padding: 0 7px; font-family: var(--font-mono); font-size: 11px; font-weight: var(--weight-bold); letter-spacing: 0.04em; }
 .chartHeader > .signalBadge { justify-self: end; }
@@ -296,7 +266,7 @@
 .noSignal { background: var(--surface-3); color: var(--ink-3); }
 .overlayValue { overflow: hidden; color: var(--data-series-1); font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
-.chartViewport { min-height: 234px; flex: 1 1 auto; border-top: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); background: var(--chart-bg); }
+.chartViewport { min-height: 0; flex: 1 1 auto; border-top: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); background: var(--chart-bg); }
 .chartViewport :global(.chart-svg) { width: 100%; height: 100%; border: 0; border-radius: 0; }
 
 .chartSkeleton { position: relative; display: grid; min-height: 246px; align-content: end; gap: 13px; overflow: hidden; padding: 24px; background: repeating-linear-gradient(to bottom, transparent 0 48px, var(--chart-grid) 49px 50px); }

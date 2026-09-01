@@ -48,7 +48,7 @@ export const DISCOVERY_METHODS: Array<{
 }> = [
   { value: "random_search", label: "Random Search", description: "Sinh ngẫu nhiên các biến thể theo seed.", icon: "dice", supported: true },
   { value: "domain_guided", label: "Domain-guided Search", description: "Tìm kiếm dựa trên kiến thức và ràng buộc.", icon: "target", supported: true },
-  { value: "genetic", label: "Genetic Search", description: "Tiến hóa qua chọn lọc và lai ghép.", icon: "dna", supported: true },
+  { value: "genetic", label: "Genetic Search", description: "Tiến hóa qua chọn lọc và lai ghép.", icon: "dna", supported: false },
 ];
 
 /* Short labels for chips. The registry display_name ("MA Cross (SMA)") is too

@@ -68,7 +68,7 @@ export function BacktestMetrics({
       <div className={styles.kpiCell}>
         <span className={styles.kpiLabel}>Max Drawdown</span>
         <span className={`${styles.kpiValue} ${styles.loss}`}>
-          {drawdownPct.toFixed(2)}<em>USD</em>
+          {drawdownPct.toFixed(2)}<em>%</em>
         </span>
         <span className={`${styles.kpiCaption} ${styles.loss}`}>{drawdownPct.toFixed(2)}%</span>
         <span className={styles.kpiSpark}>
@@ -81,7 +81,7 @@ export function BacktestMetrics({
         <span className={styles.kpiValue}>{totalTrades}</span>
         <span className={styles.kpiCaption}>100%</span>
         <span className={styles.kpiSpark}>
-          <Bars count={9} />
+          <Bars count={totalTrades > 0 ? 9 : 0} />
         </span>
       </div>
 
@@ -134,10 +134,10 @@ function Donut({ ratio }: { ratio: number }) {
   );
 }
 
-/* Real equity when a run completed; otherwise a fixed illustrative curve so the
-   cell keeps the reference's shape instead of collapsing to a flat line. */
+/* Reference mode keeps its illustrative curve. Live runs with no result remain
+   flat instead of suggesting a performance path that never happened. */
 function Sparkline({ points, rising, isMock }: { points: number[]; rising: boolean; isMock: boolean }) {
-  const series = isMock || points.length < 2 ? illustrative(rising) : points;
+  const series = isMock ? illustrative(rising) : points.length < 2 ? [0, 0] : points;
   const min = Math.min(...series);
   const max = Math.max(...series);
   const span = max - min || 1;

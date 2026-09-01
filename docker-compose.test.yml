@@ -25,6 +25,11 @@ services:
       - ./migrations/009_research_projection_reads.sql:/docker-entrypoint-initdb.d/09_projection_reads.sql:ro
       - ./migrations/010_research_news_projection_read.sql:/docker-entrypoint-initdb.d/10_news_projection.sql:ro
       - ./migrations/011_search_lifecycle_and_correlation.sql:/docker-entrypoint-initdb.d/11_search_lifecycle.sql:ro
+      - ./migrations/012_strategy_authoring.sql:/docker-entrypoint-initdb.d/12_strategy_authoring.sql:ro
+      - ./migrations/013_published_strategy_specs.sql:/docker-entrypoint-initdb.d/13_published_strategy_specs.sql:ro
+      - ./migrations/014_adaptive_news_extraction.sql:/docker-entrypoint-initdb.d/14_adaptive_news_extraction.sql:ro
+      - ./migrations/015_experiment_replay_range.sql:/docker-entrypoint-initdb.d/15_experiment_replay_range.sql:ro
+      - ./migrations/016_strategy_artifact_hash_scope.sql:/docker-entrypoint-initdb.d/16_strategy_artifact_hash_scope.sql:ro
       - ./scripts/queue-scale-proof.sql:/proof/queue-scale-proof.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cryptobot -d cryptobot"]

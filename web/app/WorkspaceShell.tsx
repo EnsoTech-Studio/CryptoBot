@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 
 import { WorkspaceProvider, useWorkspace } from "./providers/workspace";
 import { Inspector } from "./components/Inspector";
@@ -20,6 +21,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const { inspectorOpen, notice } = useWorkspace();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -64,7 +66,7 @@ function Shell({ children }: { children: ReactNode }) {
   }, [navigationOpen]);
 
   return (
-    <div className={`${styles.shell} ${inspectorOpen ? styles.withInspector : ""}`}>
+    <div className={`${styles.shell} ${inspectorOpen ? styles.withInspector : ""}`} data-route={pathname}>
       <a className="skip-link" href="#workspace-main">Đi đến nội dung chính</a>
       <AppSidebar open={navigationOpen} onClose={() => setNavigationOpen(false)} closeButtonRef={closeButtonRef} />
       {navigationOpen ? <button type="button" className={styles.drawerBackdrop} onClick={() => setNavigationOpen(false)} aria-label="Đóng menu" /> : null}

@@ -42,6 +42,31 @@ class FakeStore:
             }
         ]
 
+    def list_strategy_drafts(self, owner_id, limit):
+        self.listed_strategy_owner = owner_id
+        self.listed_strategy_limit = limit
+        now = datetime(2026, 8, 31, tzinfo=UTC)
+        return [
+            {
+                "draft_id": uuid4(),
+                "owner_id": owner_id,
+                "source_type": "text",
+                "mode": "dsl",
+                "name_hint": "RSI mean reversion",
+                "status": "APPROVED",
+                "current_revision": 1,
+                "source_hash": "a" * 64,
+                "spec_hash": "b" * 64,
+                "artifact_hash": "c" * 64,
+                "sandbox_report_hash": "d" * 64,
+                "repair_attempts_used": 1,
+                "repair_attempts_max": 3,
+                "strategy_spec": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+        ]
+
 
 app.state.store = FakeStore()
 app.state.registry_sync_error = None
@@ -79,6 +104,19 @@ def test_strategies_return_real_registry_metadata() -> None:
     assert response.status_code == 200
     strategy_ids = {item["strategy_id"] for item in response.json()["strategies"]}
     assert {"ma_cross", "rsi", "bollinger", "support_resistance", "news_sentiment", "macd", "composite"} <= strategy_ids
+
+
+def test_strategy_draft_list_is_owned_and_bounded() -> None:
+    owner_id = uuid4()
+    response = client.get(
+        "/api/v1/strategy-drafts?limit=3",
+        headers={**TOKEN_HEADERS, "X-User-ID": str(owner_id)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["drafts"][0]["owner_id"] == str(owner_id)
+    assert app.state.store.listed_strategy_owner == owner_id
+    assert app.state.store.listed_strategy_limit == 3
 
 
 def test_leaderboard_requires_dataset_version() -> None:

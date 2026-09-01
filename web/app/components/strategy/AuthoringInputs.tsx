@@ -5,18 +5,22 @@ import { Button, Panel, TextInput } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./strategy.module.css";
 
-/* Column 1. The authoring service is mocked until its API contract lands, so
-   the reference actions stay usable and the sample parse remains visible. */
 export function AuthoringInputs({
   prompt,
   url,
   onPrompt,
   onUrl,
+  onAnalyze,
+  onExtract,
+  busy,
 }: {
   prompt: string;
   url: string;
   onPrompt: (value: string) => void;
   onUrl: (value: string) => void;
+  onAnalyze: () => void;
+  onExtract: () => void;
+  busy: boolean;
 }) {
   return (
     <>
@@ -32,9 +36,12 @@ export function AuthoringInputs({
         <div className={styles.promptActions}>
           <Button
             variant="primary"
+            type="button"
+            disabled={busy || !prompt.trim()}
+            onClick={onAnalyze}
           >
             <Icon name="wand" aria-hidden="true" />
-            Phân tích bằng LLM
+            {busy ? "Đang phân tích…" : "Phân tích bằng LLM"}
           </Button>
           <Button variant="secondary" onClick={() => onPrompt("")}>
             <Icon name="trash" aria-hidden="true" />
@@ -57,9 +64,11 @@ export function AuthoringInputs({
         <button
           type="button"
           className={styles.extractButton}
+          disabled={busy || !url.trim()}
+          onClick={onExtract}
         >
           <Icon name="globe" aria-hidden="true" />
-          Trích xuất từ website
+          {busy ? "Đang trích xuất…" : "Trích xuất từ website"}
         </button>
       </Panel>
     </>

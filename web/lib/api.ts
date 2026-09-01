@@ -1,6 +1,7 @@
 import {
   DEFAULT_MARKET,
   MARKET_CONFIG_HASH,
+  PANEL_BOOTSTRAP_CANDLE_LIMIT,
   marketRequestPath,
   type Candle,
   type MarketPair,
@@ -69,10 +70,49 @@ export type Strategy = {
   display_name: string;
   description: string;
   parameters_schema: Record<string, unknown>;
+  default_params: Record<string, unknown>;
   overlay_types: string[];
   warm_up_candles: number;
   is_composite: boolean;
   code_fingerprint: string;
+};
+
+export type StrategyExecution = {
+  strategy_id: string;
+  strategy_version?: string;
+  parameters?: Record<string, unknown>;
+  weight: number;
+};
+
+export type StrategySpec = {
+  schema_version: string;
+  strategy_id: string;
+  display_name: string;
+  family: "trend" | "momentum" | "volatility" | "structure" | "information";
+  description: string;
+  parameters: Record<string, Record<string, unknown>>;
+  indicators: Array<Record<string, unknown>>;
+  rules: Record<string, unknown>;
+  warmup_bars: number;
+};
+
+export type StrategyDraft = {
+  draft_id: string;
+  owner_id: string;
+  source_type: "text" | "approved_url" | "dsl";
+  mode: "dsl" | "custom_python";
+  name_hint: string | null;
+  status: string;
+  current_revision: number;
+  source_hash: string;
+  spec_hash: string | null;
+  artifact_hash: string | null;
+  sandbox_report_hash: string | null;
+  repair_attempts_used: number;
+  repair_attempts_max: number;
+  strategy_spec: StrategySpec | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Metrics = {
@@ -97,6 +137,8 @@ export type ExperimentSummary = {
   strategy_version: string;
   candidate_hash: string;
   dataset_version: string;
+  range_from: string;
+  range_to: string;
   content_hash: string;
   created_at: string;
   candles_read: number;
@@ -347,6 +389,12 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_00
 }
 
 export const api = {
+  register(email: string, password: string, displayName: string) {
+    return request<{ user: User }>("/api/v1/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, display_name: displayName }),
+    });
+  },
   login(email: string, password: string) {
     return request<{ user: User }>("/api/v1/auth/login", {
       method: "POST",
@@ -362,13 +410,50 @@ export const api = {
   strategies() {
     return request<{ strategies: Strategy[] }>("/api/v1/strategies");
   },
+  createStrategyDraft(
+    source: { type: "text"; text: string } | { type: "approved_url"; url: string },
+    nameHint?: string,
+  ) {
+    return request<StrategyDraft>("/api/v1/strategy-drafts", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "dsl",
+        source,
+        name_hint: nameHint || undefined,
+        idempotency_key: `strategy-draft-${Date.now()}`,
+      }),
+    }, 30_000);
+  },
+  strategyDrafts(limit = 10) {
+    return request<{ drafts: StrategyDraft[] }>(`/api/v1/strategy-drafts?limit=${Math.min(20, Math.max(1, limit))}`);
+  },
+  approveStrategyDraft(
+    draft: StrategyDraft,
+    reason = "Đã kiểm tra spec, artifact và sandbox fingerprint.",
+  ) {
+    if (!draft.spec_hash || !draft.artifact_hash || !draft.sandbox_report_hash) {
+      throw new Error("Draft chưa có đủ fingerprint để approve");
+    }
+    return request<StrategyDraft>(`/api/v1/strategy-drafts/${draft.draft_id}/approval`, {
+      method: "POST",
+      body: JSON.stringify({
+        revision: draft.current_revision,
+        spec_hash: draft.spec_hash,
+        artifact_hash: draft.artifact_hash,
+        sandbox_report_hash: draft.sandbox_report_hash,
+        decision: "approve",
+        reason,
+        idempotency_key: `strategy-approval-${draft.draft_id}-${draft.current_revision}`,
+      }),
+    });
+  },
   marketPairs() {
     return request<{ pairs: MarketPair[] }>("/api/v1/markets/pairs", {}, 2_500);
   },
   marketStatus(market: MarketSelection, timeframe: string) {
     return request<MarketStatus>(marketRequestPath("/api/v1/markets/status", market, { timeframe }));
   },
-  candles(market: MarketSelection, timeframe: string, limit = 180) {
+  candles(market: MarketSelection, timeframe: string, limit = PANEL_BOOTSTRAP_CANDLE_LIMIT) {
     return request<{ candles: Candle[] }>(
       marketRequestPath("/api/v1/markets/candles", market, { timeframe, limit }),
     ).then((payload) => ({
@@ -376,7 +461,7 @@ export const api = {
       candles: payload.candles.map(normalizeCandle),
     }));
   },
-  overlays(market: MarketSelection, timeframe: string, strategy = "composite@v1", limit = 180) {
+  overlays(market: MarketSelection, timeframe: string, strategy = "composite@v1", limit = PANEL_BOOTSTRAP_CANDLE_LIMIT) {
     return request<{
       series: OverlaySeries[];
       markers: OverlayMarker[];
@@ -409,28 +494,42 @@ export const api = {
     });
   },
   async createExperiment(
-    children: Array<{ strategy_id: string; weight: number }>,
+    children: StrategyExecution[],
     market: MarketSelection = DEFAULT_MARKET,
     timeframe = "5m",
     execution: ExecutionSettings = DEFAULT_EXECUTION,
+    range?: { from: string; to: string },
   ) {
     const dataset = await ensureDataset(market, timeframe);
+    const isSingleStrategy = children.length === 1;
+    const single = children[0];
+    const replayRange = range ? boundedReplayRange(range, dataset) : undefined;
     return request<{ run_id: string; experiment_id: string; status: string }>("/api/v1/experiments", {
       method: "POST",
       body: JSON.stringify({
         provider: market.provider,
         symbol: market.symbol,
         timeframe,
-        strategy_id: "composite",
-        strategy_version: "v1",
+        strategy_id: isSingleStrategy ? single.strategy_id : "composite",
+        strategy_version: isSingleStrategy ? single.strategy_version ?? "v1" : "v1",
+        ...(isSingleStrategy ? {
+          candidate_definition: {
+            strategy_id: single.strategy_id,
+            version: single.strategy_version ?? "v1",
+            parameters: single.parameters ?? {},
+          },
+        } : {}),
         dataset_version: dataset.dataset_version,
-        children: children.map((child) => ({
-          strategy_id: child.strategy_id,
-          version: "v1",
-          weight: child.weight,
-          parameters: defaultParams(child.strategy_id),
-        })),
-        combination: { policy: execution.policy, threshold: execution.threshold },
+        ...(replayRange ? { range_from: replayRange.from, range_to: replayRange.to } : {}),
+        ...(isSingleStrategy ? {} : {
+          children: children.map((child) => ({
+            strategy_id: child.strategy_id,
+            version: child.strategy_version ?? "v1",
+            weight: child.weight,
+            parameters: child.parameters ?? {},
+          })),
+          combination: { policy: execution.policy, threshold: execution.threshold },
+        }),
         initial_equity: execution.initialEquity,
         fixed_notional: execution.fixedNotional,
         leverage: execution.leverage,
@@ -511,9 +610,13 @@ export const api = {
   /* Takes the visible draft. The previous signature ignored its arguments and
      posted a fixed 6-strategy domain_guided payload, so the on-screen method,
      weights and limits were decoration. */
-  async startSearch(draft: DiscoveryDraft) {
+  async startSearch(draft: DiscoveryDraft, children?: StrategyExecution[]) {
     const dataset = await ensureDataset(draft.market, draft.timeframe);
     const weights = normalizeWeights(draft.selectedStrategyIds, draft.weights);
+    const executionChildren: StrategyExecution[] = children ?? draft.selectedStrategyIds.map((strategy_id) => ({
+      strategy_id,
+      weight: weights[strategy_id],
+    }));
     return request<ResearchSearchRun>("/api/v1/search-runs", {
       method: "POST",
       body: JSON.stringify({
@@ -538,11 +641,11 @@ export const api = {
           range_to: dataset.range_to,
         },
         execution: {
-          children: draft.selectedStrategyIds.map((id) => ({
-            strategy_id: id,
-            version: "v1",
-            weight: weights[id],
-            parameters: defaultParams(id),
+          children: executionChildren.map((child) => ({
+            strategy_id: child.strategy_id,
+            version: child.strategy_version ?? "v1",
+            weight: child.weight,
+            parameters: child.parameters ?? {},
           })),
         },
         seed: draft.seed,
@@ -587,6 +690,12 @@ export const api = {
       },
     }));
   },
+  collectNews(sourceId?: string) {
+    return request<{ results: Array<Record<string, unknown>> }>("/api/v1/admin/news/collect", {
+      method: "POST",
+      body: JSON.stringify({ source_id: sourceId ?? null }),
+    });
+  },
   predict(text: string) {
     return request<Prediction>("/api/v1/ai/predict", {
       method: "POST",
@@ -595,27 +704,22 @@ export const api = {
   },
 };
 
-/* Parameter names must match the plugin schemas in
-   app/domain/strategy/plugins/ exactly — an unrecognized key is silently
-   ignored and the strategy quietly runs on its own defaults. */
-function defaultParams(strategyID: string): Record<string, number> {
-  switch (strategyID) {
-    case "ma_cross":
-    case "ema_cross":
-      return { fast: 20, slow: 50 };
-    case "rsi":
-      return { period: 14, oversold: 30, overbought: 70 };
-    case "bollinger":
-      return { period: 20, deviation: 2 };
-    case "support_resistance":
-      return { period: 20 };
-    case "news_sentiment":
-      return { buy_above: 0.45, sell_below: -0.45, min_items: 3 };
-    case "macd":
-      return { fast: 12, slow: 26, signal: 9 };
-    default:
-      return {};
-  }
+function utcStart(date: string): string {
+  return new Date(`${date}T00:00:00.000Z`).toISOString();
+}
+
+function utcEndExclusive(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString();
+}
+
+function boundedReplayRange(range: { from: string; to: string }, dataset: MarketDataset) {
+  const from = utcStart(range.from);
+  const to = utcEndExclusive(range.to);
+  return {
+    from: new Date(from) < new Date(dataset.range_from) ? dataset.range_from : from,
+    to: new Date(to) > new Date(dataset.range_to) ? dataset.range_to : to,
+  };
 }
 
 export function wsURL(subscriptionKey: string): string {

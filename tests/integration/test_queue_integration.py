@@ -52,6 +52,7 @@ def dispatcher():
         cur.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
     d._conn.commit()
     yield d
+    d._conn.rollback()
     with d._conn.cursor() as cur:
         cur.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
     d._conn.commit()
@@ -134,11 +135,11 @@ def seed_experiment(d, candidate: dict, strategy_id: str = "composite") -> tuple
             """
             INSERT INTO experiments (owner_id, strategy_version_id, candidate_definition,
                                      candidate_hash, market_dataset_id, bbo_dataset_hash,
-                                     evaluator_version)
-            VALUES (%s, %s, %s, %s, %s, %s, 'v1') RETURNING id
+                                     evaluator_version, replay_range_from, replay_range_to)
+            VALUES (%s, %s, %s, %s, %s, %s, 'v1', %s, %s) RETURNING id
             """,
             (user_id, versions[strategy_id], psycopg.types.json.Jsonb(candidate),
-             "c" * 64, dataset_id, "b" * 64),
+             "c" * 64, dataset_id, "b" * 64, candles[0][0], candles[-1][1]),
         )
         experiment_id = cur.fetchone()[0]
         cur.execute(
@@ -349,10 +350,12 @@ def test_claim_enforces_per_user_concurrency_quota(dispatcher) -> None:
             """
             INSERT INTO experiments(
                 owner_id,strategy_version_id,candidate_definition,candidate_hash,
-                market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id
+                market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id,
+                replay_range_from,replay_range_to
             )
             SELECT owner_id,strategy_version_id,candidate_definition,%s,
-                   market_dataset_id,bbo_dataset_hash,evaluator_version,%s
+                   market_dataset_id,bbo_dataset_hash,evaluator_version,%s,
+                   replay_range_from,replay_range_to
             FROM experiments WHERE id=%s RETURNING id
             """,
             ("d" * 64, "quota-correlation", first_experiment_id),
@@ -389,6 +392,46 @@ def test_database_rejects_invalid_search_stop_contract(dispatcher) -> None:
                 (owner_id, dataset_id),
             )
     dispatcher._conn.rollback()
+
+
+def test_search_run_uses_its_immutable_dataset_range(dispatcher) -> None:
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import SearchRunCreateIn
+
+    _, experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_version = _rows(
+        dispatcher,
+        "SELECT owner_id,dataset_version FROM experiments e JOIN market_datasets d ON d.id=e.market_dataset_id WHERE e.id=%s",
+        (experiment_id,),
+    )[0]
+    request = SearchRunCreateIn.model_validate({
+        "owner_id": owner_id,
+        "generator_id": "random_search",
+        "search_space": {
+            "strategy_ids": ["ma_cross"],
+            "cardinality": [1],
+            "policies": ["weighted_vote"],
+            "parameter_grid": {},
+        },
+        "stop_conditions": {"max_candidates": 1},
+        "dataset_version": dataset_version,
+        "seed": 7,
+    })
+
+    created = Store(DATABASE_URL).create_search_run(request)
+
+    assert created["generated"] == 1
+    assert _rows(
+        dispatcher,
+        """
+        SELECT e.replay_range_from,e.replay_range_to,d.range_from,d.range_to
+        FROM experiments e
+        JOIN search_candidates c ON c.experiment_id=e.id
+        JOIN market_datasets d ON d.id=e.market_dataset_id
+        WHERE c.search_run_id=%s
+        """,
+        (created["search_run_id"],),
+    ) == [(T0, T0 + timedelta(minutes=59, seconds=59, milliseconds=999), T0, T0 + timedelta(minutes=59, seconds=59, milliseconds=999))]
 
 
 def test_lost_lease_mid_persist_rolls_back_completely(dispatcher) -> None:
@@ -598,3 +641,150 @@ def test_research_http_create_is_async_idempotent_and_queryable(dispatcher) -> N
         assert correlation == [("itest-http-create", "itest-http-create")]
     finally:
         app.state.store = previous_store
+
+
+def test_identical_dsl_drafts_are_reviewable_by_different_owners() -> None:
+    """Identical safe artifacts are evidence per draft, not a global singleton."""
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import StrategyDraftCreateIn, StrategySourceIn, StrategySpecResponse
+    from app.services.authoring import StrategyAuthoringService
+
+    owner_ids = []
+    with psycopg.connect(DATABASE_URL) as connection:
+        with connection.cursor() as cur:
+            for index in range(2):
+                cur.execute(
+                    "INSERT INTO users (email, password_hash, display_name, role) "
+                    "VALUES (%s, %s, %s, 'RESEARCHER') RETURNING id",
+                    (f"same-dsl-{uuid4().hex[:12]}-{index}@test.local", "x", "Same DSL Tester"),
+                )
+                owner_ids.append(cur.fetchone()[0])
+
+    strategy_suffix = uuid4().hex[:8]
+
+    class Designer:
+        def design(self, _text, _request_id):
+            return StrategySpecResponse.model_validate(
+                {
+                    "strategy_id": f"generated.same-dsl-{strategy_suffix}",
+                    "display_name": "Same DSL",
+                    "family": "momentum",
+                    "description": "Long below 30, short above 70.",
+                    "parameters": {},
+                    "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+                    "rules": {
+                        "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                        "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+                        "exit": {"op": "opposite_signal"},
+                    },
+                    "warmup_bars": 14,
+                }
+            )
+
+    try:
+        service = StrategyAuthoringService(Store(DATABASE_URL), Designer())
+        drafts = [
+            service.create(
+                StrategyDraftCreateIn(
+                    owner_id=owner_id,
+                    source=StrategySourceIn(type="text", text="Use RSI 14 for reversal entries."),
+                    idempotency_key=f"same-dsl-{index}",
+                )
+            )
+            for index, owner_id in enumerate(owner_ids)
+        ]
+
+        assert [draft["status"] for draft in drafts] == ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+        assert drafts[0]["draft_id"] != drafts[1]["draft_id"]
+        assert drafts[0]["artifact_hash"] == drafts[1]["artifact_hash"]
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM users WHERE id IN (%s, %s)", owner_ids)
+
+
+def test_approved_dsl_strategy_is_resolved_by_the_backtest_worker(dispatcher) -> None:
+    """An approved strategy must run from its persisted immutable runtime spec."""
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import (
+        ExperimentCreateIn,
+        StrategyApprovalIn,
+        StrategyDraftCreateIn,
+        StrategySourceIn,
+        StrategySpecResponse,
+    )
+    from app.services.authoring import StrategyAuthoringService
+
+    seed_job_id, seed_experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_version = _rows(
+        dispatcher,
+        "SELECT owner_id, d.dataset_version FROM experiments e JOIN market_datasets d ON d.id=e.market_dataset_id WHERE e.id=%s",
+        (seed_experiment_id,),
+    )[0]
+    with dispatcher._conn.cursor() as cur:
+        cur.execute("UPDATE backtest_jobs SET status='cancelled' WHERE id=%s", (seed_job_id,))
+    dispatcher._conn.commit()
+
+    class Designer:
+        def design(self, _text, _request_id):
+            return StrategySpecResponse.model_validate(
+                {
+                    "strategy_id": "generated.integration-rsi",
+                    "display_name": "Integration RSI",
+                    "family": "momentum",
+                    "description": "Long below 30, short above 70.",
+                    "parameters": {},
+                    "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+                    "rules": {
+                        "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                        "short_entry": {"op": "above", "left": "rsi14", "right": 70},
+                        "exit": {"op": "opposite_signal"},
+                    },
+                    "warmup_bars": 14,
+                }
+            )
+
+    store = Store(DATABASE_URL)
+    draft = StrategyAuthoringService(store, Designer()).create(
+        StrategyDraftCreateIn(
+            owner_id=owner_id,
+            source=StrategySourceIn(type="text", text="Use RSI 14 for reversal entries."),
+            idempotency_key="integration-generated-rsi",
+        ),
+        "integration-authoring",
+    )
+    assert draft["status"] == "REVIEW_REQUIRED"
+
+    approved = store.approve_strategy_draft(
+        draft["draft_id"],
+        StrategyApprovalIn(
+            reviewer_id=owner_id,
+            revision=draft["current_revision"],
+            spec_hash=draft["spec_hash"],
+            artifact_hash=draft["artifact_hash"],
+            sandbox_report_hash=draft["sandbox_report_hash"],
+            decision="approve",
+            reason="Reviewed immutable DSL artifact.",
+            idempotency_key="integration-generated-rsi-approval",
+        ),
+    )
+    assert approved["status"] == "APPROVED"
+    assert [item["draft_id"] for item in store.list_strategy_drafts(owner_id, 3)] == [draft["draft_id"]]
+
+    accepted = store.create_experiment(
+        ExperimentCreateIn(
+            owner_id=owner_id,
+            strategy_id=approved["strategy_spec"]["strategy_id"],
+            strategy_version="v1",
+            dataset_version=dataset_version,
+            range_from=T0,
+            range_to=T0 + timedelta(minutes=59, seconds=59, milliseconds=999),
+            idempotency_key="integration-generated-rsi-experiment",
+        ),
+        "integration-authoring-backtest",
+    )
+    job = dispatcher.claim("generated-rsi-worker", timedelta(seconds=120))
+    assert job is not None and job.id == accepted["run_id"]
+    from app.worker import BacktestWorker, WorkerConfig
+
+    BacktestWorker(dispatcher, config=WorkerConfig(worker_id="generated-rsi-worker"))._process(job)
+    assert _rows(dispatcher, "SELECT status FROM backtest_jobs WHERE id=%s", (job.id,)) == [("completed",)]

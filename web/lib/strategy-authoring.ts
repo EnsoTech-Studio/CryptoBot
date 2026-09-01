@@ -1,7 +1,6 @@
-/* Reference-exact content for the Strategy Engine authoring screen. No
-   authoring API exists (see ui-refactor-plans/02, §3 "Required public
-   contracts"), so the parsed summary, JSON and library rows are fixed
-   illustrations and every action is visibly disabled. */
+/* Reference-exact defaults for the Strategy Engine authoring screen. Live
+   authoring rows come from the owner's draft list; fixtures are only for the
+   explicit UI-reference mode. */
 
 export const SAMPLE_PROMPT =
   "Khi RSI dưới 30 và giá nằm dưới Bollinger Lower Band thì LONG. Stop loss 2%, take profit 4%.";
@@ -93,31 +92,79 @@ export const SAVE_FORM = {
 export const SOURCE_OPTIONS = ["USER_PROMPT", "WEB_IMPORT", "MANUAL_JSON"] as const;
 
 export type ImportRow = {
+  strategyId: string | null;
   name: string;
-  source: "USER_PROMPT" | "WEB_IMPORT";
+  source: "USER_PROMPT" | "WEB_IMPORT" | "MANUAL_DSL";
   createdAt: string;
   version: string;
   tags: string[];
-  valid: boolean;
+  status: "approved" | "review" | "rejected" | "failed";
+};
+
+export type RecentImportDraft = {
+  source_type: "text" | "approved_url" | "dsl";
+  status: string;
+  name_hint: string | null;
+  current_revision: number;
+  created_at: string;
+  strategy_spec: {
+    strategy_id: string;
+    display_name: string;
+    indicators: Array<Record<string, unknown>>;
+  } | null;
 };
 
 export const IMPORT_ROWS: ImportRow[] = [
   {
+    strategyId: null,
     name: "RSI_BB_LB_LONG_SL2_TP4",
     source: "USER_PROMPT",
     createdAt: "20/05/2025 10:42",
     version: "1.0.0",
     tags: ["RSI", "BB", "Long"],
-    valid: true,
+    status: "approved",
   },
   {
+    strategyId: null,
     name: "MACD_Cross_TrendFollow",
     source: "WEB_IMPORT",
     createdAt: "19/05/2025 16:30",
     version: "1.2.1",
     tags: ["MACD", "Trend", "Swing"],
-    valid: true,
+    status: "approved",
   },
 ];
+
+export function recentImportRows(drafts: RecentImportDraft[], useReferenceFixtures = false): ImportRow[] {
+  if (drafts.length === 0) return useReferenceFixtures ? IMPORT_ROWS : [];
+  return drafts.map((draft) => ({
+    strategyId: draft.strategy_spec?.strategy_id ?? null,
+    name: draft.strategy_spec?.display_name ?? draft.name_hint ?? "Strategy draft",
+    source: draft.source_type === "approved_url" ? "WEB_IMPORT" : draft.source_type === "dsl" ? "MANUAL_DSL" : "USER_PROMPT",
+    createdAt: formatImportedAt(draft.created_at),
+    version: `v${draft.current_revision}`,
+    tags: tagsForDraft(draft),
+    status: draft.status === "APPROVED" ? "approved" : draft.status === "REJECTED" ? "rejected" : draft.status === "FAILED" ? "failed" : "review",
+  }));
+}
+
+function tagsForDraft(draft: RecentImportDraft): string[] {
+  const aliases: Record<string, string> = { bollinger: "BB", support_resistance: "S/R" };
+  const tags = (draft.strategy_spec?.indicators ?? [])
+    .map((indicator) => typeof indicator.kind === "string" ? indicator.kind : "")
+    .filter(Boolean)
+    .map((kind) => aliases[kind] ?? kind.toUpperCase());
+  return [...new Set(tags)].slice(0, 3);
+}
+
+function formatImportedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(date);
+}
 
 export const PROMPT_LIMIT = 1000;

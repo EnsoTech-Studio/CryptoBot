@@ -19,6 +19,7 @@ export function BacktestChart({
   markers,
   executionMarkers,
   isMock,
+  empty,
   onInspect,
 }: {
   draft: BacktestDraft;
@@ -28,8 +29,16 @@ export function BacktestChart({
   markers: OverlayMarker[];
   executionMarkers: ExecutionMarker[];
   isMock: boolean;
+  empty: boolean;
   onInspect: () => void;
 }) {
+  if (empty) {
+    return (
+      <Panel title={`Biểu đồ Backtest (${draft.market.symbol} · ${draft.timeframe})`}>
+        <div className={styles.chartEmpty}>Chạy backtest để xem nến, tín hiệu và các lệnh đã khớp.</div>
+      </Panel>
+    );
+  }
   const mock = isMock ? createMockPanelData(draft.market, draft.timeframe, 180) : null;
   const shownCandles = mock ? mock.candles : candles;
   const shownSeries = mock

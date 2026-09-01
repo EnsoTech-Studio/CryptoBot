@@ -5,6 +5,8 @@ export type IconName =
   | "arrow-down"
   | "arrow-up"
   | "bar-chart"
+  | "bitcoin"
+  | "bollinger"
   | "bell"
   | "calendar"
   | "candles"
@@ -26,12 +28,14 @@ export type IconName =
   | "download"
   | "document"
   | "expand"
+  | "ethereum"
   | "flask"
   | "globe"
   | "graduation"
   | "help"
   | "info"
   | "link"
+  | "ma"
   | "menu"
   | "minus"
   | "more-vertical"
@@ -42,6 +46,8 @@ export type IconName =
   | "rss"
   | "save"
   | "scale"
+  | "solana"
+  | "support-resistance"
   | "settings"
   | "shield"
   | "sliders"
@@ -50,7 +56,8 @@ export type IconName =
   | "trash"
   | "trophy"
   | "user"
-  | "wand";
+  | "wand"
+  | "wyckoff";
 
 type IconProps = Omit<SVGProps<SVGSVGElement>, "children"> & {
   name: IconName;
@@ -86,6 +93,10 @@ function IconPaths({ name }: { name: IconName }) {
       return <><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></>;
     case "bar-chart":
       return <><path d="M5 20v-6M10 20V8M15 20v-9M20 20V5" /></>;
+    case "bitcoin":
+      return <><circle cx="12" cy="12" r="8.5" /><path d="M10 6.5v11M14 6.5v11M8 9h5.2a2.5 2.5 0 0 1 0 5H8h5.5a2.5 2.5 0 0 1 0 5H8" /></>;
+    case "bollinger":
+      return <><path d="M3 6h5M16 6h5M3 12h18M3 18h5M16 18h5" /><circle cx="12" cy="12" r="3.2" /></>;
     case "bell":
       return <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>;
     case "calendar":
@@ -128,6 +139,8 @@ function IconPaths({ name }: { name: IconName }) {
       return <><path d="M6 2h8l4 4v16H6Z" /><path d="M14 2v5h5M9 12h6M9 16h6" /></>;
     case "expand":
       return <><path d="M9 4H4v5M20 9V4h-5M15 20h5v-5M4 15v5h5" /></>;
+    case "ethereum":
+      return <><path d="m12 3-5 9 5 3 5-3Z" /><path d="m7 13 5 8 5-8-5 3Z" /></>;
     case "flask":
       return <><path d="M9 3h6M10 3v6l-5 8.5A2.3 2.3 0 0 0 7 21h10a2.3 2.3 0 0 0 2-3.5L14 9V3" /><path d="M7.6 16h8.8" /><circle cx="10" cy="18" r=".65" fill="currentColor" stroke="none" /><circle cx="14.5" cy="14" r=".65" fill="currentColor" stroke="none" /></>;
     case "globe":
@@ -140,6 +153,8 @@ function IconPaths({ name }: { name: IconName }) {
       return <><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><path d="M12 7h.01" /></>;
     case "link":
       return <><path d="M10 13.8a4.2 4.2 0 0 0 6 0l2.6-2.6a4.2 4.2 0 0 0-6-6l-1.3 1.3" /><path d="M14 10.2a4.2 4.2 0 0 0-6 0L5.4 12.8a4.2 4.2 0 0 0 6 6l1.3-1.3" /></>;
+    case "ma":
+      return <><path d="M3 17c3-5 5-9 8-6s4 8 10-4" /><path d="M3 9c3 3 5 5 8 2s5-5 10-2" /></>;
     case "menu":
       return <><path d="M4 7h16M4 12h16M4 17h16" /></>;
     case "minus":
@@ -160,6 +175,10 @@ function IconPaths({ name }: { name: IconName }) {
       return <><path d="M5.2 4h10.3L20 8.5V20H5.2A1.2 1.2 0 0 1 4 18.8V5.2A1.2 1.2 0 0 1 5.2 4Z" /><path d="M8 4v5h7M8 20v-5.5h8V20" /></>;
     case "scale":
       return <><path d="M12 4v16M6 20h12" /><path d="M4 8h16M6.5 8 4 13.5h5ZM17.5 8 15 13.5h5Z" /></>;
+    case "support-resistance":
+      return <><path d="M3 7h18M3 12h18M3 17h18" /><path d="M7 5v4M17 10v4M11 15v4" /></>;
+    case "solana":
+      return <><path d="M5 6h13l-3 3H2Z" /><path d="M8 11h13l-3 3H5Z" /><path d="M5 16h13l-3 3H2Z" /></>;
     case "settings":
       return <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>;
     case "shield":
@@ -178,6 +197,8 @@ function IconPaths({ name }: { name: IconName }) {
       return <><circle cx="12" cy="8" r="4" /><path d="M4.8 21a7.2 7.2 0 0 1 14.4 0" /></>;
     case "wand":
       return <><path d="m5 19 9.5-9.5" /><path d="m17 3 .8 2.2L20 6l-2.2.8L17 9l-.8-2.2L14 6l2.2-.8L17 3Z" /><path d="m8 4 .5 1.5L10 6l-1.5.5L8 8l-.5-1.5L6 6l1.5-.5L8 4Z" /><path d="m19 13 .4 1.1 1.1.4-1.1.4L19 16l-.4-1.1-1.1-.4 1.1-.4L19 13Z" /></>;
+    case "wyckoff":
+      return <><rect x="3.5" y="5" width="7" height="8" rx="1" /><rect x="13.5" y="11" width="7" height="8" rx="1" /><path d="m10.5 9 3 4M7 13v4M17 5v6" /></>;
     default:
       return null;
   }

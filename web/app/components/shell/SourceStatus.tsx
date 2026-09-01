@@ -1,4 +1,5 @@
 import { StatusDot, type StatusTone } from "../ui/Foundation";
+import { dataSourceLabel } from "../../../lib/data-mode";
 import type { ConnectionLabel, DataMode } from "../../providers/workspace";
 import styles from "./shell.module.css";
 
@@ -17,7 +18,7 @@ export function SourceStatus({ state, dataMode }: { state: ConnectionLabel; data
   return (
     <div className={`${styles.sourceStatus} ${styles[`source${state}`]}`} title={dataMode === "mock" ? "Dữ liệu mô phỏng xác định; không phải giá thị trường thật" : `Nguồn dữ liệu ${stateLabel}`}>
       <StatusDot tone={tone} />
-      <span>Nguồn dữ liệu: Binance API + WebSocket</span>
+      <span>{dataSourceLabel(dataMode)}</span>
     </div>
   );
 }

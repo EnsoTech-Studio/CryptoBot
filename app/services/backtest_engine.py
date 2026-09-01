@@ -535,6 +535,14 @@ class DeterministicEngine:
         self._registry = registry
         self._library = library if library is not None else DeterministicLibrary()
 
+    def with_runtime_spec(self, spec: dict[str, Any]) -> "DeterministicEngine":
+        from ..domain.strategy.generated import DeclarativeStrategy
+        from ..domain.strategy.plugins.catalog import default_registry
+
+        registry = default_registry()
+        registry.register(lambda: DeclarativeStrategy(spec))
+        return DeterministicEngine(registry, self._library)
+
     def run(
         self,
         snapshot: ExperimentSnapshot,

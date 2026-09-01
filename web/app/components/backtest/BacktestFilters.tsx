@@ -1,8 +1,8 @@
 "use client";
 
-import { PAGE_SIZES, STRATEGY_PRESETS, type BacktestDraft } from "../../../lib/backtest";
+import { PAGE_SIZES, type BacktestDraft } from "../../../lib/backtest";
 import { marketKey } from "../../../lib/market";
-import type { MarketPair } from "../../../lib/api";
+import type { MarketPair, Strategy } from "../../../lib/api";
 import { Field, Select, TextInput } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./backtest.module.css";
@@ -13,12 +13,14 @@ export function BacktestFilters({
   draft,
   pairs,
   timeframes,
+  strategies,
   disabled,
   onChange,
 }: {
   draft: BacktestDraft;
   pairs: MarketPair[];
   timeframes: string[];
+  strategies: Strategy[];
   disabled: boolean;
   onChange: (patch: Partial<BacktestDraft>) => void;
 }) {
@@ -82,9 +84,9 @@ export function BacktestFilters({
       </Field>
 
       <Field label="Strategy">
-        <Select value={draft.strategyId} disabled={disabled} onChange={(event) => onChange({ strategyId: event.target.value })}>
-          {STRATEGY_PRESETS.map((preset) => (
-            <option key={preset.id} value={preset.id}>{preset.label}</option>
+        <Select value={draft.strategyId} disabled={disabled || strategies.length === 0} onChange={(event) => onChange({ strategyId: event.target.value })}>
+          {strategies.map((strategy) => (
+            <option key={strategy.strategy_id} value={strategy.strategy_id}>{strategy.display_name}</option>
           ))}
         </Select>
       </Field>

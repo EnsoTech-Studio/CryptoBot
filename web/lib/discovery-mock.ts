@@ -14,7 +14,7 @@ export type CatalogEntry = {
   strategyId: string | null;
   label: string;
   description: string;
-  icon: "activity" | "chart" | "target" | "candles" | "bar-chart" | "scale";
+  icon: "activity" | "chart" | "ma" | "bollinger" | "candles" | "support-resistance" | "wyckoff";
   tone: "violet" | "brand" | "green" | "amber" | "neutral";
 };
 
@@ -32,6 +32,7 @@ export const STRATEGIES_MOCK: Strategy[] = [
   display_name,
   description: `${display_name} mock strategy`,
   parameters_schema: {},
+  default_params: {},
   overlay_types: [],
   warm_up_candles: 20,
   is_composite: false,
@@ -40,11 +41,11 @@ export const STRATEGIES_MOCK: Strategy[] = [
 
 export const CATALOG_MOCK: CatalogEntry[] = [
   { strategyId: "rsi", label: "RSI", description: "Đo động lượng và xác định vùng quá mua / quá bán.", icon: "activity", tone: "violet" },
-  { strategyId: "ma_cross", label: "MA", description: "Theo xu hướng bằng đường trung bình động.", icon: "chart", tone: "brand" },
-  { strategyId: "bollinger", label: "Bollinger Bands", description: "Đo độ biến động và phát hiện phá vỡ dải.", icon: "target", tone: "green" },
-  { strategyId: "support_resistance", label: "Support / Resistance", description: "Xác định vùng hỗ trợ và kháng cự quan trọng.", icon: "scale", tone: "amber" },
+  { strategyId: "ma_cross", label: "MA", description: "Theo xu hướng bằng đường trung bình động.", icon: "ma", tone: "brand" },
+  { strategyId: "bollinger", label: "Bollinger Bands", description: "Đo độ biến động và phát hiện phá vỡ dải.", icon: "bollinger", tone: "green" },
+  { strategyId: "support_resistance", label: "Support / Resistance", description: "Xác định vùng hỗ trợ và kháng cự quan trọng.", icon: "support-resistance", tone: "amber" },
   { strategyId: "smc", label: "SMC", description: "Phân tích cấu trúc thị trường theo Smart Money Concepts.", icon: "candles", tone: "neutral" },
-  { strategyId: "wyckoff", label: "Wyckoff", description: "Nhận diện giai đoạn tích lũy và phân phối.", icon: "bar-chart", tone: "violet" },
+  { strategyId: "wyckoff", label: "Wyckoff", description: "Nhận diện giai đoạn tích lũy và phân phối.", icon: "wyckoff", tone: "violet" },
 ];
 
 export const QUICK_COMBOS: Array<{ label: string; ids: string[] }> = [

@@ -1,7 +1,8 @@
 "use client";
 
 import { SAVE_FORM, SOURCE_OPTIONS, VALIDATION_CHECKS } from "../../../lib/strategy-authoring";
-import type { Strategy } from "../../../lib/api";
+import { strategyDraftReview } from "../../../lib/strategy-authoring-review";
+import type { Strategy, StrategyDraft } from "../../../lib/api";
 import { Button, Chip, Field, Panel, Select, TextInput } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./strategy.module.css";
@@ -10,8 +11,10 @@ const CHECK_ICON_CLASS = ["", styles.checkIconScale, styles.checkIconChart];
 
 /* Column 4, upper. "Chỉ báo hỗ trợ" is the one check that can be answered
    truthfully today: the registry list tells us which indicators exist. */
-export function ValidationPanel({ strategies }: { strategies: Strategy[] }) {
+export function ValidationPanel({ strategies, draft }: { strategies: Strategy[]; draft: StrategyDraft | null }) {
   const supported = strategies.filter((item) => !item.is_composite).length;
+  const review = strategyDraftReview(draft);
+  const passed = review.canApprove || draft?.status === "APPROVED";
 
   return (
     <Panel title="Kiểm tra & Validation">
@@ -29,28 +32,26 @@ export function ValidationPanel({ strategies }: { strategies: Strategy[] }) {
                   : check.detail}
               </span>
             </span>
-            <span className={styles.checkMark}>
-              <Icon name="check-circle" aria-hidden="true" />
-              <span className="sr-only">Đạt</span>
+            <span className={styles.checkMark} data-state={passed ? "passed" : "pending"}>
+              {passed ? <Icon name="check-circle" aria-hidden="true" /> : <span aria-hidden="true">—</span>}
+              <span className="sr-only">{passed ? "Đạt" : "Chưa kiểm tra"}</span>
             </span>
           </div>
         ))}
       </div>
 
-      <div className={styles.statusRow}>
+      <div className={styles.statusRow} data-state={passed ? "passed" : "pending"}>
         <span>
-          <strong>Trạng thái</strong>
-          <span>Hợp lệ để lưu vào thư viện</span>
+          <strong>{review.label}</strong>
+          <span>{review.detail}</span>
         </span>
-        <Icon name="check-circle" aria-hidden="true" />
+        {passed ? <Icon name="check-circle" aria-hidden="true" /> : <span className={styles.pendingMark} aria-hidden="true">…</span>}
       </div>
 
     </Panel>
   );
 }
 
-/* Column 4, lower. Save is a local mock until the authored-strategy endpoint
-   is available. */
 export function SaveLibraryPanel({
   name,
   version,
@@ -60,6 +61,11 @@ export function SaveLibraryPanel({
   onVersion,
   onSource,
   onRemoveTag,
+  canSave,
+  saving,
+  status,
+  draft,
+  onSave,
 }: {
   name: string;
   version: string;
@@ -69,6 +75,11 @@ export function SaveLibraryPanel({
   onVersion: (value: string) => void;
   onSource: (value: string) => void;
   onRemoveTag: (tag: string) => void;
+  canSave: boolean;
+  saving: boolean;
+  status: string | null;
+  draft: StrategyDraft | null;
+  onSave: () => void;
 }) {
   return (
     <Panel title="Lưu vào Strategy Library">
@@ -101,13 +112,28 @@ export function SaveLibraryPanel({
         <Button
           variant="primary"
           className={styles.saveButton}
+          type="button"
+          disabled={!canSave || saving}
+          onClick={onSave}
         >
           <Icon name="save" aria-hidden="true" />
-          Lưu Strategy
+          {saving ? "Đang lưu…" : status === "APPROVED" ? "Đã lưu Strategy" : "Lưu Strategy"}
         </Button>
+        {status ? <span className={styles.saveStatus}>{status === "REVIEW_REQUIRED" ? "Đang chờ xác nhận fingerprint." : status === "APPROVED" ? "Đã approve và lưu vào thư viện." : status}</span> : null}
+        {draft?.spec_hash && draft.artifact_hash && draft.sandbox_report_hash ? (
+          <span className={styles.saveEvidence} aria-label="Fingerprint package đang review">
+            <code title={draft.spec_hash}>Spec {shortFingerprint(draft.spec_hash)}</code>
+            <code title={draft.artifact_hash}>Artifact {shortFingerprint(draft.artifact_hash)}</code>
+            <code title={draft.sandbox_report_hash}>Preflight {shortFingerprint(draft.sandbox_report_hash)}</code>
+          </span>
+        ) : null}
       </div>
     </Panel>
   );
 }
 
 export { SAVE_FORM };
+
+function shortFingerprint(value: string) {
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
+}

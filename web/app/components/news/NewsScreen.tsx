@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { api } from "../../../lib/api";
 import { NEWS_MOCK, type SourceMode } from "../../../lib/news-mock";
 import { useWorkspace } from "../../providers/workspace";
 import { Button, Dialog } from "../ui/Foundation";
@@ -31,8 +32,27 @@ export function NewsScreen() {
   const [refreshMinutes, setRefreshMinutes] = useState(1);
   const [selfHealing, setSelfHealing] = useState(true);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  const [crawlBusy, setCrawlBusy] = useState(false);
+  const [crawlError, setCrawlError] = useState<string | null>(null);
 
-  const isMock = news.length === 0;
+  async function crawl() {
+    if (user?.role !== "ADMIN") {
+      setCrawlError("Bạn cần quyền quản trị để bắt đầu một lượt crawl.");
+      return;
+    }
+    setCrawlBusy(true);
+    setCrawlError(null);
+    try {
+      await api.collectNews();
+      await refreshStaticData();
+    } catch {
+      setCrawlError("Không thể bắt đầu crawl. Hãy thử lại sau.");
+    } finally {
+      setCrawlBusy(false);
+    }
+  }
+
+  const isMock = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true" && news.length === 0;
   const items = isMock ? NEWS_MOCK : news;
   const distribution: SentimentDistribution | null = newsDistribution;
 
@@ -54,8 +74,10 @@ export function NewsScreen() {
           onMode={setMode}
           onAsset={setAsset}
           onRefresh={setRefreshMinutes}
-          onCrawl={() => void refreshStaticData()}
+          onCrawl={() => void crawl()}
+          crawlBusy={crawlBusy}
         />
+        {crawlError ? <p className={styles.integrationCaption} role="alert">{crawlError}</p> : null}
 
         <div className={styles.mainRow}>
           <NewsFeed
@@ -76,6 +98,7 @@ export function NewsScreen() {
             distribution={distribution}
             coverage={coverage}
             averageScore={newsAverageScore}
+            referenceMode={isMock}
           />
           </div>
         </div>

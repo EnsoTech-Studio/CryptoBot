@@ -8,6 +8,7 @@ import pytest
 from app.domain.news import ApprovedSource
 from app.infrastructure.news import RssNewsProvider, SsrfBlocked, assert_public_https, canonical_url
 from app.infrastructure.news.security import sanitize_text
+from app.infrastructure.ai import NewsExtractionHTTPAdapter
 from app.infrastructure.sentiment import ContractViolation, SentimentHTTPAdapter, SentimentUnavailable
 from app.services.news import NewsService
 
@@ -118,6 +119,29 @@ def test_sentiment_adapter_maps_failure_without_fallback() -> None:
     adapter = SentimentHTTPAdapter("http://ai", client=_client({}, 503))
     with pytest.raises(SentimentUnavailable):
         adapter.analyze("Market rally")
+
+
+def test_news_extraction_adapter_validates_source_excerpt_contract() -> None:
+    adapter = NewsExtractionHTTPAdapter(
+        "http://ai",
+        client=_client({"title": "Bitcoin update", "body": "Bitcoin liquidity improved after sustained spot demand.", "model": "m", "model_version": "v1"}),
+    )
+
+    result = adapter.extract("Bitcoin update. Bitcoin liquidity improved after sustained spot demand.")
+
+    assert result.title == "Bitcoin update"
+    assert result.model == "m"
+
+
+def test_news_extraction_cache_key_changes_with_model_or_document() -> None:
+    adapter = NewsExtractionHTTPAdapter("http://ai", model="model-a", model_version="v1", client=_client({}))
+
+    first = adapter.cache_key("sanitized document")
+    second = adapter.cache_key("different document")
+    changed_model = NewsExtractionHTTPAdapter("http://ai", model="model-b", model_version="v1", client=_client({}))
+
+    assert first != second
+    assert first != changed_model.cache_key("sanitized document")
 
 
 class _Store:

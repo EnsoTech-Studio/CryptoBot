@@ -1,5 +1,5 @@
 import type { MarketSelection } from "./market";
-import type { ExecutionSettings, Trade } from "./api";
+import type { ExecutionSettings, Strategy, Trade } from "./api";
 
 /* The visible filter strip on ui-reference/backtest.jpg is the request. Before
    this type existed the eight controls were decoration and createExperiment
@@ -20,16 +20,17 @@ export type BacktestDraft = {
   takeProfitPct: number;
 };
 
-export const STRATEGY_PRESETS: Array<{ id: string; label: string }> = [
-  { id: "ma_cross", label: "MA Crossover" },
-  { id: "ema_cross", label: "EMA Crossover" },
-  { id: "rsi", label: "RSI Reversion" },
-  { id: "bollinger", label: "Bollinger Reversion" },
-  { id: "macd", label: "MACD" },
-  { id: "support_resistance", label: "Support / Resistance" },
-];
-
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
+
+export function defaultBacktestStrategyId(strategies: Strategy[]): string {
+  return strategies.find((strategy) => strategy.strategy_id === "ma_cross")?.strategy_id
+    ?? strategies[0]?.strategy_id
+    ?? "";
+}
+
+export function defaultBacktestTimeframe(timeframes: string[], preferred: string): string {
+  return timeframes.includes(preferred) ? preferred : timeframes[0] ?? preferred;
+}
 
 export function createBacktestDraft(market: MarketSelection, timeframe: string): BacktestDraft {
   return {

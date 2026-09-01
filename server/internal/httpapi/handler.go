@@ -140,6 +140,8 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/api/v1/markets/status", handler.marketStatus)
 	mux.HandleFunc("/api/v1/markets/stream", handler.marketStream)
 	mux.HandleFunc("/api/v1/strategies", handler.strategies)
+	mux.HandleFunc("/api/v1/strategy-drafts", handler.strategyDrafts)
+	mux.HandleFunc("/api/v1/strategy-drafts/", handler.strategyDraftByID)
 	mux.HandleFunc("/api/v1/experiments", handler.experiments)
 	mux.HandleFunc("/api/v1/experiments/", handler.experimentByID)
 	mux.HandleFunc("/api/v1/search-runs", handler.searchRuns)
@@ -148,6 +150,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/api/v1/leaderboard/", handler.leaderboardByID)
 	mux.HandleFunc("/api/v1/news", handler.news)
 	mux.HandleFunc("/api/v1/news/aggregate", handler.newsAggregate)
+	mux.HandleFunc("/api/v1/admin/news/collect", handler.newsCollect)
 	mux.HandleFunc("/api/v1/ai/predict", handler.predict)
 
 	return handler.withRequestID(handler.withCORS(handler.withMetrics(mux)))
@@ -563,6 +566,87 @@ func (h *Handler) strategies(w http.ResponseWriter, r *http.Request) {
 	h.callResearch(w, r, http.MethodGet, "/api/v1/strategies", nil, nil)
 }
 
+func (h *Handler) strategyDrafts(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		principal, ok := h.requireAuth(w, r)
+		if !ok {
+			return
+		}
+		query := r.URL.Query()
+		query.Set("owner_id", principal.ID)
+		r.URL.RawQuery = query.Encode()
+		h.callResearch(w, r, http.MethodGet, "/api/v1/strategy-drafts", nil, &principal)
+		return
+	}
+	if !allowMethod(w, r, http.MethodPost) {
+		return
+	}
+	principal, ok := h.requireCommandAuth(w, r)
+	if !ok {
+		return
+	}
+	var body strategyDraftRequest
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if body.Mode == "" {
+		body.Mode = "dsl"
+	}
+	if body.Source.Type == "" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_source", "source.type is required")
+		return
+	}
+	if body.IdempotencyKey != "" && r.Header.Get("Idempotency-Key") == "" {
+		r.Header.Set("Idempotency-Key", body.IdempotencyKey)
+	}
+	h.callResearch(w, r, http.MethodPost, "/api/v1/strategy-drafts", map[string]any{
+		"owner_id":        principal.ID,
+		"mode":            body.Mode,
+		"source":          body.Source,
+		"name_hint":       body.NameHint,
+		"idempotency_key": body.IdempotencyKey,
+	}, &principal)
+}
+
+func (h *Handler) strategyDraftByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/strategy-drafts/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, http.StatusNotFound, "not_found", "Strategy draft not found")
+		return
+	}
+	principal, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if len(parts) == 1 {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		h.callResearch(w, r, http.MethodGet, "/api/v1/strategy-drafts/"+parts[0], nil, &principal)
+		return
+	}
+	if parts[1] != "approval" || !allowMethod(w, r, http.MethodPost) || !h.requireCSRF(w, r) {
+		return
+	}
+	var body strategyApprovalRequest
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	h.callResearch(w, r, http.MethodPost, "/api/v1/strategy-drafts/"+parts[0]+"/approval", map[string]any{
+		"reviewer_id":         principal.ID,
+		"revision":            body.Revision,
+		"spec_hash":           body.SpecHash,
+		"artifact_hash":       body.ArtifactHash,
+		"sandbox_report_hash": body.SandboxReportHash,
+		"decision":            body.Decision,
+		"reason":              body.Reason,
+		"idempotency_key":     body.IdempotencyKey,
+	}, &principal)
+}
+
 func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodPost) {
 		return
@@ -648,6 +732,8 @@ func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
 			"strategy_version":     req.StrategyVersion,
 			"candidate_definition": candidate,
 			"dataset_version":      req.DatasetVersion,
+			"range_from":           req.RangeFrom,
+			"range_to":             req.RangeTo,
 			"initial_equity":       req.InitialEquity,
 			"fixed_notional":       req.FixedNotional,
 			"leverage":             req.Leverage,
@@ -825,6 +911,26 @@ func (h *Handler) newsAggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.callResearch(w, r, http.MethodGet, "/api/v1/news/aggregate", nil, nil)
+}
+
+func (h *Handler) newsCollect(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodPost) {
+		return
+	}
+	principal, ok := h.requireCommandAuth(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		SourceID *string `json:"source_id,omitempty"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	h.callResearch(w, r, http.MethodPost, "/api/v1/admin/news/collect", map[string]any{
+		"source_id": body.SourceID,
+	}, &principal)
 }
 
 func (h *Handler) predict(w http.ResponseWriter, r *http.Request) {

@@ -78,6 +78,28 @@ type searchRunRequest struct {
 	IdempotencyKey string            `json:"idempotency_key"`
 }
 
+type strategyDraftRequest struct {
+	Mode   string `json:"mode"`
+	Source struct {
+		Type string         `json:"type"`
+		Text string         `json:"text,omitempty"`
+		URL  string         `json:"url,omitempty"`
+		Spec map[string]any `json:"spec,omitempty"`
+	} `json:"source"`
+	NameHint       string `json:"name_hint,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type strategyApprovalRequest struct {
+	Revision          int    `json:"revision"`
+	SpecHash          string `json:"spec_hash"`
+	ArtifactHash      string `json:"artifact_hash"`
+	SandboxReportHash string `json:"sandbox_report_hash"`
+	Decision          string `json:"decision"`
+	Reason            string `json:"reason"`
+	IdempotencyKey    string `json:"idempotency_key,omitempty"`
+}
+
 func (request *searchRunRequest) validate() error {
 	if request.GeneratorID == "" {
 		request.GeneratorID = "grid"

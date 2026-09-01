@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { draftIssues, normalizeWeights, createDraft } from "./discovery";
-import { backtestIssues, createBacktestDraft, deriveKpis, draftToExecution } from "./backtest";
-import type { Trade } from "./api";
+import { backtestIssues, createBacktestDraft, defaultBacktestStrategyId, defaultBacktestTimeframe, deriveKpis, draftToExecution } from "./backtest";
+import type { Strategy, Trade } from "./api";
 
 const MARKET = { provider: "binance_usdm", symbol: "BTCUSDT" };
 
@@ -41,6 +41,17 @@ test("draftToExecution converts a percentage fee into integer basis points", () 
   const execution = draftToExecution({ ...draft, feePercent: 0.08 });
   assert.equal(execution.feeBps, 8);
   assert.ok(Number.isInteger(execution.feeBps));
+});
+
+test("backtest draft defaults to a strategy that exists in the supplied registry", () => {
+  assert.equal(defaultBacktestStrategyId([strategy("custom")]), "custom");
+  assert.equal(defaultBacktestStrategyId([strategy("custom"), strategy("ma_cross")]), "ma_cross");
+  assert.equal(defaultBacktestStrategyId([]), "");
+});
+
+test("backtest draft falls back to a timeframe supported by its selected pair", () => {
+  assert.equal(defaultBacktestTimeframe(["1m", "5m"], "5m"), "5m");
+  assert.equal(defaultBacktestTimeframe(["1h", "4h"], "5m"), "1h");
 });
 
 test("draftToExecution drops zero stop-loss and take-profit to null", () => {
@@ -90,5 +101,20 @@ function trade(patch: Partial<Trade>): Trade {
     exit_reason: "take_profit",
     signal_t: "2026-01-01T00:00:00Z",
     ...patch,
+  };
+}
+
+function strategy(strategy_id: string): Strategy {
+  return {
+    strategy_id,
+    version: "v1",
+    display_name: strategy_id,
+    description: "",
+    parameters_schema: {},
+    default_params: {},
+    overlay_types: [],
+    warm_up_candles: 0,
+    is_composite: false,
+    code_fingerprint: strategy_id,
   };
 }

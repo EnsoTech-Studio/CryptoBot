@@ -1,9 +1,17 @@
 export const DEFAULT_MARKET: MarketSelection = {
   provider: "binance_usdm",
+  symbol: "ETHUSDT",
+};
+
+export const DEFAULT_PANEL_TIMEFRAMES: readonly string[] = ["5m", "15m", "1h", "4h"];
+
+export const REFERENCE_MARKET: MarketSelection = {
+  provider: "binance_usdm",
   symbol: "BTCUSDT",
 };
 
 export const MARKET_CONFIG_HASH = `sha256:${"4".repeat(64)}`;
+export const PANEL_BOOTSTRAP_CANDLE_LIMIT = 1_000;
 
 export type Candle = {
   provider: string;

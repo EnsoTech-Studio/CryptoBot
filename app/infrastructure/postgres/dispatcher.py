@@ -505,7 +505,7 @@ class PostgresJobDispatcher:
                        e.stop_loss_pct, e.take_profit_pct, e.intrabar_priority, e.evaluator_version,
                        e.sentiment_model,e.sentiment_model_version,e.sentiment_window_sec,
                        e.analysis_lag_sec,
-                       e.created_at, e.market_dataset_id,
+                       e.created_at, e.market_dataset_id,e.replay_range_from,e.replay_range_to,
                        d.dataset_version, d.revision_no, d.provider, d.symbol, d.timeframe,
                        d.range_from, d.range_to, d.candle_count, d.content_hash,
                        COALESCE(e.bbo_dataset_hash,d.bbo_content_hash),
@@ -526,7 +526,7 @@ class PostgresJobDispatcher:
             fill_policy, position_policy, open_position_at_end,
             stop_loss_pct, take_profit_pct, intrabar_priority, evaluator_version,
             sentiment_model, sentiment_model_version, sentiment_window_sec, analysis_lag_sec,
-            created_at, _dataset_id,
+            created_at, _dataset_id, replay_range_from, replay_range_to,
             dataset_version, revision_no, provider, symbol, timeframe,
             range_from, range_to, candle_count, content_hash, bbo_content_hash,
             strategy_id, strategy_version,
@@ -552,8 +552,8 @@ class PostgresJobDispatcher:
                 provider=provider,
                 symbol=symbol,
                 timeframe=timeframe,
-                range_from=range_from,
-                range_to=range_to,
+                range_from=replay_range_from,
+                range_to=replay_range_to,
                 candle_count=candle_count,
                 content_hash=content_hash,
                 bbo_content_hash=bbo_content_hash,
@@ -647,6 +647,18 @@ class PostgresJobDispatcher:
         operational cache (design.md §12.4 invariant 4)."""
         return self._run(lambda: self._load_dataset_locked(snapshot))
 
+    def load_runtime_spec(self, reference: Reference) -> dict[str, Any] | None:
+        def work() -> dict[str, Any] | None:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "SELECT spec_json FROM strategy_runtime_specs WHERE strategy_id=%s AND version=%s",
+                    (reference.strategy_id, reference.version),
+                )
+                row = cur.fetchone()
+                return None if row is None else row[0]
+
+        return self._run(work)
+
     def _load_dataset_locked(self, snapshot: ExperimentSnapshot) -> tuple[list[Candle], list[BBO]]:
         with self._conn.cursor() as cur:
             cur.execute(
@@ -654,10 +666,10 @@ class PostgresJobDispatcher:
                 SELECT c.open_time, c.close_time, c.open, c.high, c.low, c.close, c.volume, c.trade_count
                 FROM market_dataset_candles c
                 JOIN market_datasets d ON d.id = c.market_dataset_id
-                WHERE d.dataset_version = %s
+                WHERE d.dataset_version = %s AND c.open_time >= %s AND c.close_time <= %s
                 ORDER BY c.open_time
                 """,
-                (snapshot.market.dataset_version,),
+                (snapshot.market.dataset_version, snapshot.market.range_from, snapshot.market.range_to),
             )
             candle_rows = cur.fetchall()
             cur.execute(
@@ -665,10 +677,10 @@ class PostgresJobDispatcher:
                 SELECT b.event_time, b.bid, b.bid_qty, b.ask, b.ask_qty, b.update_id
                 FROM market_dataset_bbo b
                 JOIN market_datasets d ON d.id = b.market_dataset_id
-                WHERE d.dataset_version = %s
+                WHERE d.dataset_version = %s AND b.event_time >= %s AND b.event_time <= %s
                 ORDER BY b.event_time, b.source_sequence
                 """,
-                (snapshot.market.dataset_version,),
+                (snapshot.market.dataset_version, snapshot.market.range_from, snapshot.market.range_to),
             )
             bbo_rows = cur.fetchall()
         candles = [

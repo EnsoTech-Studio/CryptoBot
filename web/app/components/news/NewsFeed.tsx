@@ -40,6 +40,10 @@ export function NewsFeed({
         <Unavailable title="Không tải được tin tức">
           Bộ thu thập không phản hồi. Biểu đồ và backtest không bị ảnh hưởng.
         </Unavailable>
+      ) : items.length === 0 ? (
+        <Unavailable title="Chưa có tin tức phù hợp">
+          Chưa có dữ liệu đã thu thập. Hãy chạy crawl từ tài khoản quản trị hoặc thử lại sau.
+        </Unavailable>
       ) : (
         <>
           <div className={styles.feedHead}>
@@ -75,7 +79,7 @@ function FeedRow({ item, isMock }: { item: NewsItem; isMock: boolean }) {
   return (
     <article className={styles.feedRow}>
       <span className={`${styles.assetIcon} ${styles[`asset${tone[0].toUpperCase()}${tone.slice(1)}`]}`} aria-hidden="true">
-        {coin.slice(0, 1) || "•"}
+        <Icon name={coinIcon(coin)} />
       </span>
       <div className={styles.feedBody}>
         <h3 className={styles.feedTitle}>
@@ -92,6 +96,19 @@ function FeedRow({ item, isMock }: { item: NewsItem; isMock: boolean }) {
       </span>
     </article>
   );
+}
+
+function coinIcon(coin: string) {
+  switch (coin.toUpperCase()) {
+    case "BTC":
+      return "bitcoin" as const;
+    case "ETH":
+      return "ethereum" as const;
+    case "SOL":
+      return "solana" as const;
+    default:
+      return "coins" as const;
+  }
 }
 
 function sentimentClass(label?: string) {

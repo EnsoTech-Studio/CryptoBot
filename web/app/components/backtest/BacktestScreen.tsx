@@ -1,11 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { api } from "../../../lib/api";
 import { MOCK_TRADES } from "../../../lib/backtest-mock";
+import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
+import { marketKey } from "../../../lib/market";
 import {
   backtestIssues,
   createBacktestDraft,
+  defaultBacktestStrategyId,
+  defaultBacktestTimeframe,
   deriveKpis,
   draftToExecution,
   type BacktestDraft,
@@ -24,11 +29,13 @@ export function BacktestScreen() {
     marketPairs,
     availableTimeframes,
     selectedMarket,
+    strategies,
     experiment,
     result,
     runBacktest,
     openInspector,
     user,
+    dataMode,
   } = useWorkspace();
 
   const [draft, setDraft] = useState<BacktestDraft>(() =>
@@ -37,26 +44,62 @@ export function BacktestScreen() {
   /* Frozen at submit time so the chart title and ledger keep describing the run
      that produced the numbers, even while the user edits the strip again. */
   const [submitted, setSubmitted] = useState<BacktestDraft | null>(null);
+  const backtestStrategies = useMemo(
+    () => (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter((strategy) => !strategy.is_composite),
+    [dataMode, strategies],
+  );
+  const market = draft.market;
+  const backtestTimeframes = useMemo(
+    () => marketPairs.find((pair) => marketKey(pair) === marketKey(market))?.timeframes.filter(Boolean) ?? availableTimeframes,
+    [availableTimeframes, market, marketPairs],
+  );
+  const defaultStrategyId = defaultBacktestStrategyId(backtestStrategies);
+  const effectiveStrategyId = backtestStrategies.some((strategy) => strategy.strategy_id === draft.strategyId)
+    ? draft.strategyId
+    : defaultStrategyId || draft.strategyId;
+  const effectiveTimeframe = defaultBacktestTimeframe(backtestTimeframes, draft.timeframe);
+  const effectiveDraft = effectiveStrategyId === draft.strategyId && effectiveTimeframe === draft.timeframe
+    ? draft
+    : { ...draft, strategyId: effectiveStrategyId, timeframe: effectiveTimeframe };
 
-  const issues = backtestIssues(draft);
+  useEffect(() => {
+    let cancelled = false;
+    void api.datasets(market, effectiveTimeframe).then(({ datasets }) => {
+      const dataset = datasets[0];
+      if (!dataset || cancelled) return;
+      const rangeFrom = dataset.range_from.slice(0, 10);
+      const rangeTo = new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10);
+      setDraft((current) => ({ ...current, rangeFrom, rangeTo }));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [effectiveTimeframe, market]);
+
+  const issues = backtestIssues(effectiveDraft);
   const running = experiment?.status === "queued" || experiment?.status === "running";
   const completed = experiment?.status === "completed" && result !== null;
-  const isMock = !completed;
+  const isMock = dataMode === "mock" && !completed;
+  const noStrategies = backtestStrategies.length === 0;
 
-  const trades = completed ? result.trades : MOCK_TRADES;
+  const trades = useMemo(
+    () => completed && result ? result.trades : isMock ? MOCK_TRADES : [],
+    [completed, isMock, result],
+  );
   const kpis = useMemo(() => deriveKpis(trades), [trades]);
-  const shownDraft = submitted ?? draft;
+  const shownDraft = submitted ?? effectiveDraft;
 
   function patch(next: Partial<BacktestDraft>) {
     setDraft((current) => ({ ...current, ...next }));
   }
 
   function submit() {
-    setSubmitted(draft);
+    if (noStrategies) return;
+    setSubmitted(effectiveDraft);
     void runBacktest(
-      [{ strategy_id: draft.strategyId, weight: 1 }],
-      draftToExecution(draft),
-      draft.timeframe,
+      [{ strategy_id: effectiveDraft.strategyId, weight: 1 }],
+      draftToExecution(effectiveDraft),
+      effectiveDraft.timeframe,
+      { from: effectiveDraft.rangeFrom, to: effectiveDraft.rangeTo },
+      effectiveDraft.market,
     );
   }
 
@@ -64,6 +107,7 @@ export function BacktestScreen() {
     <section className={styles.screen} aria-label="Không gian backtest và kết quả giao dịch">
       <div className={styles.stack}>
         {issues.length > 0 ? <StatusMessage tone="syncing">{issues[0]}</StatusMessage> : null}
+        {noStrategies ? <StatusMessage tone="syncing">Chưa có strategy nào trong registry để chạy backtest.</StatusMessage> : null}
         {experiment && !completed ? (
           <StatusMessage tone={experiment.status === "failed" ? "error" : "syncing"}>
             {statusText(experiment.status)}
@@ -71,9 +115,10 @@ export function BacktestScreen() {
         ) : null}
 
         <BacktestFilters
-          draft={draft}
+          draft={effectiveDraft}
           pairs={marketPairs}
-          timeframes={availableTimeframes}
+          timeframes={backtestTimeframes}
+          strategies={backtestStrategies}
           disabled={running}
           onChange={patch}
         />
@@ -87,6 +132,7 @@ export function BacktestScreen() {
             markers={completed ? result.signalMarkers : []}
             executionMarkers={completed ? result.executionMarkers : []}
             isMock={isMock}
+            empty={!completed && !isMock}
             onInspect={() => openInspector(completed ? "metrics" : "provenance")}
           />
           <TradeLedger trades={trades} symbol={shownDraft.market.symbol} />
@@ -102,7 +148,7 @@ export function BacktestScreen() {
         <div className={styles.runAction}>
           <Button
             variant="primary"
-            disabled={!user || running || issues.length > 0}
+            disabled={!user || running || noStrategies || issues.length > 0}
             onClick={submit}
           >
             <Icon name="play" aria-hidden="true" />
