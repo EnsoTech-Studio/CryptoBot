@@ -37,7 +37,8 @@ VALUES (
 
 INSERT INTO experiments(
     owner_id,strategy_version_id,candidate_definition,candidate_hash,
-    market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id
+    market_dataset_id,bbo_dataset_hash,evaluator_version,correlation_id,
+    replay_range_from,replay_range_to
 )
 SELECT
     user_row.id,
@@ -47,7 +48,9 @@ SELECT
     dataset_row.id,
     dataset_row.bbo_content_hash,
     'v1',
-    'queue-scale-proof'
+    'queue-scale-proof',
+    dataset_row.range_from,
+    dataset_row.range_to
 FROM generate_series(1,100000) AS series(n)
 CROSS JOIN LATERAL (
     SELECT id FROM users WHERE email='queue-scale-proof@local'
@@ -56,7 +59,7 @@ CROSS JOIN LATERAL (
     SELECT id FROM strategy_versions WHERE strategy_id='scale-proof' AND version='v1'
 ) AS strategy_row
 CROSS JOIN LATERAL (
-    SELECT id,bbo_content_hash FROM market_datasets
+    SELECT id,bbo_content_hash,range_from,range_to FROM market_datasets
     WHERE dataset_version='queue-scale-proof-v1'
 ) AS dataset_row;
 

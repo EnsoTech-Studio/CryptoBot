@@ -24,6 +24,12 @@ type RealtimeMarketProvider interface {
 	) (market.Subscription, error)
 }
 
+// RealtimeMarketProviderRegistry keeps MarketService independent of concrete
+// exchanges. Market keys already carry the provider identity.
+type RealtimeMarketProviderRegistry interface {
+	Resolve(provider string) (RealtimeMarketProvider, error)
+}
+
 type MarketRepository interface {
 	PersistClosedCandles(context.Context, []market.Candle) error
 	LoadCheckpoint(context.Context, market.MarketKey) (market.Checkpoint, error)

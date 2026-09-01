@@ -10,6 +10,7 @@ import (
 
 	"github.com/EnsoTech-Studio/CryptoBot/server/internal/domain/common"
 	domainmarket "github.com/EnsoTech-Studio/CryptoBot/server/internal/domain/market"
+	"github.com/EnsoTech-Studio/CryptoBot/server/internal/ports"
 )
 
 type fakeSubscription struct{ cancel context.CancelFunc }
@@ -17,21 +18,36 @@ type fakeSubscription struct{ cancel context.CancelFunc }
 func (s *fakeSubscription) Close() error { s.cancel(); return nil }
 
 type fakeMarketProvider struct {
-	closed []domainmarket.Candle
+	closed      []domainmarket.Candle
+	providerID  string
+	streamState domainmarket.StreamState
 }
 
-func (*fakeMarketProvider) ProviderID() string { return "binance_usdm" }
+func (p *fakeMarketProvider) ProviderID() string {
+	if p.providerID != "" {
+		return p.providerID
+	}
+	return "binance_usdm"
+}
 func (p *fakeMarketProvider) ListClosedCandles(
 	context.Context, domainmarket.CandleQuery,
 ) ([]domainmarket.Candle, error) {
 	return append([]domainmarket.Candle(nil), p.closed...), nil
+}
+
+type fakeMarketProviderRegistry struct {
+	providers map[string]ports.RealtimeMarketProvider
+}
+
+func (r fakeMarketProviderRegistry) Resolve(provider string) (ports.RealtimeMarketProvider, error) {
+	return r.providers[provider], nil
 }
 func (p *fakeMarketProvider) StreamKlines(
 	ctx context.Context, keys []domainmarket.StreamKey, publish func(domainmarket.KlineUpdate),
 ) (domainmarket.Subscription, error) {
 	return p.StreamMarket(ctx, keys, publish, nil, nil)
 }
-func (*fakeMarketProvider) StreamMarket(
+func (p *fakeMarketProvider) StreamMarket(
 	ctx context.Context,
 	_keys []domainmarket.StreamKey,
 	publishKline func(domainmarket.KlineUpdate),
@@ -40,7 +56,9 @@ func (*fakeMarketProvider) StreamMarket(
 ) (domainmarket.Subscription, error) {
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	go func() {
-		publishStatus(domainmarket.StreamStatus{State: domainmarket.StreamConnected, OccurredAt: time.Now()})
+		if p.streamState != "" && publishStatus != nil {
+			publishStatus(domainmarket.StreamStatus{State: p.streamState, OccurredAt: time.Now()})
+		}
 		publishKline(domainmarket.KlineUpdate{Final: false})
 		if publishBBO != nil {
 			publishBBO(domainmarket.BBO{
@@ -58,6 +76,7 @@ type fakeMarketStore struct {
 	persisted int
 	recovered int
 	stale     int
+	staleKeys []domainmarket.MarketKey
 }
 
 func (s *fakeMarketStore) PersistClosedCandles(_ context.Context, candles []domainmarket.Candle) error {
@@ -72,10 +91,11 @@ func (*fakeMarketStore) LoadCheckpoint(
 	return domainmarket.Checkpoint{Market: key, IsStale: true}, nil
 }
 func (s *fakeMarketStore) MarkStreamStale(
-	context.Context, domainmarket.MarketKey, uint64,
+	_ context.Context, key domainmarket.MarketKey, _ uint64,
 ) error {
 	s.mu.Lock()
 	s.stale++
+	s.staleKeys = append(s.staleKeys, key)
 	s.mu.Unlock()
 	return nil
 }
@@ -98,7 +118,7 @@ func TestMarketServiceBackfillsBeforeRecovered(t *testing.T) {
 	key := domainmarket.MarketKey{
 		Provider: "binance_usdm", Symbol: "BTCUSDT", Timeframe: common.Timeframe("1m"),
 	}
-	provider := &fakeMarketProvider{closed: []domainmarket.Candle{{
+	provider := &fakeMarketProvider{streamState: domainmarket.StreamConnected, closed: []domainmarket.Candle{{
 		Provider: key.Provider, Symbol: key.Symbol, Timeframe: key.Timeframe,
 		OpenTime: now.Add(-time.Minute), CloseTime: now.Add(-time.Millisecond),
 		Open: decimal.NewFromInt(100), High: decimal.NewFromInt(102),
@@ -106,7 +126,9 @@ func TestMarketServiceBackfillsBeforeRecovered(t *testing.T) {
 	}}}
 	store := &fakeMarketStore{}
 	recovered := make(chan struct{}, 1)
-	service, err := NewMarketService(provider, store, []domainmarket.StreamKey{key}, MarketCallbacks{
+	service, err := NewMarketService(fakeMarketProviderRegistry{providers: map[string]ports.RealtimeMarketProvider{
+		key.Provider: provider,
+	}}, store, []domainmarket.StreamKey{key}, MarketCallbacks{
 		Status: func(status domainmarket.StreamStatus) {
 			if status.State == domainmarket.StreamRecovered {
 				recovered <- struct{}{}
@@ -131,5 +153,42 @@ func TestMarketServiceBackfillsBeforeRecovered(t *testing.T) {
 	store.mu.Unlock()
 	if persisted != 1 || recoveredCount != 1 {
 		t.Fatalf("expected backfill then recovered checkpoint, got persisted=%d recovered=%d", persisted, recoveredCount)
+	}
+}
+
+func TestMarketServiceIsolatesStaleStatusToItsProviderKeys(t *testing.T) {
+	binanceKey := domainmarket.MarketKey{Provider: "binance_usdm", Symbol: "BTCUSDT", Timeframe: common.Timeframe("1m")}
+	okxKey := domainmarket.MarketKey{Provider: "okx_fixture", Symbol: "ETHUSDT", Timeframe: common.Timeframe("1m")}
+	binance := &fakeMarketProvider{providerID: binanceKey.Provider, streamState: domainmarket.StreamStale}
+	okx := &fakeMarketProvider{providerID: okxKey.Provider}
+	store := &fakeMarketStore{}
+	stale := make(chan struct{}, 1)
+	service, err := NewMarketService(fakeMarketProviderRegistry{providers: map[string]ports.RealtimeMarketProvider{
+		binanceKey.Provider: binance,
+		okxKey.Provider:     okx,
+	}}, store, []domainmarket.StreamKey{binanceKey, okxKey}, MarketCallbacks{
+		Status: func(status domainmarket.StreamStatus) {
+			if status.State == domainmarket.StreamStale {
+				stale <- struct{}{}
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := service.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	select {
+	case <-stale:
+	case <-time.After(time.Second):
+		t.Fatal("expected stale status from Binance provider")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.staleKeys) != 1 || store.staleKeys[0] != binanceKey {
+		t.Fatalf("stale status crossed provider boundary: %+v", store.staleKeys)
 	}
 }

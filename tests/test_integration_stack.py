@@ -15,3 +15,8 @@ def test_integration_postgres_mounts_every_canonical_migration() -> None:
     canonical = {path.name for path in (ROOT / "migrations").glob("*.sql")}
 
     assert mounted == canonical
+
+
+def test_queue_scale_proof_keeps_the_immutable_experiment_replay_range() -> None:
+    proof = (ROOT / "scripts" / "queue-scale-proof.sql").read_text(encoding="utf-8")
+    assert "replay_range_from,replay_range_to" in proof

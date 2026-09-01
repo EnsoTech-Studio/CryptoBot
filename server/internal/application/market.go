@@ -18,12 +18,17 @@ type MarketCallbacks struct {
 	Status func(domainmarket.StreamStatus)
 }
 
+type providerStatusUpdate struct {
+	status domainmarket.StreamStatus
+	keys   []domainmarket.StreamKey
+}
+
 type MarketService struct {
-	provider ports.RealtimeMarketProvider
-	store    ports.MarketRepository
-	keys     []domainmarket.StreamKey
-	callback MarketCallbacks
-	sequence atomic.Uint64
+	providers ports.RealtimeMarketProviderRegistry
+	store     ports.MarketRepository
+	keys      []domainmarket.StreamKey
+	callback  MarketCallbacks
+	sequence  atomic.Uint64
 
 	mu          sync.RWMutex
 	quoteLimit  int
@@ -31,16 +36,16 @@ type MarketService struct {
 }
 
 func NewMarketService(
-	provider ports.RealtimeMarketProvider,
+	providers ports.RealtimeMarketProviderRegistry,
 	store ports.MarketRepository,
 	keys []domainmarket.StreamKey,
 	callback MarketCallbacks,
 ) (*MarketService, error) {
-	if provider == nil || store == nil || len(keys) == 0 || len(keys) > 512 {
+	if providers == nil || store == nil || len(keys) == 0 || len(keys) > 512 {
 		return nil, fmt.Errorf("market service requires provider, store, and 1..512 keys")
 	}
 	return &MarketService{
-		provider: provider, store: store, keys: append([]domainmarket.StreamKey(nil), keys...),
+		providers: providers, store: store, keys: append([]domainmarket.StreamKey(nil), keys...),
 		callback: callback, quoteLimit: 200_000, quoteByPair: make(map[string][]domainmarket.BBO),
 	}, nil
 }
@@ -48,43 +53,60 @@ func NewMarketService(
 func (s *MarketService) Start(ctx context.Context) (domainmarket.Subscription, error) {
 	updates := make(chan domainmarket.KlineUpdate, 2_048)
 	quotes := make(chan domainmarket.BBO, 8_192)
-	statuses := make(chan domainmarket.StreamStatus, 64)
+	statuses := make(chan providerStatusUpdate, 64)
 	runtimeCtx, cancel := context.WithCancel(ctx)
-	providerSubscription, err := s.provider.StreamMarket(
-		runtimeCtx,
-		s.keys,
-		func(update domainmarket.KlineUpdate) {
-			select {
-			case updates <- update:
-			default:
-				s.publishStatus(domainmarket.StreamStatus{
-					State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(),
-					Reason: "kline_buffer_overflow",
-				})
-			}
-		},
-		func(quote domainmarket.BBO) {
-			select {
-			case quotes <- quote:
-			default:
-				s.publishStatus(domainmarket.StreamStatus{
-					State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(),
-					Reason: "bbo_buffer_overflow",
-				})
-			}
-		},
-		func(status domainmarket.StreamStatus) {
-			select {
-			case statuses <- status:
-			default:
-			}
-		},
-	)
-	if err != nil {
-		cancel()
-		return nil, err
+	keysByProvider := make(map[string][]domainmarket.StreamKey)
+	for _, key := range s.keys {
+		keysByProvider[key.Provider] = append(keysByProvider[key.Provider], key)
 	}
-	runtime := &marketRuntime{cancel: cancel, provider: providerSubscription, done: make(chan struct{})}
+	providerSubscriptions := make([]domainmarket.Subscription, 0, len(keysByProvider))
+	for providerID, providerKeys := range keysByProvider {
+		providerKeys = append([]domainmarket.StreamKey(nil), providerKeys...)
+		provider, err := s.providers.Resolve(providerID)
+		if err != nil || provider == nil {
+			cancel()
+			return nil, fmt.Errorf("resolve market provider %q: %w", providerID, err)
+		}
+		providerSubscription, err := provider.StreamMarket(
+			runtimeCtx,
+			providerKeys,
+			func(update domainmarket.KlineUpdate) {
+				select {
+				case updates <- update:
+				default:
+					s.publishStatus(domainmarket.StreamStatus{
+						State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(),
+						Reason: "kline_buffer_overflow",
+					})
+				}
+			},
+			func(quote domainmarket.BBO) {
+				select {
+				case quotes <- quote:
+				default:
+					s.publishStatus(domainmarket.StreamStatus{
+						State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(),
+						Reason: "bbo_buffer_overflow",
+					})
+				}
+			},
+			func(status domainmarket.StreamStatus) {
+				select {
+				case statuses <- providerStatusUpdate{status: status, keys: providerKeys}:
+				default:
+				}
+			},
+		)
+		if err != nil {
+			cancel()
+			for _, subscription := range providerSubscriptions {
+				_ = subscription.Close()
+			}
+			return nil, err
+		}
+		providerSubscriptions = append(providerSubscriptions, providerSubscription)
+	}
+	runtime := &marketRuntime{cancel: cancel, providers: providerSubscriptions, done: make(chan struct{})}
 	go func() {
 		defer close(runtime.done)
 		var handlers sync.WaitGroup
@@ -117,8 +139,8 @@ func (s *MarketService) Start(ctx context.Context) (domainmarket.Subscription, e
 				select {
 				case <-runtimeCtx.Done():
 					return
-				case status := <-statuses:
-					s.handleStatus(runtimeCtx, status)
+				case update := <-statuses:
+					s.handleStatus(runtimeCtx, update.status, update.keys)
 				}
 			}
 		}()
@@ -165,15 +187,15 @@ func (s *MarketService) handleBBO(quote domainmarket.BBO) {
 	}
 }
 
-func (s *MarketService) handleStatus(ctx context.Context, status domainmarket.StreamStatus) {
+func (s *MarketService) handleStatus(ctx context.Context, status domainmarket.StreamStatus, keys []domainmarket.StreamKey) {
 	s.publishStatus(status)
 	switch status.State {
 	case domainmarket.StreamStale:
-		for _, key := range s.keys {
+		for _, key := range keys {
 			_ = s.store.MarkStreamStale(ctx, key, s.sequence.Load())
 		}
 	case domainmarket.StreamConnected:
-		if err := s.recover(ctx); err != nil {
+		if err := s.recover(ctx, keys); err != nil {
 			s.publishStatus(domainmarket.StreamStatus{
 				State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(),
 				Reason: "backfill_failed", ReconnectNo: status.ReconnectNo,
@@ -187,9 +209,13 @@ func (s *MarketService) handleStatus(ctx context.Context, status domainmarket.St
 	}
 }
 
-func (s *MarketService) recover(ctx context.Context) error {
+func (s *MarketService) recover(ctx context.Context, keys []domainmarket.StreamKey) error {
 	now := time.Now().UTC()
-	for _, key := range s.keys {
+	for _, key := range keys {
+		provider, err := s.providers.Resolve(key.Provider)
+		if err != nil {
+			return fmt.Errorf("resolve market provider %q: %w", key.Provider, err)
+		}
 		checkpoint, err := s.store.LoadCheckpoint(ctx, key)
 		if err != nil {
 			return err
@@ -201,7 +227,7 @@ func (s *MarketService) recover(ctx context.Context) error {
 		if !from.Before(now) {
 			from = now.Add(-timeframeDuration(string(key.Timeframe)))
 		}
-		candles, err := s.provider.ListClosedCandles(ctx, domainmarket.CandleQuery{
+		candles, err := provider.ListClosedCandles(ctx, domainmarket.CandleQuery{
 			Market: key, From: from, To: now, Limit: 2_000,
 		})
 		if err != nil {
@@ -270,17 +296,21 @@ func timeframeDuration(value string) time.Duration {
 }
 
 type marketRuntime struct {
-	cancel   context.CancelFunc
-	provider domainmarket.Subscription
-	done     chan struct{}
-	once     sync.Once
+	cancel    context.CancelFunc
+	providers []domainmarket.Subscription
+	done      chan struct{}
+	once      sync.Once
 }
 
 func (r *marketRuntime) Close() error {
 	var closeErr error
 	r.once.Do(func() {
 		r.cancel()
-		closeErr = r.provider.Close()
+		for _, provider := range r.providers {
+			if err := provider.Close(); err != nil && closeErr == nil {
+				closeErr = err
+			}
+		}
 		<-r.done
 	})
 	return closeErr

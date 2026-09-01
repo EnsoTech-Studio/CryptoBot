@@ -78,8 +78,13 @@ func main() {
 			})
 		}
 	}
+	providerRegistry, registryErr := marketadapter.NewProviderRegistry(marketadapter.NewBinanceProvider())
+	if registryErr != nil {
+		logger.Error("market provider registry failed", "error", registryErr)
+		os.Exit(1)
+	}
 	marketService, serviceErr := application.NewMarketService(
-		marketadapter.NewBinanceProvider(),
+		providerRegistry,
 		postgresadapter.NewStore(marketPool.Pool),
 		keys,
 		application.MarketCallbacks{

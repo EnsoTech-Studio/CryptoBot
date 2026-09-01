@@ -236,5 +236,7 @@ Read in this order:
 2. [`blueprint/README.md`](blueprint/README.md)
 3. [`blueprint/design.md`](blueprint/design.md)
 4. [`blueprint/specs/`](blueprint/specs/)
+5. [`docs/architecture/architectural-drivers.md`](docs/architecture/architectural-drivers.md)
+6. [`docs/note-update-require-status.md`](docs/note-update-require-status.md)
 
 The source-of-truth boundary remains: browser -> Go; Go -> research; research -> AI; no live trading.
