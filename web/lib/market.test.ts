@@ -9,6 +9,7 @@ import {
   appendMarketEvent,
   buildSubscriptionKey,
   marketRequestPath,
+  marketDisplayName,
   mergeOverlayDelta,
   normalizeRealtimeFrame,
   upsertCandle,
@@ -41,6 +42,10 @@ test("buildSubscriptionKey matches the backend subscription contract", () => {
     buildSubscriptionKey(market, "5m", "ma_cross@v1"),
     `binance_usdm|ETHUSDT|5m|ma_cross@v1|${MARKET_CONFIG_HASH}`,
   );
+});
+
+test("marketDisplayName distinguishes duplicate symbols across providers", () => {
+  assert.equal(marketDisplayName({ provider: "okx_swap", symbol: "ethusdt" }), "ETHUSDT · OKX Swap");
 });
 
 test("upsertCandle replaces an in-progress candle, sorts, and caps history", () => {

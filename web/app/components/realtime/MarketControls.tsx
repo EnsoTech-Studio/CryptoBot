@@ -1,6 +1,6 @@
 "use client";
 
-import { marketKey } from "../../../lib/market";
+import { marketDisplayName, marketKey } from "../../../lib/market";
 import { dataSourceLabel } from "../../../lib/data-mode";
 import { useWorkspace } from "../../providers/workspace";
 import { StatusDot, Toggle } from "../ui/Foundation";
@@ -44,7 +44,7 @@ export function MarketControls() {
             aria-describedby={marketPairsState === "unavailable" ? "pair-catalog-error" : undefined}
           >
             {pairOptions.map((pair) => (
-              <option key={marketKey(pair)} value={marketKey(pair)}>{pair.symbol}</option>
+              <option key={marketKey(pair)} value={marketKey(pair)}>{marketDisplayName(pair)}</option>
             ))}
           </select>
           <Icon name="chevron-down" aria-hidden="true" />

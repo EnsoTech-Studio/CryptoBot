@@ -120,6 +120,21 @@ export function marketKey(market: MarketSelection) {
   return `${market.provider}|${market.symbol.toUpperCase()}`;
 }
 
+export function providerLabel(provider: string) {
+  switch (provider) {
+    case "binance_usdm":
+      return "Binance USD-M";
+    case "okx_swap":
+      return "OKX Swap";
+    default:
+      return provider;
+  }
+}
+
+export function marketDisplayName(market: MarketSelection) {
+  return `${market.symbol.toUpperCase()} · ${providerLabel(market.provider)}`;
+}
+
 export function buildSubscriptionKey(market: MarketSelection, timeframe: string, strategy: string) {
   return `${market.provider}|${market.symbol.toUpperCase()}|${timeframe}|${strategy}|${MARKET_CONFIG_HASH}`;
 }
