@@ -144,6 +144,8 @@ services:
       AGENT_WORKER_ID: "agent-worker-1"
       WORKER_LEASE_SECONDS: "${WORKER_LEASE_SECONDS:-120}"
       WORKER_HEARTBEAT_SECONDS: "${WORKER_HEARTBEAT_SECONDS:-30}"
+    volumes:
+      - ./data/formatted/sol/2026-03-04:/app/data/formatted/sol/2026-03-04:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -11,6 +11,7 @@ from app.services.authoring import (
     preflight_dsl,
     stabilize_generated_id,
     validate_spec,
+    verify_dsl_backtest,
 )
 
 
@@ -45,6 +46,39 @@ def test_preflight_proves_the_compiled_artifact_is_data_only_and_loadable():
 
     assert report["status"] == "passed"
     assert report["checks"] == ["artifact_ast", "spec_round_trip", "safe_runtime"]
+
+
+def test_generated_dsl_backtest_verification_replays_the_csv_fixture(tmp_path):
+    import csv
+    from datetime import UTC, datetime
+
+    base_ms = int(datetime(2026, 3, 4, tzinfo=UTC).timestamp() * 1000)
+    closes = [100.0 + (index % 5) for index in range(20)]
+    with (tmp_path / "ohlcv.csv").open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["T", "O", "H", "L", "C", "V"])
+        for index, close in enumerate(closes):
+            writer.writerow([base_ms + index * 60_000, close, close + 0.1, close - 0.1, close, 10.0])
+    with (tmp_path / "bbo.csv").open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["b", "B", "a", "A", "T"])
+        for index, close in enumerate(closes):
+            writer.writerow([close - 0.02, 1.0, close + 0.02, 1.0, base_ms + index * 60_000 + 10_000])
+
+    report = verify_dsl_backtest(valid_spec(), tmp_path)
+
+    assert report["status"] == "passed"
+    assert report["dataset_version"] == "binance:SOLUSDT:1m:2026-03-04"
+    assert report["candles_read"] == 20
+    assert len(report["result_hash"]) == 64
+
+
+def test_generated_dsl_backtest_reports_an_unavailable_fixture_as_retryable(tmp_path):
+    with pytest.raises(ApplicationError) as error:
+        verify_dsl_backtest(valid_spec(), tmp_path)
+
+    assert error.value.code == "strategy_fixture_backtest_unavailable"
+    assert error.value.status_code == 503
 
 
 def test_preflight_rejects_any_executable_artifact():
@@ -206,14 +240,40 @@ def test_approved_url_redirect_to_private_network_never_reaches_the_designer(mon
     assert error.value.code == "source_rejected"
 
 
-def test_create_from_text_returns_frozen_artifact():
+def test_create_from_text_records_fixture_backtest_evidence():
     request = StrategyDraftCreateIn(
         owner_id=uuid4(),
         source=StrategySourceIn(type="text", text="Use RSI below 30 for long."),
     )
-    result = StrategyAuthoringService(FakeStore(), FakeDesigner()).create(request, "req-1")
+    result = StrategyAuthoringService(
+        FakeStore(),
+        FakeDesigner(),
+        backtest_verifier=lambda _spec: {"status": "passed", "dataset_version": "fixture", "result_hash": "a" * 64},
+    ).create(request, "req-1")
+
     assert result["artifact_hash"]
     assert result["spec"]["strategy_id"].startswith("generated.rsi-bollinger-")
+    assert result["report"]["fixture_backtest"]["dataset_version"] == "fixture"
+
+
+def test_create_from_text_persists_model_provenance_returned_by_the_designer():
+    class MetadataDesigner:
+        def design(self, _text, _request_id):
+            return type("DesignResult", (), {
+                "spec": valid_spec(),
+                "model": "openai/gpt-oss-120b",
+                "model_version": "groq-2026-09-01",
+            })()
+
+    result = StrategyAuthoringService(FakeStore(), MetadataDesigner()).create(
+        StrategyDraftCreateIn(
+            owner_id=uuid4(),
+            source=StrategySourceIn(type="text", text="Use RSI below 30 for long."),
+        )
+    )
+
+    assert result["model"] == "openai/gpt-oss-120b"
+    assert result["model_version"] == "groq-2026-09-01"
 
 
 def test_custom_python_creates_a_review_artifact_without_calling_the_designer():

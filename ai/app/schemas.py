@@ -56,6 +56,20 @@ class StrategySpecResponse(BaseModel):
     warmup_bars: int = Field(ge=1, le=10_000)
 
 
+class StrategyDesignResponse(BaseModel):
+    spec: StrategySpecResponse
+    model: str = Field(min_length=1)
+    model_version: str = Field(min_length=1)
+
+    @field_validator("model", "model_version")
+    @classmethod
+    def metadata_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("model metadata must not be blank")
+        return value
+
+
 class StrategyPythonRepairRequest(BaseModel):
     artifact: str = Field(min_length=1, max_length=20_000)
     error_code: str = Field(min_length=1, max_length=128)

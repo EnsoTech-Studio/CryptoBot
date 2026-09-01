@@ -35,6 +35,33 @@ def test_predict_rejects_blank_text() -> None:
     assert response.status_code == 422
 
 
+def test_strategy_spec_includes_the_model_provenance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main.predictor,
+        "design",
+        lambda _: {
+            "schema_version": "strategy-spec/v1",
+            "strategy_id": "generated.rsi",
+            "display_name": "RSI",
+            "family": "momentum",
+            "description": "Causal RSI strategy.",
+            "parameters": {},
+            "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+            "rules": {"long_entry": {}, "short_entry": {}, "exit": {"op": "opposite_signal"}},
+            "warmup_bars": 14,
+        },
+    )
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("SENTIMENT_MODEL_VERSION", "groq-2026-09-01")
+
+    response = client.post("/strategy/spec", json={"text": "Use RSI."})
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "openai/gpt-oss-120b"
+    assert response.json()["model_version"] == "groq-2026-09-01"
+    assert response.json()["spec"]["strategy_id"] == "generated.rsi"
+
+
 def test_news_extract_returns_structured_source_excerpt(monkeypatch) -> None:
     monkeypatch.setattr(
         main.predictor,

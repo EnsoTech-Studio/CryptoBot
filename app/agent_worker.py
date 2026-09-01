@@ -11,7 +11,7 @@ from .infrastructure.ai import StrategyDesignHTTPAdapter
 from .infrastructure.postgres.store import Store
 from .infrastructure.sandbox import DockerSandboxRunner
 from .services.agent_orchestrator import AgentOrchestrator
-from .services.authoring import StrategyAuthoringService
+from .services.authoring import StrategyAuthoringService, verify_dsl_backtest
 
 
 def main() -> int:
@@ -24,6 +24,7 @@ def main() -> int:
         store,
         StrategyDesignHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s),
         DockerSandboxRunner(),
+        verify_dsl_backtest,
     )
     orchestrator = AgentOrchestrator(store, authoring, settings.worker_lease_s, settings.worker_heartbeat_s)
     worker_id = os.getenv("AGENT_WORKER_ID", "agent-worker-1").strip() or "agent-worker-1"
