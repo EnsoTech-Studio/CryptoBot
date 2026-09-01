@@ -11,8 +11,10 @@ Requirements:
 - Docker Desktop with Docker Compose v2
 - Python 3.12, Go 1.23, and Node.js 22
 
-Development runs only PostgreSQL in Docker. The Go API, research API, AI
-adapter, queue worker, event worker, and news worker run as native processes.
+Development can run against Supabase/PostgreSQL directly through `.env`. The Go
+API, research API, AI adapter, queue worker, event worker, news worker, and
+agent worker run as native processes. If the database URLs in `.env` point to an
+external host such as Supabase, `backend.ps1` skips Docker PostgreSQL.
 
 First-time setup:
 
@@ -25,10 +27,20 @@ npm ci
 cd ..
 ```
 
-Start development:
+Start development with Supabase from `.env`:
 
 ```powershell
 run up
+cd web
+npm run dev
+```
+
+For offline local database development, use an env file whose database URLs
+point to `localhost`/`127.0.0.1`; the launcher will start the optional
+`local-db` Compose profile:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\backend.ps1 -Command up -EnvFile .runtime\local-dev.env
 cd web
 npm run dev
 ```
@@ -41,8 +53,8 @@ PowerShell terminal without a `.` or `\` prefix.
 
 | Command | Starts or performs |
 | --- | --- |
-| `run up` | PostgreSQL and every native backend service |
-| `run db` | PostgreSQL only |
+| `run up` | Every native backend service; skips Docker DB when `.env` uses Supabase |
+| `run db` | Optional local PostgreSQL only |
 | `run api` | Go API and its required research service |
 | `run research` / `run ai` | One native HTTP service |
 | `run worker` / `run event-worker` / `run news-worker` / `run agent-worker` | One worker process |
@@ -50,7 +62,7 @@ PowerShell terminal without a `.` or `\` prefix.
 | `run stop [service]` | All native services, or one named service/group |
 | `run status` | Native-process and PostgreSQL status |
 | `run logs api` | Follow the latest 100 API log lines |
-| `run down` | Stop native backend and PostgreSQL; keeps volumes |
+| `run down` | Stop native backend and optional local PostgreSQL |
 
 Examples:
 
@@ -62,6 +74,7 @@ run status
 ```
 
 Open `http://localhost:3000`, register a user, then use the workspace. The initial migration includes an offline deterministic `ETHUSDT` 5-minute replay dataset, so experiment and search flows work without waiting for Binance.
+Realtime market panels currently support Binance USD-M and OKX USDT swap data through exchange APIs and WebSocket streams.
 
 | Service | Development endpoint / role |
 | --- | --- |
@@ -73,7 +86,7 @@ Open `http://localhost:3000`, register a user, then use the workspace. The initi
 | `news-worker` | Allowlisted collection and sentiment retry loop; no public port |
 | `agent-worker` | Durable strategy-authoring orchestration; no public port |
 | `ai` | Native optional sentiment inference at `http://127.0.0.1:8000` |
-| `postgres` | The only development container; source of truth, queue, facts, and projections |
+| `postgres` | External PostgreSQL, usually Supabase; optional local profile for offline development |
 
 Check or stop the native backend without stopping PostgreSQL:
 
@@ -82,13 +95,14 @@ powershell -ExecutionPolicy Bypass -File scripts/status-native-backend.ps1
 powershell -ExecutionPolicy Bypass -File scripts/stop-native-backend.ps1
 ```
 
-Use `docker compose down` when PostgreSQL should stop too. Native process output
-is written under `.runtime/logs/`.
+Native process output is written under `.runtime/logs/`.
 
-The PostgreSQL-only profile uses the `postgres-native-data` volume. The former
-full-stack development volume is not deleted automatically, so legacy local
-data remains recoverable instead of being silently migrated against a different
-schema ledger.
+The optional local PostgreSQL profile uses the `postgres-native-data` volume.
+Run it directly only when you intentionally want a local database:
+
+```powershell
+docker compose --profile local-db up -d postgres
+```
 
 Full-container production/rehearsal topology:
 
@@ -96,9 +110,10 @@ Full-container production/rehearsal topology:
 docker compose -f docker-compose.stack.yml -f docker-compose.prod.yml up --build
 ```
 
-The full-stack file is intentionally separate from local development. The
-production override publishes only `web` and `api`; PostgreSQL, research, and
-AI remain on the internal Compose network.
+The full-stack file is intentionally separate from local development. It expects
+`MIGRATION_DATABASE_URL`, `DATABASE_URL`, and `MARKET_DATABASE_URL` in `.env`.
+The production override publishes only `web` and `api`; research and AI remain
+on the internal Compose network, and PostgreSQL is not hosted by Docker.
 
 ## As-built architecture
 
