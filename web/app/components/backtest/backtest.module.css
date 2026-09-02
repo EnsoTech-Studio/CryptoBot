@@ -68,9 +68,66 @@
 
 .dateField input { padding-left: 34px; font-family: var(--font-mono); }
 
-.strategyChecks { display: flex; min-height: 38px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
-.strategyCheck { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); font-size: 11px; }
+.strategyPicker { position: relative; min-width: 0; }
+.strategyPicker > summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  padding: 0 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  list-style: none;
+}
+.strategyPicker > summary::-webkit-details-marker { display: none; }
+.strategyPicker > summary::after { content: "+"; color: var(--ink-3); font-size: 16px; font-weight: var(--weight-regular); }
+.strategyPicker[open] > summary { border-color: var(--brand); }
+.strategyPicker[open] > summary::after { content: "−"; }
+.strategyChecks {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(360px, calc(100vw - 48px));
+  max-height: 228px;
+  gap: 2px;
+  overflow-y: auto;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-1);
+  box-shadow: var(--elev-2);
+  padding: 6px;
+}
+.strategyCheck { display: inline-flex; min-height: 30px; align-items: center; gap: 7px; border-radius: 5px; padding: 4px 6px; color: var(--ink-2); font-size: 12px; }
+.strategyCheck:hover { background: var(--surface-2); }
 .strategyCheck input, .historyTable input { accent-color: var(--brand); }
+
+.executionDetails { min-width: 0; }
+.executionDetails > summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  padding: 0 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  list-style: none;
+}
+.executionDetails > summary::-webkit-details-marker { display: none; }
+.executionDetails > summary::after { content: "+"; color: var(--ink-3); font-size: 16px; font-weight: var(--weight-regular); }
+.executionDetails[open] { grid-column: span 2; }
+.executionDetails[open] > summary { border-color: var(--brand); }
+.executionDetails[open] > summary::after { content: "−"; }
+.executionFields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 10px; }
 
 /* --- results row ---------------------------------------------------------- */
 
@@ -125,6 +182,18 @@
 .chartViewport svg { display: block; width: 100%; height: auto; }
 .chartEmpty { display: grid; min-height: 390px; place-items: center; align-content: center; gap: 12px; color: var(--ink-3); font-size: 13px; text-align: center; }
 
+.chartWindow { display: grid; gap: 6px; padding-top: 11px; }
+.chartWindowHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink-3); font-size: 11px; }
+.chartWindowHead > b { color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; font-weight: var(--weight-semibold); }
+.chartWindowSliders { position: relative; height: 20px; }
+.chartWindowSliders::before, .chartWindowFill { position: absolute; top: 9px; height: 3px; border-radius: 999px; }
+.chartWindowSliders::before { right: 7px; left: 7px; background: var(--line-2); content: ""; }
+.chartWindowFill { z-index: 1; background: var(--brand); pointer-events: none; }
+.chartWindowSliders input { position: absolute; z-index: 2; width: 100%; height: 20px; margin: 0; appearance: none; background: transparent; pointer-events: none; }
+.chartWindowSliders input::-webkit-slider-thumb { width: 14px; height: 14px; appearance: none; border: 2px solid var(--surface-1); border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 1px var(--brand); cursor: ew-resize; pointer-events: auto; }
+.chartWindowSliders input::-moz-range-thumb { width: 10px; height: 10px; border: 2px solid var(--surface-1); border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 1px var(--brand); cursor: ew-resize; pointer-events: auto; }
+.chartWindowStart { z-index: 3 !important; }
+
 .chartActions { display: inline-flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 8px; }
 .chartActions > button:first-child { min-width: 0; }
 
@@ -145,6 +214,7 @@
 @media (max-width: 560px) {
   .chartActions { flex-wrap: wrap; }
   .chartActions > button:first-child { flex: 1 1 150px; }
+  .chartWindowHead { align-items: flex-start; flex-wrap: wrap; }
 }
 
 /* --- trade ledger --------------------------------------------------------- */
@@ -153,25 +223,21 @@
 
 .ledger {
   width: 100%;
-  min-width: 980px;
+  min-width: 760px;
   border-collapse: collapse;
   table-layout: fixed;
   font-variant-numeric: tabular-nums;
 }
 
-.ledger th:nth-child(1), .ledger td:nth-child(1) { width: 2%; }
-.ledger th:nth-child(2), .ledger td:nth-child(2) { width: 7%; }
+.ledger th:nth-child(1), .ledger td:nth-child(1) { width: 4%; }
+.ledger th:nth-child(2), .ledger td:nth-child(2) { width: 9%; }
 .ledger th:nth-child(3), .ledger td:nth-child(3),
-.ledger th:nth-child(4), .ledger td:nth-child(4) { width: 11%; }
-.ledger th:nth-child(5), .ledger td:nth-child(5) { width: 6%; }
-.ledger th:nth-child(6), .ledger td:nth-child(6) { width: 8%; }
+.ledger th:nth-child(4), .ledger td:nth-child(4) { width: 15%; }
+.ledger th:nth-child(5), .ledger td:nth-child(5) { width: 9%; }
+.ledger th:nth-child(6), .ledger td:nth-child(6) { width: 10%; }
 .ledger th:nth-child(7), .ledger td:nth-child(7),
-.ledger th:nth-child(8), .ledger td:nth-child(8),
-.ledger th:nth-child(9), .ledger td:nth-child(9),
-.ledger th:nth-child(10), .ledger td:nth-child(10) { width: 8%; }
-.ledger th:nth-child(11), .ledger td:nth-child(11) { width: 5%; }
-.ledger th:nth-child(12), .ledger td:nth-child(12) { width: 5%; }
-.ledger th:nth-child(13), .ledger td:nth-child(13) { width: 13%; }
+.ledger th:nth-child(8), .ledger td:nth-child(8) { width: 11%; }
+.ledger th:nth-child(9), .ledger td:nth-child(9) { width: 16%; }
 
 .ledger th {
   border-bottom: 1px solid var(--line-1);
@@ -201,7 +267,6 @@
 .money { font-family: var(--font-mono); text-align: right; font-weight: var(--weight-semibold); }
 .gain { color: var(--data-up); }
 .loss { color: var(--data-down); }
-.cost { color: var(--ink-2); font-family: var(--font-mono); text-align: right; }
 
 .sideTag {
   display: inline-block;
@@ -262,24 +327,15 @@
 .pager button.pageActive:hover { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
 .pageGap { border: 0; background: transparent; color: var(--ink-3); cursor: default; }
 
-/* --- KPI + explanation row ------------------------------------------------ */
+/* --- metrics -------------------------------------------------------------- */
 
 .metricsRow {
   display: grid;
-  height: 181px;
   min-width: 0;
-  grid-template-columns:
-    repeat(3, minmax(0, 1fr))
-    repeat(2, minmax(0, 1.25fr))
-    minmax(0, 1.08fr)
-    minmax(0, 3.2fr)
-    minmax(0, 2.4fr);
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   align-items: stretch;
   gap: 10px;
-  overflow: hidden;
 }
-
-.metricsRow > * { min-height: 0; overflow: hidden; }
 
 .kpiCell {
   display: grid;
@@ -315,65 +371,6 @@
 .donut { margin-top: 4px; }
 .donut svg { display: block; width: 46px; height: 46px; }
 
-.formulaRow {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: start;
-  gap: 4px;
-}
-
-.formulaStep {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 5px;
-  text-align: center;
-}
-
-.formulaIcon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 50%;
-}
-
-.formulaIcon > svg { width: 18px; height: 18px; }
-.formulaGreen { background: var(--tint-green-bg); color: var(--data-up); }
-.formulaBrand { background: var(--tint-brand-bg); color: var(--brand); }
-.formulaAmber { background: var(--tint-amber-bg); color: var(--tint-amber-ink); }
-
-.formulaStep > strong { font-size: 12px; font-weight: var(--weight-semibold); }
-.formulaStep > span { color: var(--ink-3); font-size: 11px; line-height: var(--leading-snug); }
-
-.formulaOperator {
-  position: absolute;
-  top: 10px;
-  right: -8px;
-  color: var(--ink-3);
-  font-size: 15px;
-  font-weight: var(--weight-semibold);
-}
-
-.assumptionList { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
-
-.advancedMetrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
-.advancedMetrics > div { display: grid; gap: 3px; }
-.advancedMetrics span { color: var(--ink-3); font-size: 11px; }
-.advancedMetrics strong { color: var(--ink-1); font-family: var(--font-mono); font-size: 17px; }
-
-.assumptionList > li {
-  display: grid;
-  grid-template-columns: 17px minmax(0, 1fr);
-  align-items: start;
-  gap: 9px;
-  color: var(--ink-1);
-  font-size: 12px;
-  line-height: var(--leading-snug);
-}
-
-.assumptionList > li > svg { width: 15px; height: 15px; margin-top: 1px; color: var(--data-up); }
-
 .mockNote { margin: 0; color: var(--ink-3); font-size: 12px; }
 
 /* --- experiment history -------------------------------------------------- */
@@ -401,20 +398,12 @@
 /* --- responsive ----------------------------------------------------------- */
 
 @media (max-width: 1560px) {
-  .metricsRow {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    height: auto;
-    overflow: visible;
-  }
-  .metricsRow > * { min-height: 181px; }
-  .formulaPanel, .assumptionPanel { grid-column: span 3; }
+  .metricsRow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 1450px) {
   .resultsRow { grid-template-columns: minmax(0, 1fr); }
-  .metricsRow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .formulaPanel, .assumptionPanel { grid-column: span 3; }
-  .metricsRow { height: auto; overflow: visible; }
+  .metricsRow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 1600px) {
@@ -424,9 +413,8 @@
 @media (max-width: 860px) {
   .filterStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metricsRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .formulaPanel, .assumptionPanel { grid-column: span 2; }
-  .formulaRow { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
-  .formulaOperator { display: none; }
+  .executionDetails[open] { grid-column: 1 / -1; }
+  .executionFields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detailGrid { grid-template-columns: minmax(0, 1fr); }
   .detailWide { grid-column: auto; }
 }
@@ -434,6 +422,7 @@
 @media (max-width: 620px) {
   .filterStrip { grid-template-columns: minmax(0, 1fr); }
   .metricsRow { grid-template-columns: minmax(0, 1fr); }
-  .formulaPanel, .assumptionPanel { grid-column: auto; }
+  .executionDetails[open] { grid-column: auto; }
+  .executionFields { grid-template-columns: minmax(0, 1fr); }
   .ledgerFoot { justify-content: flex-start; }
 }

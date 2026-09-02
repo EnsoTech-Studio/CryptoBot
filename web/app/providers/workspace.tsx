@@ -181,7 +181,7 @@ type WorkspaceValue = {
   register: (email: string, password: string, displayName: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection, datasetVersion?: string) => Promise<void>;
+  runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection, datasetVersion?: string) => Promise<boolean>;
   startSearch: (draft: DiscoveryDraft) => Promise<void>;
   searchAction: (action: "pause" | "resume" | "cancel") => Promise<void>;
   selectDiscoverySession: (id: string) => Promise<void>;
@@ -224,8 +224,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [marketPairs, setMarketPairs] = useState<MarketPair[]>(referenceModeEnabled ? MOCK_MARKET_PAIRS : []);
   const [marketPairsState, setMarketPairsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [dataMode, setDataMode] = useState<DataMode>(referenceModeEnabled ? "mock" : "live");
+  /* Keep first client render identical to SSR. Reading localStorage here made a
+     persisted pair (for example SOLUSDT) disagree with server-rendered
+     DEFAULT_MARKET, producing a hydration failure before retryMarketPairs
+     restored the same persisted selection after mount. */
   const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(() => (
-    referenceModeEnabled ? REFERENCE_MARKET : readPersistedMarket() ?? DEFAULT_MARKET
+    referenceModeEnabled ? REFERENCE_MARKET : DEFAULT_MARKET
   ));
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
@@ -498,11 +502,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setMarketPairsState("loading");
     try {
       const payload = await api.marketPairs();
-      const pairs = (payload.pairs ?? []).map((pair) => ({
-        ...pair,
-        symbol: pair.symbol.toUpperCase(),
-        timeframes: pair.timeframes ?? [],
-      }));
+      const pairsByKey = new Map<string, MarketPair>();
+      for (const pair of payload.pairs ?? []) {
+        const normalized = {
+          ...pair,
+          symbol: pair.symbol.toUpperCase(),
+          timeframes: [...new Set((pair.timeframes ?? []).filter(Boolean))],
+        };
+        const key = marketKey(normalized);
+        const previous = pairsByKey.get(key);
+        pairsByKey.set(key, previous ? {
+          ...previous,
+          timeframes: [...new Set([...previous.timeframes, ...normalized.timeframes])],
+        } : normalized);
+      }
+      const pairs = [...pairsByKey.values()];
       if (pairs.length === 0) throw new Error("Market pair catalog is empty");
       dataModeRef.current = "live";
       setDataMode("live");
@@ -1097,8 +1111,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setActiveExperimentId(accepted.experiment_id);
         setResult(null);
         report(`Backtest queued: ${accepted.run_id.slice(0, 8)}`);
+        return true;
       } catch (error) {
         report(messageFromError(error), "error");
+        return false;
       }
     },
     async startSearch(draft) {

@@ -73,6 +73,7 @@ export function ChartCanvas({
   markers,
   executionMarkers = [],
   size = "primary",
+  visibleLimit,
   ariaLabel = "Candlestick chart with volume and strategy overlays",
 }: {
   candles: Candle[];
@@ -80,6 +81,9 @@ export function ChartCanvas({
   markers: OverlayMarker[];
   executionMarkers?: ExecutionMarker[];
   size?: ChartSize;
+  /* Result charts can opt into an explicit selected window. Other chart roles
+     retain their compact trailing viewport. */
+  visibleLimit?: number;
   ariaLabel?: string;
 }) {
   const frame = CHART_FRAMES[size];
@@ -90,7 +94,7 @@ export function ChartCanvas({
   const plotW = width - pad.left - pad.right;
   const volumeTop = pad.top + plotH + gap;
   const subTop = volumeTop + volumeH + (subH > 0 ? gap : 0);
-  const view = candles.slice(-frame.visible);
+  const view = candles.slice(-(visibleLimit ?? frame.visible));
   const visibleTimes = new Set(view.map((candle) => candle.open_time));
 
   const priceValues = view.flatMap((candle) => [candle.high, candle.low]);

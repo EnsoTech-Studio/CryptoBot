@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { createMockPanelData } from "../../../lib/realtime-mock";
 import { mockExecutionMarkers } from "../../../lib/backtest-mock";
 import type { Candle, ExecutionMarker, ExperimentSummary, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
@@ -42,6 +44,31 @@ export function BacktestChart({
   runLabel: string;
   selectedTradeSequence: number | null;
 }) {
+  const mock = isMock ? createMockPanelData(draft.market, draft.timeframe, 180) : null;
+  const shownCandles = mock ? mock.candles : candles;
+  const shownSeries = mock
+    ? [alignSeriesLast(mock.series[0], 69_135.45), createMockMa50(mock.candles, 68_912.73)]
+    : series;
+  const shownMarkers = mock ? mock.markers : markers;
+  const shownExecutionMarkers = (mock ? mockExecutionMarkers(mock.candles) : executionMarkers).map((marker) => ({
+    ...marker,
+    selected: isExecutionMarkerSelected(marker, selectedTradeSequence),
+  }));
+  const windowKey = `${shownCandles.length}:${shownCandles[0]?.open_time ?? ""}:${shownCandles.at(-1)?.open_time ?? ""}`;
+  const maximum = Math.max(0, shownCandles.length - 1);
+  const [savedWindow, setSavedWindow] = useState({ key: windowKey, start: 0, end: maximum });
+  /* A new run is a new visual context. Derive the full window until the user
+     moves a thumb, rather than resetting state in an effect. */
+  const activeWindow = savedWindow.key === windowKey ? savedWindow : { key: windowKey, start: 0, end: maximum };
+  const start = Math.min(activeWindow.start, maximum);
+  const end = Math.max(start, Math.min(activeWindow.end, maximum));
+  const windowCandles = shownCandles.slice(start, end + 1);
+  const windowFrom = windowCandles[0]?.open_time;
+  const windowTo = windowCandles.at(-1)?.open_time;
+  const windowExecutionMarkers = shownExecutionMarkers.filter((marker) => isWithinWindow(marker.t, windowFrom, windowTo));
+  const last = windowCandles.at(-1)?.close ?? 0;
+  const windowCount = windowCandles.length;
+
   if (empty) {
     return (
       <Panel title={`Biểu đồ Backtest (${draft.market.symbol} · ${draft.timeframe})`}>
@@ -55,17 +82,6 @@ export function BacktestChart({
       </Panel>
     );
   }
-  const mock = isMock ? createMockPanelData(draft.market, draft.timeframe, 180) : null;
-  const shownCandles = mock ? mock.candles : candles;
-  const shownSeries = mock
-    ? [alignSeriesLast(mock.series[0], 69_135.45), createMockMa50(mock.candles, 68_912.73)]
-    : series;
-  const shownMarkers = mock ? mock.markers : markers;
-  const shownExecutionMarkers = (mock ? mockExecutionMarkers(mock.candles) : executionMarkers).map((marker) => ({
-    ...marker,
-    selected: isExecutionMarkerSelected(marker, selectedTradeSequence),
-  }));
-  const last = shownCandles.at(-1)?.close ?? 0;
 
   return (
     <Panel
@@ -101,14 +117,52 @@ export function BacktestChart({
 
       <div className={styles.chartViewport}>
         <ChartCanvas
-          candles={shownCandles}
+          candles={windowCandles}
           series={shownSeries}
           markers={shownMarkers}
-          executionMarkers={shownExecutionMarkers}
+          executionMarkers={windowExecutionMarkers}
           size="result"
+          visibleLimit={windowCount}
           ariaLabel={`Biểu đồ backtest ${draft.market.symbol} ${draft.timeframe}`}
         />
       </div>
+
+      {shownCandles.length > 1 ? (
+        <div className={styles.chartWindow} aria-label="Cửa sổ dữ liệu hiển thị trên biểu đồ">
+          <div className={styles.chartWindowHead}>
+            <span>Khung xem chart</span>
+            <b>{formatWindowTime(windowFrom)} → {formatWindowTime(windowTo)}</b>
+            <span>{windowCount.toLocaleString("en-US")} nến</span>
+          </div>
+          <div className={styles.chartWindowSliders}>
+            <span
+              className={styles.chartWindowFill}
+              aria-hidden="true"
+              style={{ left: `${maximum === 0 ? 0 : start / maximum * 100}%`, width: `${maximum === 0 ? 100 : (end - start) / maximum * 100}%` }}
+            />
+            <input
+              type="range"
+              min="0"
+              max={maximum}
+              value={start}
+              className={styles.chartWindowStart}
+              aria-label="Bắt đầu cửa sổ chart"
+              aria-valuetext={formatWindowTime(shownCandles[start]?.open_time)}
+              onChange={(event) => setSavedWindow({ key: windowKey, start: Math.min(Number(event.target.value), end), end })}
+            />
+            <input
+              type="range"
+              min="0"
+              max={maximum}
+              value={end}
+              className={styles.chartWindowEnd}
+              aria-label="Kết thúc cửa sổ chart"
+              aria-valuetext={formatWindowTime(shownCandles[end]?.open_time)}
+              onChange={(event) => setSavedWindow({ key: windowKey, start, end: Math.max(Number(event.target.value), start) })}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {!isMock && experiment ? (
         <div className={styles.legendRow}>
@@ -145,4 +199,25 @@ function alignPointsLast(points: OverlayPoint[], target: number): OverlayPoint[]
 
 function fmt(value: number) {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function isWithinWindow(value: string, from?: string, to?: string) {
+  if (!from || !to) return false;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && time >= Date.parse(from) && time <= Date.parse(to);
+}
+
+function formatWindowTime(value?: string) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
 }

@@ -80,18 +80,14 @@ export function TradeLedger({
               <th scope="col">Hướng</th>
               <th scope="col">Quantity</th>
               <th scope="col">Giá vào</th>
-              <th scope="col">Stoploss</th>
-              <th scope="col">TakeProfit</th>
               <th scope="col">Giá kết thúc</th>
-              <th scope="col">Phí</th>
-              <th scope="col">Slippage</th>
               <th scope="col">Profit (USD)</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={13} className={styles.mockNote}>
+                <td colSpan={9} className={styles.mockNote}>
                   Run này không phát sinh lệnh nào.
                 </td>
               </tr>
@@ -118,11 +114,7 @@ export function TradeLedger({
                   </td>
                   <td className={styles.numeric}>{trade.quantity.toFixed(6)}</td>
                   <td className={styles.numeric}>{price(trade.entry_price)}</td>
-                  <td className={styles.numeric}>{trade.sl_price === null ? "—" : price(trade.sl_price)}</td>
-                  <td className={styles.numeric}>{trade.tp_price === null ? "—" : price(trade.tp_price)}</td>
                   <td className={styles.numeric}>{price(trade.exit_price)}</td>
-                  <td className={styles.cost}>-{trade.fee_paid.toFixed(2)}</td>
-                  <td className={styles.cost}>-{trade.slippage_cost.toFixed(2)}</td>
                   <td className={`${styles.money} ${trade.pnl >= 0 ? styles.gain : styles.loss}`}>
                     {trade.pnl >= 0 ? "+" : ""}{trade.pnl.toFixed(2)}
                   </td>
