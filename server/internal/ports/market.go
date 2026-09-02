@@ -32,6 +32,7 @@ type RealtimeMarketProviderRegistry interface {
 
 type MarketRepository interface {
 	PersistClosedCandles(context.Context, []market.Candle) error
+	PersistBBO(context.Context, market.BBO) error
 	LoadCheckpoint(context.Context, market.MarketKey) (market.Checkpoint, error)
 	MarkStreamStale(context.Context, market.MarketKey, uint64) error
 	MarkStreamRecovered(context.Context, market.MarketKey, time.Time, uint64) error
