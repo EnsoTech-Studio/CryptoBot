@@ -4,6 +4,7 @@ import test from "node:test";
 import * as marketConfig from "./market";
 import {
   DEFAULT_MARKET,
+  REALTIME_TIMEFRAME_OPTIONS,
   MARKET_CONFIG_HASH,
   REFERENCE_MARKET,
   appendMarketEvent,
@@ -30,6 +31,10 @@ test("live dashboard starts its primary panel on the seeded replay interval", ()
     (marketConfig as Record<string, unknown>).DEFAULT_PANEL_TIMEFRAMES,
     ["5m", "15m", "1h", "4h"],
   );
+});
+
+test("realtime timeframe controls include one-second candles", () => {
+  assert.equal(REALTIME_TIMEFRAME_OPTIONS[0], "1s");
 });
 
 test("marketRequestPath carries the selected market and request options", () => {

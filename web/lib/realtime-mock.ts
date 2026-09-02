@@ -21,18 +21,19 @@ export const MOCK_MARKET_PAIRS: MarketPair[] = [
     symbol: "BTCUSDT",
     base_asset: "BTC",
     quote_asset: "USDT",
-    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"],
+    timeframes: ["1s", "1m", "5m", "15m", "1h", "4h", "1d"],
   },
   {
     provider: "binance_usdm",
     symbol: "ETHUSDT",
     base_asset: "ETH",
     quote_asset: "USDT",
-    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"],
+    timeframes: ["1s", "1m", "5m", "15m", "1h", "4h", "1d"],
   },
 ];
 
 const timeframeMinutes: Record<string, number> = {
+  "1s": 1 / 60,
   "1m": 1,
   "5m": 5,
   "15m": 15,
@@ -42,6 +43,7 @@ const timeframeMinutes: Record<string, number> = {
 };
 
 const referenceClose: Record<string, number> = {
+  "1s": 69_342.18,
   "1m": 69_342.18,
   "5m": 69_342.18,
   "15m": 69_342.18,
@@ -51,6 +53,7 @@ const referenceClose: Record<string, number> = {
 };
 
 const referenceMovingAverage: Record<string, number> = {
+  "1s": 69_342.18,
   "1m": 69_315.45,
   "5m": 69_182.73,
   "15m": 68_912.35,
@@ -68,6 +71,7 @@ export function createMockPanelData(
   const isBitcoin = symbol.startsWith("BTC");
   const target = isBitcoin ? (referenceClose[timeframe] ?? 69_342.18) : 3_782.46;
   const displayRangeByTimeframe: Record<string, number> = {
+    "1s": 240,
     "1m": 470,
     "5m": 880,
     "15m": 3_350,
@@ -80,7 +84,9 @@ export function createMockPanelData(
   const trendRange = displayRange * 2.2;
   const waveSize = displayRange * 0.18;
   const stepMs = minutes * 60_000;
-  const anchor = Date.parse(timeframe === "1m"
+  const anchor = Date.parse(timeframe === "1s"
+    ? "2025-05-16T10:45:59.000Z"
+    : timeframe === "1m"
     ? "2025-05-16T10:45:00.000Z"
     : timeframe === "5m"
       ? "2025-05-16T10:00:00.000Z"

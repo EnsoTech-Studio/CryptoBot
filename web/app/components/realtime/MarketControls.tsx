@@ -19,6 +19,8 @@ export function MarketControls() {
     setRealtimeEnabled,
     streamLabel,
     dataMode,
+    chartCount,
+    setChartCount,
   } = useWorkspace();
   const selectedKey = marketKey(selectedMarket);
   const pairOptions = marketPairs.length > 0
@@ -62,6 +64,31 @@ export function MarketControls() {
           >
             <StatusDot tone={streamLabel === "Live" || streamLabel === "Mock" ? "live" : streamLabel === "Syncing" ? "syncing" : streamLabel === "Paused" ? "neutral" : "error"} />
             {marketPairsState === "loading" ? "Đang thử kết nối" : !realtimeEnabled ? "Đã tạm dừng" : dataMode === "mock" ? dataSourceLabel(dataMode) : streamLabel === "Live" ? "Đang nhận dữ liệu" : streamLabel}
+          </button>
+        </div>
+      </div>
+
+      <div className={`${styles.controlGroup} ${styles.chartCountGroup}`}>
+        <span className={styles.controlLabel}>Số chart</span>
+        <div className={styles.chartCountControl} aria-label="Số lượng chart realtime">
+          <button
+            type="button"
+            className={styles.chartCountButton}
+            aria-label="Giảm số chart"
+            disabled={chartCount <= 1}
+            onClick={() => setChartCount(chartCount - 1)}
+          >
+            <Icon name="minus" />
+          </button>
+          <output className={styles.chartCountValue} aria-live="polite">{chartCount} / 4</output>
+          <button
+            type="button"
+            className={styles.chartCountButton}
+            aria-label="Tăng số chart"
+            disabled={chartCount >= 4}
+            onClick={() => setChartCount(chartCount + 1)}
+          >
+            <Icon name="plus" />
           </button>
         </div>
       </div>

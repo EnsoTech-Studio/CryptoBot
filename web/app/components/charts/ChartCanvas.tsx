@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type WheelEvent as ReactWheelEvent } from "react";
 
 import type { Candle, ExecutionMarker, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
 
@@ -94,7 +94,19 @@ export function ChartCanvas({
   const plotW = width - pad.left - pad.right;
   const volumeTop = pad.top + plotH + gap;
   const subTop = volumeTop + volumeH + (subH > 0 ? gap : 0);
-  const view = candles.slice(-(visibleLimit ?? frame.visible));
+  const interactive = size !== "context";
+  const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState(0);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const timeZone = "Asia/Ho_Chi_Minh";
+  const dragRef = useRef<{ startX: number; startPan: number; moved: boolean } | null>(null);
+  const baseVisible = Math.min(candles.length, visibleLimit ?? frame.visible);
+  const visibleSpan = candles.length > 0 ? Math.max(8, Math.min(candles.length, Math.round(Math.max(1, baseVisible) / zoom))) : 0;
+  const maxPan = Math.max(0, candles.length - visibleSpan);
+  const safePanOffset = Math.min(panOffset, maxPan);
+  const endIndex = candles.length - safePanOffset;
+  const view = candles.slice(Math.max(0, endIndex - visibleSpan), endIndex);
   const visibleTimes = new Set(view.map((candle) => candle.open_time));
   const viewStart = view[0]?.open_time;
   const viewEnd = view.at(-1)?.open_time;
@@ -122,6 +134,63 @@ export function ChartCanvas({
   const y = (value: number) => pad.top + (1 - (value - priceMin) / Math.max(1, priceMax - priceMin)) * plotH;
   const vy = (value: number) => volumeTop + (1 - value / maxVolume) * volumeH;
   const candleWidth = Math.max(2, plotW / Math.max(1, view.length) * 0.58);
+  const hoveredCandle = hoverIndex != null ? view[hoverIndex] : undefined;
+
+  function chartCoordinates(event: ReactPointerEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const scaleX = width / Math.max(1, rect.width);
+    const scaleY = height / Math.max(1, rect.height);
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
+      width: rect.width,
+    };
+  }
+
+  function updateHover(event: ReactPointerEvent<SVGSVGElement>) {
+    if (!interactive || view.length === 0 || dragRef.current) return;
+    const point = chartCoordinates(event);
+    const rawIndex = ((point.x - pad.left) / Math.max(1, plotW)) * Math.max(1, view.length - 1);
+    setHoverIndex(rawIndex < 0 || rawIndex > view.length - 1 ? null : Math.round(rawIndex));
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<SVGSVGElement>) {
+    if (!interactive || event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { startX: event.clientX, startPan: safePanOffset, moved: false };
+    setDragging(true);
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (!drag) {
+      updateHover(event);
+      return;
+    }
+    const delta = Math.round(((event.clientX - drag.startX) / Math.max(1, chartCoordinates(event).width)) * Math.max(1, view.length));
+    if (Math.abs(delta) < 1) return;
+    drag.moved = true;
+    setHoverIndex(null);
+    setPanOffset(Math.max(0, Math.min(maxPan, drag.startPan + delta)));
+  }
+
+  function handlePointerUp(event: ReactPointerEvent<SVGSVGElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    dragRef.current = null;
+    setDragging(false);
+  }
+
+  function handleWheel(event: ReactWheelEvent<SVGSVGElement>) {
+    if (!interactive || candles.length === 0) return;
+    event.preventDefault();
+    setZoom((current) => Math.max(1, Math.min(6, current + (event.deltaY < 0 ? 0.35 : -0.35))));
+  }
+
+  function resetViewport() {
+    setZoom(1);
+    setPanOffset(0);
+    setHoverIndex(null);
+  }
 
   return (
     <svg
@@ -130,8 +199,17 @@ export function ChartCanvas({
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={ariaLabel}
+      style={interactive ? { touchAction: "none", cursor: dragging ? "grabbing" : "crosshair" } : undefined}
+      onPointerDown={interactive ? handlePointerDown : undefined}
+      onPointerMove={interactive ? handlePointerMove : undefined}
+      onPointerUp={interactive ? handlePointerUp : undefined}
+      onPointerCancel={interactive ? handlePointerUp : undefined}
+      onPointerLeave={interactive ? () => { if (!dragRef.current) setHoverIndex(null); } : undefined}
+      onWheel={interactive ? handleWheel : undefined}
+      onDoubleClick={interactive ? resetViewport : undefined}
     >
       <title>{ariaLabel}</title>
+      {interactive ? <desc>Hover để xem OHLCV, cuộn để zoom, kéo ngang để di chuyển, double-click để đặt lại.</desc> : null}
       <rect x="0" y="0" width={width} height={height} className="chart-bg" />
       <rect x={pad.left} y={pad.top} width={plotW} height={plotH} className="pane-bg main-pane" />
       <rect x={pad.left} y={volumeTop} width={plotW} height={volumeH} className="pane-bg volume-pane" />
@@ -176,7 +254,7 @@ export function ChartCanvas({
             const anchor = tick === 0 ? "start" : tick === 1 ? "end" : "middle";
             return (
               <text key={`time-${tick}`} x={pad.left + tick * plotW} y={height - 8} textAnchor={anchor} className="axis-label">
-                {candle ? chartTimeLabel(candle.open_time, candle.timeframe) : ""}
+                {candle ? chartTimeLabel(candle.open_time, candle.timeframe, timeZone) : ""}
               </text>
             );
           })}
@@ -206,6 +284,26 @@ export function ChartCanvas({
             <rect x={width - pad.right + 2} y={latestY - 8} width="54" height="16" rx="3" className={`current-price-box ${direction}`} />
             <text x={width - pad.right + 29} y={latestY + 3} textAnchor="middle" className="current-price-label">{latest.close.toFixed(2)}</text>
           </>
+        );
+      })() : null}
+      {interactive && hoveredCandle && hoverIndex != null ? (() => {
+        const hoverX = x(hoverIndex);
+        const hoverY = y(hoveredCandle.close);
+        const tooltipWidth = 154;
+        const tooltipHeight = 64;
+        const tooltipX = Math.min(Math.max(pad.left + 4, hoverX + 10), width - pad.right - tooltipWidth);
+        const tooltipY = Math.min(Math.max(pad.top + 4, hoverY - tooltipHeight - 10), pad.top + plotH - tooltipHeight - 4);
+        return (
+          <g className="chart-interaction" pointerEvents="none">
+            <line x1={hoverX} x2={hoverX} y1={pad.top} y2={volumeTop + volumeH} className="crosshair-line" />
+            <line x1={pad.left} x2={width - pad.right} y1={hoverY} y2={hoverY} className="crosshair-line" />
+            <circle cx={hoverX} cy={hoverY} r="3" className="crosshair-point" />
+            <rect x={tooltipX} y={tooltipY} width={tooltipWidth} height={tooltipHeight} rx="4" className="chart-tooltip-bg" />
+            <text x={tooltipX + 8} y={tooltipY + 14} className="chart-tooltip-title">{chartTimeLabel(hoveredCandle.open_time, hoveredCandle.timeframe, timeZone)}</text>
+            <text x={tooltipX + 8} y={tooltipY + 28} className="chart-tooltip-text">O {hoveredCandle.open.toFixed(2)} · H {hoveredCandle.high.toFixed(2)}</text>
+            <text x={tooltipX + 8} y={tooltipY + 41} className="chart-tooltip-text">L {hoveredCandle.low.toFixed(2)} · C {hoveredCandle.close.toFixed(2)}</text>
+            <text x={tooltipX + 8} y={tooltipY + 54} className="chart-tooltip-text">V {compactVolume(hoveredCandle.volume)}</text>
+          </g>
         );
       })() : null}
     </svg>
@@ -410,11 +508,11 @@ function compactVolume(value: number) {
   return value.toFixed(0);
 }
 
-function chartTimeLabel(value: string, timeframe: string) {
+function chartTimeLabel(value: string, timeframe: string, timeZone = "UTC") {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "";
   if (timeframe === "1h" || timeframe === "4h") {
-    return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", timeZone }).format(date);
   }
-  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }).format(date);
 }

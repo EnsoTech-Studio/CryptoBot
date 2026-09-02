@@ -14,6 +14,12 @@
   align-items: start;
 }
 
+@media (min-width: 1200px) {
+  .workspace { grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; }
+  .workspace[data-chart-count="1"] { grid-template-columns: minmax(0, 1fr); }
+  .workspace[data-chart-count="1"] .infoRail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 .marketColumn {
   display: grid;
   min-width: 0;
@@ -39,6 +45,14 @@
   min-width: 184px;
   gap: 8px;
 }
+
+.chartCountGroup { min-width: 126px; }
+.chartCountControl { display: inline-flex; width: max-content; min-height: 39px; align-items: center; border: 1px solid var(--line-2); border-radius: 7px; background: var(--surface-1); overflow: hidden; }
+.chartCountButton { display: grid; width: 34px; height: 37px; place-items: center; border: 0; background: transparent; color: var(--ink-2); }
+.chartCountButton:hover:not(:disabled) { background: var(--brand-soft); color: var(--brand); }
+.chartCountButton:disabled { color: var(--ink-4); cursor: not-allowed; }
+.chartCountButton svg { width: 14px; height: 14px; }
+.chartCountValue { min-width: 42px; color: var(--ink-1); font-family: var(--font-mono); font-size: 12px; font-weight: var(--weight-semibold); text-align: center; }
 
 .controlLabel {
   color: var(--chart-axis);
@@ -165,6 +179,13 @@
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
+/* Give a single chart the available vertical workspace; compact the grid as
+   more charts are shown so the dashboard remains scannable. */
+.chartGrid[data-count="1"] .chartCard { height: clamp(420px, calc(100vh - 300px), 680px); }
+.chartGrid[data-count="2"] .chartCard { height: clamp(320px, calc(100vh - 430px), 420px); }
+.chartGrid[data-count="3"] .chartCard,
+.chartGrid[data-count="4"] .chartCard { height: 300px; }
+
 .chartCardFocused:focus-within { border-color: color-mix(in srgb, var(--brand) 46%, var(--line-1)); }
 
 .chartHeader {
@@ -208,17 +229,13 @@
 .footerStatus i { width: 6px; height: 6px; border-radius: 999px; background: var(--status-live); }
 .liveState[data-state="connecting"] i { background: var(--status-syncing); }
 .liveState[data-state="stale"] i { background: var(--status-stale); }
+.liveState[data-state="unavailable"] i { background: var(--status-unavailable); }
 .liveState[data-state="paused"] i { background: var(--status-unavailable); }
 
-.srStatus {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
+.statusLabel { margin-left: 4px; color: inherit; font-size: 9px; font-weight: var(--weight-semibold); text-transform: uppercase; }
+.liveState[data-state="stale"] { color: var(--status-stale); }
+.liveState[data-state="unavailable"] { color: var(--status-unavailable); }
+.liveState[data-state="paused"] { color: var(--status-unavailable); }
 
 .quote { display: flex; min-width: 0; align-items: baseline; justify-self: start; gap: 6px; white-space: nowrap; }
 .quote strong { color: var(--ink-1); font-family: var(--font-mono); font-size: 14px; font-weight: var(--weight-semibold); letter-spacing: -0.025em; }
@@ -229,12 +246,17 @@
 .chartMeta { display: flex; min-width: 0; min-height: 31px; align-items: center; gap: 10px; padding: 0 14px 4px; }
 .chartTimeframeControl { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .chartControlLabel { flex: 0 0 auto; color: var(--chart-axis); font-size: 10px; font-weight: var(--weight-semibold); }
+.chartTimeframeSelect { min-width: 60px; min-height: 25px; border: 1px solid var(--line-2); border-radius: 5px; background: var(--surface-1); padding: 0 7px; color: var(--ink-2); font-family: var(--font-mono); font-size: 10px; font-weight: var(--weight-semibold); }
+.chartTimeframeSelect:focus-visible { outline: 2px solid color-mix(in srgb, var(--brand) 45%, transparent); outline-offset: 1px; }
 .chartTimeframes { display: flex; min-width: 0; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .chartTimeframes::-webkit-scrollbar { display: none; }
 .chartTimeframes button { min-width: 36px; min-height: 25px; border: 1px solid var(--line-2); border-radius: 5px; background: var(--surface-1); padding: 0 7px; color: var(--ink-3); font-family: var(--font-mono); font-size: 10px; font-weight: var(--weight-semibold); }
 .chartTimeframes button:hover { color: var(--ink-1); }
 .chartTimeframes .timeframeActive { background: var(--brand); color: var(--brand-ink); box-shadow: 0 2px 7px rgba(23, 105, 232, 0.2); }
 .chartTimeframes .timeframeActive:hover { color: var(--brand-ink); }
+.chartTelemetry { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; gap: 9px; margin-left: auto; color: var(--ink-3); font-family: var(--font-mono); font-size: 9px; white-space: nowrap; }
+.chartTelemetry span { overflow: hidden; text-overflow: ellipsis; }
+.chartTelemetry b { color: var(--chart-axis); font-size: 8px; font-weight: var(--weight-semibold); text-transform: uppercase; }
 
 .signalBadge { display: inline-grid; min-width: 53px; min-height: 27px; place-items: center; border: 1px solid currentColor; border-radius: 5px; padding: 0 7px; font-family: var(--font-mono); font-size: 11px; font-weight: var(--weight-bold); letter-spacing: 0.04em; }
 .chartHeader > .signalBadge { justify-self: end; }
@@ -265,31 +287,13 @@
 .footerStatus svg { width: 12px; height: 12px; color: var(--ink-3); }
 .footerStatus i[data-state="connecting"] { background: var(--status-syncing); }
 .footerStatus i[data-state="stale"] { background: var(--status-stale); }
+.footerStatus i[data-state="unavailable"] { background: var(--status-unavailable); }
 .footerStatus i[data-state="paused"] { background: var(--status-unavailable); }
 
 .infoRail { display: grid; min-width: 0; gap: 12px; }
 .infoCard { overflow: hidden; }
 .infoTitle { display: flex; min-height: 40px; flex: 1; align-items: center; gap: 8px; margin: 0; border-bottom: 1px solid var(--line-1); padding: 0 13px; color: var(--ink-1); font-size: 13px; font-weight: var(--weight-semibold); }
 .infoTitle svg { width: 15px; height: 15px; color: var(--brand); }
-
-.guideList { display: grid; padding: 0 13px; }
-.guideRow { display: grid; min-height: 153px; gap: 8px; border-bottom: 1px solid var(--line-1); padding: 12px 0 10px; }
-.guideRow:last-child { border-bottom: 0; }
-.guideCopy strong { display: block; color: var(--ink-2); font-size: 11px; font-weight: var(--weight-semibold); }
-.guideCopy strong span { color: var(--brand); }
-.guideCopy p { margin: 7px 0 0; color: var(--ink-3); font-size: 10px; line-height: 1.45; }
-
-.candleFlow { display: flex; height: 75px; align-items: center; justify-content: center; gap: 22px; }
-.candleFlow > b { position: relative; display: block; width: 34px; height: 1px; background: var(--ink-2); }
-.candleFlow > b::after { position: absolute; top: -3px; right: 0; width: 7px; height: 7px; border-top: 1px solid var(--line-3); border-right: 1px solid var(--line-3); content: ""; transform: rotate(45deg); }
-.candleGroup { display: flex; height: 48px; align-items: center; gap: 8px; border: 1px solid var(--line-1); border-radius: 5px; padding: 8px 9px; }
-.candleGroup i { position: relative; display: block; width: 8px; height: 22px; border: 1px solid var(--data-up); background: var(--data-up); }
-.candleGroup i::before { position: absolute; top: -6px; bottom: -6px; left: 50%; z-index: -1; width: 1px; background: var(--data-up); content: ""; transform: translateX(-50%); }
-.candleGroup i:nth-child(2), .candleGroup i:nth-child(3) { height: 18px; border-color: var(--data-down); background: var(--data-down); }
-.candleGroup i:nth-child(2)::before, .candleGroup i:nth-child(3)::before { background: var(--data-down); }
-.candleGroup i:nth-child(4) { height: 27px; }
-.candleFlow[data-variant="update"] .candleGroup:first-child i:last-child,
-.candleFlow[data-variant="append"] .candleGroup:last-child i:last-child { outline: 1px dashed var(--brand); outline-offset: 6px; }
 
 .connectionTitleRow { display: flex; align-items: center; border-bottom: 1px solid var(--line-1); }
 .connectionTitleRow .infoTitle { border-bottom: 0; }
@@ -298,6 +302,14 @@
 .connectionMain[data-state="degraded"], .connectionMain[data-state="unavailable"] { color: var(--status-stale); }
 .connectionMain[data-state="paused"] { color: var(--ink-3); }
 .connectionMain[data-state="mock"] { color: var(--tint-warning-ink); }
+.statusSummary { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 13px 4px; }
+.statusSummary span { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); font-family: var(--font-mono); font-size: 9px; }
+.statusSummary i { width: 6px; height: 6px; border-radius: 999px; background: var(--ink-3); }
+.statusSummary span[data-state="live"] i { background: var(--status-live); }
+.statusSummary span[data-state="stale"] i { background: var(--status-stale); }
+.statusSummary span[data-state="unavailable"] i { background: var(--status-unavailable); }
+.statusSummary span[data-state="syncing"] i { background: var(--status-syncing); }
+.statusSummary span[data-state="paused"] i { background: var(--status-unavailable); }
 
 .telemetry { display: grid; margin: 0; padding: 0 13px 2px; }
 .telemetry div { display: flex; min-height: 19px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line-1); }
@@ -347,6 +359,8 @@
   .controlGroup, .realtimeControl { min-width: 0; }
   .catalogError { position: static; }
   .chartGrid { grid-template-columns: 1fr; }
+  .chartMeta { flex-wrap: wrap; min-height: 52px; }
+  .chartTelemetry { width: 100%; margin-left: 0; }
   .chartCard { min-height: 342px; }
   .chartViewport { min-height: 228px; }
 }

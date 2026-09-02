@@ -4,6 +4,7 @@ export const DEFAULT_MARKET: MarketSelection = {
 };
 
 export const DEFAULT_PANEL_TIMEFRAMES: readonly string[] = ["5m", "15m", "1h", "4h"];
+export const REALTIME_TIMEFRAME_OPTIONS: readonly string[] = ["1s", "1m", "5m", "15m", "1h", "4h", "1d"];
 
 export const REFERENCE_MARKET: MarketSelection = {
   provider: "binance_usdm",
