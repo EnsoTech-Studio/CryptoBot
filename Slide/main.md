@@ -481,9 +481,9 @@ style: |
 ### Search Algorithms & 3-Split Dataset Partitioning
 * **Contract `ISearchAlgorithm`:** Method `sample(space, rng)` implement qua `RandomSearch`, `GeneticAlgorithm`, `BayesianOptimization`.
 * **Discovery Loop chống Overfitting (Data Leakage):**
-  * **Train (30d):** Search & optimize strategy variants.
-  * **Validation (15d):** Generalization evaluation (Gate check).
-  * **Sealed Test (15d):** Out-of-sample benchmark cho Leaderboard.
+  * **Train:** Search & optimize strategy variants.
+  * **Validation:** Generalization evaluation (Gate check).
+  * **Sealed Test:** Out-of-sample benchmark cho Leaderboard.
 * **Job Throttling & Fair Scheduling:** `DiscoveryTrialReservation` (reserved_jobs=4).
 
 </div>

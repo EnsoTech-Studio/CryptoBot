@@ -170,6 +170,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/api/v1/markets/candles", handler.marketCandles)
 	mux.HandleFunc("/api/v1/markets/datasets", handler.marketDatasets)
 	mux.HandleFunc("/api/v1/markets/chart-overlays", handler.chartOverlays)
+	mux.HandleFunc("/api/v1/markets/current-signals", handler.currentSignals)
 	mux.HandleFunc("/api/v1/markets/status", handler.marketStatus)
 	mux.HandleFunc("/api/v1/markets/stream", handler.marketStream)
 	mux.HandleFunc("/api/v1/strategies", handler.strategies)
@@ -493,6 +494,13 @@ func (h *Handler) chartOverlays(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.callResearch(w, r, http.MethodGet, "/api/v1/markets/chart-overlays", nil, nil)
+}
+
+func (h *Handler) currentSignals(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	h.callResearch(w, r, http.MethodGet, "/api/v1/markets/current-signals", nil, nil)
 }
 
 func (h *Handler) marketStatus(w http.ResponseWriter, r *http.Request) {
