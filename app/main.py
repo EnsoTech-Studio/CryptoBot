@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from .config import Settings
 from .domain.common import ERR_UNKNOWN_STRATEGY, DomainError, hash_canonical_json
+from .domain.strategy.defaults import effective_parameters
 from .domain.strategy import Definition
 from .domain.strategy.plugins import default_registry
 from .errors import ApplicationError
@@ -80,6 +81,11 @@ def _definition_payload(definition: Definition) -> dict[str, Any]:
     }
     fingerprint = hashlib.sha256(source + hash_canonical_json(metadata).encode("ascii")).hexdigest()
     warm_up = definition.warm_up_candles({}) if callable(definition.warm_up_candles) else 0
+    default_params = effective_parameters(
+        definition.strategy_id,
+        definition.version,
+        schema=definition.parameters_schema or {},
+    )
     return {
         **metadata,
         "display_name": definition.display_name,
@@ -87,7 +93,7 @@ def _definition_payload(definition: Definition) -> dict[str, Any]:
         "warm_up_candles": int(warm_up or 0),
         "is_composite": definition.is_composite,
         "code_fingerprint": fingerprint,
-        "default_params": {},
+        "default_params": default_params,
     }
 
 

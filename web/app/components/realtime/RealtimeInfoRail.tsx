@@ -81,7 +81,8 @@ export function RealtimeInfoRail() {
           <span><b className={`${styles.signalBadge} ${styles.buy}`}>BUY</b> Tín hiệu Mua</span>
           <span><i className={styles.candleDown} /> Nến giảm (Close &lt; Open)</span>
           <span><b className={`${styles.signalBadge} ${styles.sell}`}>SELL</b> Tín hiệu Bán</span>
-          <span><i className={styles.maLine} /> MA(20) - Đường trung bình động 20</span>
+          <span><i className={styles.maLine} /> SMA(20) - Đường trung bình động 20</span>
+          <span><i className={styles.maLine50} /> SMA(50) - Đường trung bình động 50</span>
           <span><i className={styles.volumeBar} /> Volume - Khối lượng giao dịch</span>
         </div>
       </section>

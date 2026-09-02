@@ -956,6 +956,9 @@ td span {
   display: block;
   width: 100%;
   border: 1px solid var(--line-1);
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
   border-radius: var(--radius-inner);
   background: var(--chart-bg);
 }
