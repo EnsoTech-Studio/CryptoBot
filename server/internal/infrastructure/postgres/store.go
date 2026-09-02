@@ -156,6 +156,21 @@ func (s *Store) PersistClosedCandles(ctx context.Context, candles []domainmarket
 	return nil
 }
 
+func (s *Store) PersistBBO(ctx context.Context, quote domainmarket.BBO) error {
+	_, err := s.pool.Exec(
+		ctx,
+		`INSERT INTO bbo_events(provider,symbol,event_time,source_sequence,bid,bid_qty,ask,ask_qty,update_id)
+		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		 ON CONFLICT(provider,symbol,event_time,source_sequence) DO NOTHING`,
+		quote.Provider, strings.ToUpper(quote.Symbol), quote.EventTime, int64(quote.SourceSequence),
+		quote.Bid.String(), quote.BidQty.String(), quote.Ask.String(), quote.AskQty.String(), quote.UpdateID,
+	)
+	if err != nil {
+		return fmt.Errorf("persist BBO: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) LoadCheckpoint(
 	ctx context.Context, key domainmarket.MarketKey,
 ) (domainmarket.Checkpoint, error) {

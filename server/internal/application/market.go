@@ -130,7 +130,7 @@ func (s *MarketService) Start(ctx context.Context) (domainmarket.Subscription, e
 				case <-runtimeCtx.Done():
 					return
 				case quote := <-quotes:
-					s.handleBBO(quote)
+					s.handleBBO(runtimeCtx, quote)
 				}
 			}
 		}()
@@ -173,8 +173,14 @@ func (s *MarketService) handleKline(ctx context.Context, update domainmarket.Kli
 	_ = s.store.MarkStreamRecovered(ctx, update.Market, update.CloseTime, sequence)
 }
 
-func (s *MarketService) handleBBO(quote domainmarket.BBO) {
+func (s *MarketService) handleBBO(ctx context.Context, quote domainmarket.BBO) {
 	quote.SourceSequence = s.sequence.Add(1)
+	if err := s.store.PersistBBO(ctx, quote); err != nil {
+		s.publishStatus(domainmarket.StreamStatus{
+			State: domainmarket.StreamStale, OccurredAt: time.Now().UTC(), Reason: "bbo_persist_failed",
+		})
+		return
+	}
 	pair := strings.ToUpper(quote.Provider + "|" + quote.Symbol)
 	s.mu.Lock()
 	history := append(s.quoteByPair[pair], quote)

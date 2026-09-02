@@ -74,6 +74,7 @@ func (p *fakeMarketProvider) StreamMarket(
 type fakeMarketStore struct {
 	mu        sync.Mutex
 	persisted int
+	bbo       int
 	recovered int
 	stale     int
 	staleKeys []domainmarket.MarketKey
@@ -82,6 +83,12 @@ type fakeMarketStore struct {
 func (s *fakeMarketStore) PersistClosedCandles(_ context.Context, candles []domainmarket.Candle) error {
 	s.mu.Lock()
 	s.persisted += len(candles)
+	s.mu.Unlock()
+	return nil
+}
+func (s *fakeMarketStore) PersistBBO(_ context.Context, _ domainmarket.BBO) error {
+	s.mu.Lock()
+	s.bbo++
 	s.mu.Unlock()
 	return nil
 }
@@ -111,6 +118,25 @@ func (*fakeMarketStore) CreateDataset(
 	context.Context, domainmarket.MarketKey, time.Time, time.Time, int, []domainmarket.BBO,
 ) (domainmarket.Dataset, error) {
 	return domainmarket.Dataset{}, nil
+}
+
+func TestMarketServicePersistsBBOBeforePublishing(t *testing.T) {
+	store := &fakeMarketStore{}
+	var published int
+	service := &MarketService{
+		store:       store,
+		callback:    MarketCallbacks{BBO: func(domainmarket.BBO) { published++ }},
+		quoteLimit:  10,
+		quoteByPair: make(map[string][]domainmarket.BBO),
+	}
+	service.handleBBO(context.Background(), domainmarket.BBO{
+		Provider: "binance_usdm", Symbol: "BTCUSDT", EventTime: time.Now().UTC(),
+		Bid: decimal.NewFromInt(100), BidQty: decimal.NewFromInt(1),
+		Ask: decimal.NewFromInt(101), AskQty: decimal.NewFromInt(1),
+	})
+	if store.bbo != 1 || published != 1 {
+		t.Fatalf("BBO was not persisted and published: persisted=%d published=%d", store.bbo, published)
+	}
 }
 
 func TestMarketServiceBackfillsBeforeRecovered(t *testing.T) {

@@ -236,6 +236,7 @@ export function BacktestScreen() {
         {!noRegistry && noStrategies ? <StatusMessage tone="syncing">Hãy chọn strategy hợp lệ để chạy backtest.</StatusMessage> : null}
         {dataMode === "mock" && mockRunState === "completed" ? <StatusMessage tone="live">Backtest mock đã hoàn tất — kết quả đang hiển thị từ dữ liệu tham chiếu.</StatusMessage> : null}
         {dataMode === "mock" && mockRunState === "running" ? <StatusMessage tone="syncing">Backtest mock đang chạy trên dataset đã chọn…</StatusMessage> : null}
+        {dataMode !== "mock" && !user ? <StatusMessage tone="syncing">Đăng nhập ở menu tài khoản để bật nút Chạy backtest và xem dữ liệu kết quả.</StatusMessage> : null}
         {experiment && !completed ? (
           <StatusMessage tone={visibleExperimentStatus === "failed" ? "error" : "syncing"}>
             {statusText(visibleExperimentStatus ?? "")}
