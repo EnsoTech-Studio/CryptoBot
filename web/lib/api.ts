@@ -254,6 +254,17 @@ export type NewsItem = {
   };
 };
 
+export type NewsSource = {
+  id: string;
+  source_key: string;
+  display_name: string;
+  kind: "rss" | "url";
+  allowed_origin: string;
+  url_template: string;
+  is_active: boolean;
+  last_collected_at: string | null;
+};
+
 export type Prediction = {
   label: string;
   score: number;
@@ -832,6 +843,9 @@ export const api = {
         items_unanalyzed: payload.item_count - payload.analyzed_count,
       },
     }));
+  },
+  newsSources() {
+    return request<{ sources: NewsSource[] }>("/api/v1/news/sources");
   },
   collectNews(sourceId?: string) {
     return request<{ results: Array<Record<string, unknown>> }>("/api/v1/admin/news/collect", {

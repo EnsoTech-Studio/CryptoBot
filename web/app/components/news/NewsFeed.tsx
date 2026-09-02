@@ -1,16 +1,15 @@
 "use client";
 
-import { NEWS_SUMMARY_MOCK, assetTone } from "../../../lib/news-mock";
 import type { NewsItem } from "../../../lib/api";
+import { NEWS_SUMMARY_MOCK, assetTone } from "../../../lib/news-mock";
+import type { LoadState } from "../../providers/workspace";
+import { Skeleton, Unavailable } from "../States";
 import { Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
-import { Skeleton, Unavailable } from "../States";
-import type { LoadState } from "../../providers/workspace";
 import styles from "./news.module.css";
 
-/* Left region: the incoming news feed. Real items whenever the API returns
-   any; `sentiment: null` renders as "chưa phân tích" rather than a neutral
-   label, because null means the AI service has not covered the item. */
+const MAX_VISIBLE_NEWS = 12;
+
 export function NewsFeed({
   items,
   state,
@@ -24,6 +23,8 @@ export function NewsFeed({
   isMock: boolean;
   onShowAll: () => void;
 }) {
+  const visibleItems = items.slice(0, MAX_VISIBLE_NEWS);
+
   return (
     <Panel
       title="Tin tức đầu vào"
@@ -35,7 +36,7 @@ export function NewsFeed({
       }
     >
       {state === "loading" && items.length === 0 ? (
-        <Skeleton lines={6} />
+        <Skeleton lines={8} />
       ) : state === "unavailable" && items.length === 0 ? (
         <Unavailable title="Không tải được tin tức">
           Bộ thu thập không phản hồi. Biểu đồ và backtest không bị ảnh hưởng.
@@ -54,14 +55,15 @@ export function NewsFeed({
           </div>
 
           <div className={styles.feedList}>
-            {items.slice(0, 6).map((item) => (
+            {visibleItems.map((item) => (
               <FeedRow key={item.id} item={item} isMock={isMock} />
             ))}
           </div>
 
           <div className={styles.feedFooter}>
+            <span className={styles.feedCount}>{visibleItems.length} / {items.length} tin</span>
             <button type="button" className={styles.feedMore} onClick={onShowAll}>
-              Xem tất cả tin tức
+              Làm mới tin tức
               <Icon name="chevron-right" aria-hidden="true" />
             </button>
           </div>
@@ -126,6 +128,6 @@ function sentimentClass(label?: string) {
 
 function timeOf(value: string) {
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "—";
+  if (!Number.isFinite(date.getTime())) return "-";
   return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }

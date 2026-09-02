@@ -183,6 +183,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/api/v1/leaderboard/", handler.leaderboardByID)
 	mux.HandleFunc("/api/v1/news", handler.news)
 	mux.HandleFunc("/api/v1/news/aggregate", handler.newsAggregate)
+	mux.HandleFunc("/api/v1/news/sources", handler.newsSources)
 	mux.HandleFunc("/api/v1/admin/news/collect", handler.newsCollect)
 	mux.HandleFunc("/api/v1/ai/predict", handler.predict)
 
@@ -962,6 +963,13 @@ func (h *Handler) newsAggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.callResearch(w, r, http.MethodGet, "/api/v1/news/aggregate", nil, nil)
+}
+
+func (h *Handler) newsSources(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	h.callResearch(w, r, http.MethodGet, "/api/v1/news/sources", nil, nil)
 }
 
 func (h *Handler) newsCollect(w http.ResponseWriter, r *http.Request) {
