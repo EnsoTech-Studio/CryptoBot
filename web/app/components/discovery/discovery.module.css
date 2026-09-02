@@ -28,8 +28,8 @@
   gap: 10px;
 }
 
-.rightColumn > section:first-child { height: 255px; }
-.rightColumn > section:nth-child(2) { height: 273px; overflow: hidden; }
+.rightColumn > section:first-child { min-height: 255px; }
+.rightColumn > section:nth-child(2) { min-height: 273px; }
 
 .sessionHistory { display: grid; gap: 8px; }
 .sessionHint { margin: 0; color: var(--ink-3); font-size: 12px; line-height: var(--leading-normal); }
@@ -40,7 +40,7 @@
   gap: 8px;
 }
 
-.builderColumn > section:first-child { height: 255px; overflow: hidden; }
+.builderColumn > section:first-child { min-height: 255px; }
 
 /* The catalog and the builder run nearly the full viewport height in the
    reference, so the outer panels stretch rather than hug their content. */
@@ -51,6 +51,8 @@
 
 .catalogList {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   min-height: 0;
   flex: 1 1 auto;
   gap: 12px;
@@ -447,15 +449,15 @@
 
 .methodProgressRow {
   display: grid;
-  height: 260px;
   min-height: 0;
+  min-height: 260px;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
   align-items: start;
   gap: 20px;
   overflow: visible;
 }
 
-.methodProgressRow > section { min-height: 0; height: 100%; overflow: visible; }
+.methodProgressRow > section { min-height: 0; height: auto; overflow: visible; }
 .methodProgressRow > section > div { gap: 8px; padding: 12px 16px; }
 
 .progressMockActions { display: grid; gap: 8px; }
