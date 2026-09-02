@@ -2,60 +2,48 @@ sequenceDiagram
     autonumber
     actor U as Researcher
     participant GO as Go Edge API
-    participant SRS as Python SearchRunService
-    participant GR as GeneratorRegistry
-    participant GEN as CandidateGenerator
-    participant EXS as ExperimentService
-    participant DB as PostgreSQL
-    participant W1 as Python Worker 1
-    participant WN as Python Worker N
-    participant DP as OutboxDispatcher
-    participant EVA as Evaluator
-    participant RNK as RankingService
-    participant ING as Go Internal Event Ingress
-    participant HUB as Go WS Hub
+    participant DC as Python DiscoveryController
+    participant AR as Discovery Archive
+    participant GEN as Selected Generator
+    participant EX as Experiment/Admission
+    participant DB as PostgreSQL Queue
+    participant W as Python Worker
+    participant EV as Evaluator
 
-    U->>GO: POST /search-runs {generator_id, space, stop, dataset, execution}
-    GO->>GO: auth/RBAC + quota + bounded input
-    GO->>SRS: create command + principal/correlation_id
-    SRS->>DB: atomic admission + INSERT search_run(queued)
-    SRS-->>GO: 202 search_run_id
-    GO-->>U: 202 search_run_id
+    U->>GO: POST /search-runs {generator_id: discovery}
+    GO->>DC: signed command + principal/quota
+    DC->>AR: freeze split, policies and initial stats
 
-    SRS->>GR: resolve(generator_id, exact version)
-    GR-->>SRS: Random | DomainGuided | Genetic via same port
-
-    loop bounded loop — check stop before every batch
-        SRS->>SRS: max_candidates/duration/non_improving/failure_rate<br/>paused/cancelled/resource quota
-        SRS->>GEN: generate(space, seed, history, batch_size)
-        GEN-->>SRS: CandidateStrategy[] + generation metadata
-        SRS->>DB: INSERT candidates ON CONFLICT(run_id,candidate_hash) DO NOTHING
-        alt duplicate
-            DB-->>SRS: 0 row, increment dedup count, no backtest
-        else new candidate
-            SRS->>EXS: create immutable experiment
-            EXS->>DB: one transaction: candidate link + experiment snapshot<br/>+ Candle/BBO dataset refs + job + BacktestQueued outbox
+    loop one active candidate, stop check before admission
+        DC->>DC: select runnable generator
+        DC->>GEN: propose CandidateSpec + lineage
+        GEN-->>DC: candidate or recorded provider failure
+        DC->>AR: canonical hash + duplicate/parent checks
+        alt new candidate admitted
+            DC->>EX: reserve four backtests and create train snapshot
+            EX->>DB: immutable train experiment + job
+            W->>DB: claim with lease and run train
+            W->>EV: BacktestCompleted via outbox
+            EV->>AR: train metrics
+            alt cheap gate passes
+                DC->>EX: admit V1, V2, V3 snapshots
+                EX->>DB: three immutable validation jobs
+                W->>EV: execute/evaluate each window
+                EV->>AR: validation metrics + aligned returns
+                DC->>AR: assess score, correlation, accept/reject
+            else train rejected
+                DC->>AR: cheap rejection with no validation jobs
+            end
+        else duplicate or invalid
+            DC->>AR: terminal skip or failure with no experiment
         end
-        SRS->>ING: signed SearchProgressUpdated<br/>(generated/queued/dedup/ETA)
-        ING->>HUB: validate signature + correlation + sequence
     end
 
-    par workers claim independently
-        W1->>DB: atomic claim queued/expired lease<br/>FOR UPDATE SKIP LOCKED → token T1
-        W1->>W1: same Python StrategyRuntime<br/>+ BBO LONG/SHORT ExecutionSimulator
-        W1->>DB: transaction: facts + completed guarded by T1<br/>+ BacktestCompleted outbox
-    and
-        WN->>DB: claim different job → token TN
-        WN->>WN: same runtime and contracts
-        WN->>DB: guarded atomic result + outbox
+    opt normal completion and accepted survivor
+        DC->>EX: exactly one sealed test for best candidate
+        EX->>DB: immutable test experiment + job
+        W->>EV: execute/evaluate and persist separately
+        EV->>AR: final test completed outside score and parent updates
     end
 
-    DP->>EVA: BacktestCompleted (at-least-once)
-    EVA->>DB: idempotent consumption + evaluation<br/>+ StrategyEvaluated outbox in one transaction
-    DP->>RNK: StrategyEvaluated (aggregate sequence checked)
-    RNK->>DB: append leaderboard entry + score policy version
-    RNK->>ING: signed LeaderboardUpdated
-    ING->>HUB: validate signature + correlation + sequence
-    HUB->>U: result/progress without full-page reload
-
-    Note over GR,EVA: Thay generator không đổi ExperimentSnapshot,<br/>StrategyRuntime, ExecutionSimulator, Evaluator hoặc Leaderboard.
+    Note over DC,AR: Test data never reaches generation, acceptance,<br/>parent selection or generator adaptation.

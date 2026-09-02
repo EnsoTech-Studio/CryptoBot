@@ -136,6 +136,26 @@ def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
     assert observed["response_format"]["json_schema"]["name"] == "strategy_spec"
 
 
+def test_openai_configuration_is_preferred_and_uses_shared_model(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
+    monkeypatch.setenv("MODEL_CHEAP", "gpt-test-mini")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.example/v1")
+    observed = {}
+
+    def requester(request, _timeout):
+        observed["url"] = request.full_url
+        observed["authorization"] = request.headers["Authorization"]
+        observed["payload"] = json.loads(request.data)
+        return json.dumps({"choices": [{"message": {"content": json.dumps({"label": "NEUTRAL", "score": 0.5})}}]}).encode()
+
+    result = Predictor(requester).predict("market update")
+
+    assert result.model == "gpt-test-mini"
+    assert observed["url"] == "https://openai.example/v1/chat/completions"
+    assert observed["authorization"] == "Bearer openai-test-key"
+    assert observed["payload"]["model"] == "gpt-test-mini"
+
+
 def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     observed = {}
@@ -151,6 +171,64 @@ def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) 
     assert repaired.endswith("return ()")
     assert observed["response_format"]["json_schema"]["name"] == "strategy_python_repair"
     assert "untrusted code" in observed["messages"][0]["content"]
+
+
+def test_discovery_proposal_normalizes_component_shorthand(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    response = {
+        "hypothesis": "Trend and momentum complement each other.",
+        "operation": "combine",
+        "candidate_json": json.dumps(
+            {
+                "components": [
+                    {"strategy_id": "ma_cross", "parameters": {"fast": 5, "slow": 20}},
+                    {"strategy_id": "rsi", "parameters": {"period": 14}},
+                ],
+                "weights": [0.7, 0.3],
+                "policy": "weighted_vote",
+            }
+        ),
+    }
+
+    def requester(request, _timeout):
+        payload = json.loads(request.data)
+        assert "test_metrics" in payload["messages"][1]["content"]
+        return json.dumps({"choices": [{"message": {"content": json.dumps(response)}}]}).encode()
+
+    result = Predictor(requester).propose_discovery(
+        {"mode": "combine", "search_space": {"strategy_ids": ["ma_cross", "rsi"]}, "archive": [], "research": {"test_metrics": "sealed"}}
+    )
+
+    assert result["operation"] == "combine"
+    assert result["candidate_definition"]["strategy_id"] == "composite"
+    assert [child["weight"] for child in result["candidate_definition"]["children"]] == [0.7, 0.3]
+
+
+def test_discovery_proposal_normalizes_strategies_alias(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    response = {
+        "hypothesis": "Trend and momentum diversify the signal.",
+        "operation": "combine",
+        "candidate_json": json.dumps(
+            {
+                "strategies": [
+                    {"strategy_id": "ma_cross", "parameters": {}},
+                    {"strategy_id": "rsi", "parameters": {}},
+                ],
+                "policy": "majority_vote",
+            }
+        ),
+    }
+
+    def requester(request, _timeout):
+        return json.dumps({"choices": [{"message": {"content": json.dumps(response)}}]}).encode()
+
+    result = Predictor(requester).propose_discovery(
+        {"mode": "combine", "search_space": {"strategy_ids": ["ma_cross", "rsi"]}}
+    )
+
+    assert result["candidate_definition"]["policy"]["name"] == "majority_vote"
+    assert [child["strategy_id"] for child in result["candidate_definition"]["children"]] == ["ma_cross", "rsi"]
 
 
 def test_near_spec_is_normalized_before_contract_validation() -> None:

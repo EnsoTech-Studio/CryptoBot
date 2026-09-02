@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { draftIssues, normalizeWeights, createDraft } from "./discovery";
-import { backtestIssues, createBacktestDraft, defaultBacktestStrategyId, defaultBacktestTimeframe, deriveKpis, draftToExecution, isExecutionMarkerSelected, needsMoreTradesForPage, resolvedTradeKpis } from "./backtest";
+import { backtestIssues, buildBacktestChildren, canCancelBacktest, canRunBacktest, createBacktestDraft, defaultBacktestStrategyId, defaultBacktestTimeframe, deriveKpis, draftToExecution, isExecutionMarkerSelected, needsMoreTradesForPage, pickBacktestDataset, resolvedTradeKpis } from "./backtest";
 import { mockExecutionMarkers } from "./backtest-mock";
 import { createMockPanelData } from "./realtime-mock";
 import type { Strategy, Trade } from "./api";
@@ -68,6 +68,42 @@ test("backtestIssues catches an inverted date range and a negative fee", () => {
   assert.deepEqual(backtestIssues(draft), []);
   assert.ok(backtestIssues({ ...draft, rangeFrom: "2026-02-01", rangeTo: "2026-01-01" }).length > 0);
   assert.ok(backtestIssues({ ...draft, feePercent: -1 }).length > 0);
+});
+
+test("backtest run action stays enabled after a result is loaded", () => {
+  assert.equal(canRunBacktest(true, false, false, []), true);
+  assert.equal(canRunBacktest(true, true, false, []), false);
+  assert.equal(canRunBacktest(true, false, true, []), false);
+  assert.equal(canRunBacktest(true, false, false, ["From date phải trước To date."]), false);
+  assert.equal(canRunBacktest(false, false, false, []), false);
+});
+
+test("backtest configuration builds single and composite children from the selected registry entries", () => {
+  const registry = [strategy("ma_cross"), strategy("rsi"), strategy("bollinger")];
+  assert.deepEqual(buildBacktestChildren("single", "rsi", [], registry), [
+    { strategy_id: "rsi", strategy_version: "v1", parameters: {}, weight: 1 },
+  ]);
+  assert.deepEqual(buildBacktestChildren("composite", "", ["ma_cross", "rsi", "missing"], registry), [
+    { strategy_id: "ma_cross", strategy_version: "v1", parameters: {}, weight: 0.5 },
+    { strategy_id: "rsi", strategy_version: "v1", parameters: {}, weight: 0.5 },
+  ]);
+});
+
+test("dataset selection keeps the requested immutable version and falls back safely", () => {
+  const datasets = [
+    { dataset_version: "v1" },
+    { dataset_version: "v2" },
+  ] as Parameters<typeof pickBacktestDataset>[0];
+  assert.equal(pickBacktestDataset(datasets, "v2")?.dataset_version, "v2");
+  assert.equal(pickBacktestDataset(datasets, "missing")?.dataset_version, "v1");
+  assert.equal(pickBacktestDataset([], "missing"), undefined);
+});
+
+test("queued and running experiments expose a cancel action", () => {
+  assert.equal(canCancelBacktest("queued"), true);
+  assert.equal(canCancelBacktest("running"), true);
+  assert.equal(canCancelBacktest("completed"), false);
+  assert.equal(canCancelBacktest(null), false);
 });
 
 test("deriveKpis counts only settled trades and sums real fee and slippage", () => {

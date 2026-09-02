@@ -7,9 +7,8 @@ import { Button, Panel, PlannedNotice, ProgressBar } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./discovery.module.css";
 
-/* Column 3, bottom-left. Genetic renders as a disabled radio: the Go validator
-   (contracts.go validate) only accepts grid / random / random_search /
-   domain_guided, so offering it would submit a request that 422s. */
+/* Column 3, bottom-left. Every enabled option maps directly to a backend
+   generator; the discovery loop remains the archive-driven mode. */
 export function DiscoveryMethodSelector({
   method,
   disabled,
@@ -45,6 +44,9 @@ export function DiscoveryMethodSelector({
           </label>
         ))}
       </div>
+      <p className={styles.progressLabel}>
+        LLM agent dùng archive và research context; test data vẫn được niêm phong.
+      </p>
     </Panel>
   );
 }
@@ -147,9 +149,11 @@ export function DiscoveryProgress({
             Huỷ
           </Button>
         </div>
-      ) : showMock ? (
+      ) : (
         <div className={styles.progressMockActions}>
-          <PlannedNotice>Số liệu minh hoạ theo thiết kế. Bắt đầu một run để thay bằng dữ liệu thật.</PlannedNotice>
+          {showMock ? (
+            <PlannedNotice>Số liệu minh hoạ theo thiết kế. Bắt đầu một run để thay bằng dữ liệu thật.</PlannedNotice>
+          ) : null}
           <div className={styles.runActions}>
             <Button variant="primary" disabled={!canStart} onClick={onStart}>
               <Icon name="play" aria-hidden="true" />
@@ -157,7 +161,7 @@ export function DiscoveryProgress({
             </Button>
           </div>
         </div>
-      ) : null}
+      )}
     </Panel>
   );
 }

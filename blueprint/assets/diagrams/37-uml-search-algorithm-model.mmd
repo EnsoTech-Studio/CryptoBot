@@ -1,86 +1,83 @@
 classDiagram
     direction LR
 
-    class CandidateGenerator {
+    class DiscoveryController {
+        +runNextTrial(runId)
+        +reconcile(runId)
+        +selectGenerator()
+        +admitTrainThenValidation()
+        +assess()
+        +scheduleFinalTest()
+    }
+    class StrategyCandidate {
+        +UUID id
+        +CandidateSpec strategySpec
+        +String generator
+        +UUID[] parentIds
+        +int generation
+        +String hypothesis
+        +String operation
+    }
+    class CandidateSpec {
+        +CatalogDefinition strategy
+        +RiskPolicy riskPolicy
+        +canonicalHash()
+    }
+    class DiscoveryGenerator {
         <<interface>>
-        +id() String
-        +version() String
-        +validateSpace(space) ValidationResult
-        +generate(ctx, batchSize) CandidateStrategy[]
+        +propose(context) StrategyCandidate
+    }
+    class RandomGenerator
+    class MutationGenerator
+    class CrossoverGenerator
+    class EnsembleGenerator
+    class LLMGenerator {
+        +newHypothesis()
+        +improveFailed()
+        +combine()
+    }
+    class DiscoveryArchive {
+        +duplicate(hash)
+        +parents()
+        +survivorReturns()
+        +recordOutcome()
+        +generatorStats()
+    }
+    class ValidationPolicy {
+        +split 60/20/20
+        +threeValidationWindows
+        +score()
+        +similarity()
+    }
+    class PartitionExperiment {
+        +train|validation|test
+        +validationOrdinal
+        +experimentId
+        +segmentRange
+    }
+    class Assessment {
+        +trainMetrics
+        +validationMetrics
+        +gap
+        +complexity
+        +correlation
+        +score
+        +accepted
+        +rejectionReason
     }
 
-    class RandomGenerator {
-        +seed int
-        +generate(ctx, batchSize) CandidateStrategy[]
-    }
+    DiscoveryGenerator <|.. RandomGenerator
+    DiscoveryGenerator <|.. MutationGenerator
+    DiscoveryGenerator <|.. CrossoverGenerator
+    DiscoveryGenerator <|.. EnsembleGenerator
+    DiscoveryGenerator <|.. LLMGenerator
+    DiscoveryController --> DiscoveryGenerator : selects one
+    DiscoveryController --> DiscoveryArchive
+    DiscoveryController --> ValidationPolicy
+    DiscoveryController --> PartitionExperiment
+    DiscoveryArchive --> StrategyCandidate
+    StrategyCandidate *-- CandidateSpec
+    StrategyCandidate --> Assessment
 
-    class DomainGuidedGenerator {
-        +rules RuleSet
-        +generate(ctx, batchSize) CandidateStrategy[]
-    }
-
-    class GeneticGenerator {
-        <<optional extension>>
-        +populationSize int
-        +mutationRate Decimal
-        +generate(ctx, batchSize) CandidateStrategy[]
-    }
-
-    class GeneratorRegistry {
-        +register(descriptor)
-        +resolve(id, version) CandidateGenerator
-    }
-
-    class SearchRunService {
-        +start(command) SearchRunId
-        +pause(runId)
-        +resume(runId)
-        +cancel(runId)
-        +runNextBatch(runId)
-    }
-
-    class SearchSpace {
-        +allowedStrategies StrategyRef[]
-        +parameterBounds Bounds
-        +combinationRules Rules
-        +policyVersion String
-    }
-
-    class GenerationContext {
-        +seed int
-        +testedHashes Set
-        +topKSummary Summary
-        +remainingBudget Budget
-    }
-
-    class CandidateValidator {
-        +validate(candidate, space) ValidationResult
-        +canonicalHash(candidate) String
-    }
-
-    class StopPolicy {
-        +maxCandidates int
-        +maxDuration Duration
-        +maxNonImproving int
-        +maxFailureRate Decimal
-        +shouldStop(snapshot) bool
-    }
-
-    class ExperimentService {
-        +createImmutableExperiment(candidate, dataset, execution)
-    }
-
-    CandidateGenerator <|.. RandomGenerator
-    CandidateGenerator <|.. DomainGuidedGenerator
-    CandidateGenerator <|.. GeneticGenerator
-    GeneratorRegistry o-- CandidateGenerator
-    SearchRunService --> GeneratorRegistry
-    SearchRunService --> SearchSpace
-    SearchRunService --> GenerationContext
-    SearchRunService --> CandidateValidator
-    SearchRunService --> StopPolicy
-    SearchRunService --> ExperimentService
-
-    note for CandidateGenerator "Generator only proposes candidates.<br/>It does not backtest, rank or bypass quota."
-    note for SearchRunService "Bounded loop checks stop, pause, cancel<br/>and quota before each batch."
-    note for CandidateValidator "Reject unsupported, non-causal,<br/>out-of-bounds and duplicate candidates."
+    note for LLMGenerator "Strict JSON only; provider fail recorded.\nNo Python, queue, result-table or stop control."
+    note for PartitionExperiment "Unique candidate + partition + ordinal.\nNormal completion admits one sealed final test."

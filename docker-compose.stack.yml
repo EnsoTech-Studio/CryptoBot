@@ -96,7 +96,7 @@ services:
     entrypoint: ["python", "-m", "app.worker", "queue"]
     environment:
       DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
-      WORKER_ID: "worker-1"
+      WORKER_ID: "${WORKER_ID:-worker-v2}"
       WORKER_LEASE_SECONDS: "${WORKER_LEASE_SECONDS:-120}"
       WORKER_HEARTBEAT_SECONDS: "${WORKER_HEARTBEAT_SECONDS:-30}"
       EVENT_CONSUMERS: ""
@@ -112,7 +112,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
-      EVENT_WORKER_ID: "events-1"
+      EVENT_WORKER_ID: "${EVENT_WORKER_ID:-events-v2}"
       EVENT_LEASE_SECONDS: "${EVENT_LEASE_SECONDS:-60}"
     depends_on:
       migrate:

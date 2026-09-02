@@ -148,7 +148,11 @@ class ExperimentCreateIn(ContractModel):
     def validate_replay_range(self) -> "ExperimentCreateIn":
         if (self.range_from is None) != (self.range_to is None):
             raise ValueError("range_from and range_to must be supplied together")
-        if self.range_from is not None and self.range_to is not None and self.range_to <= self.range_from:
+        if (
+            self.range_from is not None
+            and self.range_to is not None
+            and self.range_to <= self.range_from
+        ):
             raise ValueError("range_to must be after range_from")
         return self
 
@@ -276,9 +280,7 @@ class SearchStopConditions(ContractModel):
     @field_validator("max_failure_rate", mode="before")
     @classmethod
     def validate_failure_rate_type(cls, value: Any) -> Any:
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, (int, float))
-        ):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
             raise ValueError("max_failure_rate must be a number")
         return value
 
@@ -326,12 +328,13 @@ class SearchSpaceInput(ContractModel):
 
 class SearchRunCreateIn(ContractModel):
     owner_id: UUID
-    generator_id: Literal["grid", "random", "random_search", "domain_guided"] = "grid"
+    generator_id: Literal["grid", "random", "random_search", "domain_guided", "genetic", "discovery"] = "grid"
     search_space: SearchSpaceInput
     stop_conditions: SearchStopConditions
     dataset_version: str = Field(min_length=1, max_length=120)
     seed: int = 0
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
 
 class SearchRunOut(ContractModel):
     search_run_id: UUID

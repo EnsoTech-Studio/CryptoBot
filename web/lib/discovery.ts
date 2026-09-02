@@ -5,12 +5,9 @@ import type { MarketSelection } from "./market";
    visible controls were decoration. Plan 03 §4 requires the submitted request
    and the visible draft to be the same object. */
 
-export type DiscoveryMethod = "grid" | "random_search" | "domain_guided";
+export type DiscoveryMethod = "grid" | "random_search" | "domain_guided" | "genetic" | "discovery";
 
-/* Genetic appears in the reference. There is no backend generator for it
-   (server/internal/httpapi/contracts.go rejects it), so it is listed as a
-   disabled option rather than silently mapped to something else. */
-export type DiscoveryMethodOption = DiscoveryMethod | "genetic";
+export type DiscoveryMethodOption = DiscoveryMethod;
 
 export type CombinationPolicy = "weighted_vote" | "majority_vote";
 
@@ -43,12 +40,13 @@ export const DISCOVERY_METHODS: Array<{
   value: DiscoveryMethodOption;
   label: string;
   description: string;
-  icon: "dice" | "target" | "dna" | "sliders";
+  icon: "dice" | "target" | "dna" | "discovery" | "sliders";
   supported: boolean;
 }> = [
+  { value: "discovery", label: "Discovery Loop", description: "Sinh, backtest, xác thực và lưu archive theo vòng lặp bền vững.", icon: "discovery", supported: true },
   { value: "random_search", label: "Random Search", description: "Sinh ngẫu nhiên các biến thể theo seed.", icon: "dice", supported: true },
   { value: "domain_guided", label: "Domain-guided Search", description: "Tìm kiếm dựa trên kiến thức và ràng buộc.", icon: "target", supported: true },
-  { value: "genetic", label: "Genetic Search", description: "Tiến hóa qua chọn lọc và lai ghép.", icon: "dna", supported: false },
+  { value: "genetic", label: "Genetic Search", description: "Tiến hóa qua chọn lọc và lai ghép.", icon: "dna", supported: true },
 ];
 
 /* Short labels for chips. The registry display_name ("MA Cross (SMA)") is too
@@ -102,7 +100,7 @@ export function createDraft(market: MarketSelection, timeframe: string): Discove
     selectedStrategyIds: [],
     weights: {},
     policy: "weighted_vote",
-    method: "domain_guided",
+    method: "discovery",
     maxCandidates: 24,
     maxDurationSec: 900,
     maxNonImproving: 8,

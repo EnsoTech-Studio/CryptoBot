@@ -41,7 +41,7 @@ export function RecentImports({
           </thead>
           <tbody>
             {rows.length > 0 ? rows.map((row) => (
-              <ImportTableRow key={`${row.strategyId ?? row.name}-${row.version}`} row={row} onRun={onRun} />
+              <ImportTableRow key={`${row.draftId ?? row.strategyId ?? row.name}-${row.version}`} row={row} onRun={onRun} />
             )) : (
               <tr><td className={styles.emptyImports} colSpan={7}>Chưa có strategy nào được import.</td></tr>
             )}

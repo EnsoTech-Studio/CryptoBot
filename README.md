@@ -45,6 +45,22 @@ cd web
 npm run dev
 ```
 
+Linux/macOS native launcher:
+
+```bash
+cp .env.example .env
+chmod +x backend.sh
+./backend.sh setup
+./backend.sh up
+cd web
+pnpm install
+pnpm dev
+```
+
+Use `./backend.sh status`, `./backend.sh logs api`, or `./backend.sh down`.
+The PowerShell launcher is Windows-only; `backend.sh` provides its Linux/macOS
+equivalent.
+
 ## Quick backend commands
 
 Run these from the repository root. In PowerShell, run

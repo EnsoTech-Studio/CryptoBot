@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
+import math
+import os
 from typing import Any
 from uuid import UUID
 
@@ -25,7 +27,15 @@ from ...schemas import (
     StrategyApprovalIn,
     StrategyDraftCreateIn,
 )
-from ...services.search import generate_candidates
+from ...services.search import (
+    discovery_assessment,
+    discovery_complexity,
+    discovery_propose,
+    discovery_split,
+    generate_candidates,
+)
+from ...infrastructure.ai import DiscoveryLLMUnavailable
+from ...services.discovery.llm import DiscoveryProposalError
 
 
 def _float(value: Any) -> float | None:
@@ -46,13 +56,25 @@ class Store:
     separate worker threads without sharing transaction state.
     """
 
-    def __init__(self, conninfo: str) -> None:
+    def __init__(
+        self,
+        conninfo: str,
+        discovery_llm: Any | None = None,
+        discovery_demo_mode: bool = False,
+    ) -> None:
         if not conninfo.strip():
             raise ValueError("database connection string is required")
         self._conninfo = conninfo
+        self._discovery_llm = discovery_llm
+        self._discovery_demo_mode = discovery_demo_mode
 
     def _connect(self) -> psycopg.Connection[dict[str, Any]]:
-        return psycopg.connect(self._conninfo, connect_timeout=3, row_factory=dict_row)
+        return psycopg.connect(
+            self._conninfo,
+            connect_timeout=3,
+            row_factory=dict_row,
+            prepare_threshold=None,
+        )
 
     def ready(self) -> dict[str, bool]:
         with self._connect() as connection:
@@ -202,6 +224,7 @@ class Store:
             }
             for row in rows
         ]
+
     def create_strategy_draft(
         self,
         *,
@@ -232,31 +255,31 @@ class Store:
                     existing_id = existing["id"]
             if existing_id is None:
                 draft = connection.execute(
-                """
+                    """
                 INSERT INTO strategy_drafts(
                     owner_id,source_type,source_ref,source_hash,mode,name_hint,
                     current_revision,status,idempotency_key
                 ) VALUES (%s,%s,%s,%s,%s,%s,0,'DRAFT_CREATED',%s) RETURNING id
                 """,
-                (
-                    request.owner_id,
-                    request.source.type,
-                    request.source.text or request.source.url or "dsl",
-                    source_hash,
-                    request.mode,
-                    request.name_hint,
-                    request.idempotency_key,
-                ),
+                    (
+                        request.owner_id,
+                        request.source.type,
+                        request.source.text or request.source.url or "dsl",
+                        source_hash,
+                        request.mode,
+                        request.name_hint,
+                        request.idempotency_key,
+                    ),
                 ).fetchone()
                 draft_id = draft["id"]
                 agent = connection.execute(
-                """
+                    """
                 INSERT INTO agent_runs(
                     draft_id,agent_type,state,model,model_version,prompt_hash,tool_policy_version,attempts_used
                 ) VALUES (%s,'StrategyDesignerAgent','DRAFT_CREATED',%s,%s,%s,'typed-tools-v2',0)
                 RETURNING id
                 """,
-                (draft_id, model, model_version, prompt_hash),
+                    (draft_id, model, model_version, prompt_hash),
                 ).fetchone()
                 self._persist_authoring_result(
                     connection,
@@ -328,7 +351,14 @@ class Store:
                     aggregate_version=aggregate_version+%s,updated_at=now()
                 WHERE id=%s
                 """,
-                (model, model_version, prompt_hash, attempts_used, len(workflow_states) - 1, agent_run_id),
+                (
+                    model,
+                    model_version,
+                    prompt_hash,
+                    attempts_used,
+                    len(workflow_states) - 1,
+                    agent_run_id,
+                ),
             )
         else:
             connection.execute(
@@ -413,7 +443,9 @@ class Store:
                 draft_id,
                 artifact,
                 artifact_hash,
-                "custom-python-review-v1" if spec.get("schema_version") == "custom-python/v1" else "dsl-compiler-v1",
+                "custom-python-review-v1"
+                if spec.get("schema_version") == "custom-python/v1"
+                else "dsl-compiler-v1",
             ),
         ).fetchone()
         connection.execute(
@@ -434,7 +466,11 @@ class Store:
             INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload)
             VALUES ('StrategyDraftReviewRequired','strategy_draft',%s,%s,%s)
             """,
-            (draft_id, correlation_id, Jsonb({"agent_run_id": str(agent_run_id), "spec_hash": spec_hash})),
+            (
+                draft_id,
+                correlation_id,
+                Jsonb({"agent_run_id": str(agent_run_id), "spec_hash": spec_hash}),
+            ),
         )
 
     def create_pending_strategy_draft(
@@ -582,7 +618,9 @@ class Store:
                 (target_state, job_id, lease_token, expected_state, expected_aggregate_version),
             ).fetchone()
             if row is None:
-                raise conflict("agent_state_conflict", "agent run state or lease is no longer current")
+                raise conflict(
+                    "agent_state_conflict", "agent run state or lease is no longer current"
+                )
             connection.execute(
                 "UPDATE strategy_drafts SET status=%s,updated_at=now() WHERE id=%s",
                 (target_state, row["draft_id"]),
@@ -602,8 +640,13 @@ class Store:
                 (
                     row["draft_id"],
                     row["correlation_id"],
-                    Jsonb({"agent_run_id": str(row["id"]), "state": target_state,
-                           "aggregate_version": row["aggregate_version"]}),
+                    Jsonb(
+                        {
+                            "agent_run_id": str(row["id"]),
+                            "state": target_state,
+                            "aggregate_version": row["aggregate_version"],
+                        }
+                    ),
                 ),
             )
         return row["aggregate_version"]
@@ -645,9 +688,13 @@ class Store:
             if row is None or row["draft_id"] != draft_id or row["owner_id"] != request.owner_id:
                 raise conflict("agent_lease_lost", "agent job lease is no longer valid")
             if row["state"] != "REVIEW_REQUIRED":
-                raise conflict("agent_state_conflict", "agent run has not passed every required gate")
+                raise conflict(
+                    "agent_state_conflict", "agent run has not passed every required gate"
+                )
             if row["source_hash"] != source_hash:
-                raise conflict("agent_source_changed", "draft source no longer matches the queued job")
+                raise conflict(
+                    "agent_source_changed", "draft source no longer matches the queued job"
+                )
             self._persist_authoring_result(
                 connection,
                 draft_id=draft_id,
@@ -917,7 +964,10 @@ class Store:
                             ("sandbox_report_hash", request.sandbox_report_hash),
                         )
                     ):
-                        raise conflict("idempotency_key_reused", "approval idempotency key has different content")
+                        raise conflict(
+                            "idempotency_key_reused",
+                            "approval idempotency key has different content",
+                        )
                     reused = True
             if not reused and row["status"] != "REVIEW_REQUIRED":
                 raise conflict("invalid_draft_transition", "draft is no longer awaiting review")
@@ -927,7 +977,9 @@ class Store:
                 or request.artifact_hash != row["artifact_hash"]
                 or request.sandbox_report_hash != row["sandbox_report_hash"]
             ):
-                raise conflict("stale_revision", "approval fingerprint does not match the frozen draft")
+                raise conflict(
+                    "stale_revision", "approval fingerprint does not match the frozen draft"
+                )
             if target_status == "APPROVED" and row["sandbox_status"] != "passed":
                 raise conflict("sandbox_not_passed", "strategy preflight must pass before approval")
             if not reused and target_status == "APPROVED" and is_dsl:
@@ -936,28 +988,34 @@ class Store:
                     "SELECT code_fingerprint FROM strategy_versions WHERE strategy_id=%s AND version='v1'",
                     (str(spec["strategy_id"]),),
                 ).fetchone()
-                if existing_version and existing_version["code_fingerprint"].strip() != request.artifact_hash:
-                    raise conflict("strategy_version_conflict", "strategy id already has a different immutable artifact")
+                if (
+                    existing_version
+                    and existing_version["code_fingerprint"].strip() != request.artifact_hash
+                ):
+                    raise conflict(
+                        "strategy_version_conflict",
+                        "strategy id already has a different immutable artifact",
+                    )
             if not reused:
                 connection.execute(
-                """
+                    """
                 INSERT INTO strategy_approvals(
                     draft_id,reviewer_id,revision,spec_hash,artifact_hash,
                     sandbox_report_hash,decision,reason,idempotency_key
                 ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT DO NOTHING
                 """,
-                (
-                    draft_id,
-                    request.reviewer_id,
-                    request.revision,
-                    request.spec_hash,
-                    request.artifact_hash,
-                    request.sandbox_report_hash,
-                    request.decision,
-                    request.reason,
-                    request.idempotency_key,
-                ),
+                    (
+                        draft_id,
+                        request.reviewer_id,
+                        request.revision,
+                        request.spec_hash,
+                        request.artifact_hash,
+                        request.sandbox_report_hash,
+                        request.decision,
+                        request.reason,
+                        request.idempotency_key,
+                    ),
                 )
                 connection.execute(
                     "UPDATE strategy_drafts SET status=%s,updated_at=now() WHERE id=%s",
@@ -987,11 +1045,13 @@ class Store:
                             strategy_id,
                             version,
                             Jsonb(spec.get("parameters", {})),
-                            Jsonb({
-                                key: value.get("default")
-                                for key, value in spec.get("parameters", {}).items()
-                                if isinstance(value, dict) and "default" in value
-                            }),
+                            Jsonb(
+                                {
+                                    key: value.get("default")
+                                    for key, value in spec.get("parameters", {}).items()
+                                    if isinstance(value, dict) and "default" in value
+                                }
+                            ),
                             Jsonb([]),
                             Jsonb([]),
                             request.artifact_hash,
@@ -1021,7 +1081,12 @@ class Store:
                         (
                             draft_id,
                             None,
-                            Jsonb({"artifact_hash": request.artifact_hash, "deployment_required": True}),
+                            Jsonb(
+                                {
+                                    "artifact_hash": request.artifact_hash,
+                                    "deployment_required": True,
+                                }
+                            ),
                         ),
                     )
         return self.get_strategy_draft(draft_id, request.reviewer_id)
@@ -1080,7 +1145,10 @@ class Store:
             replay_range_from = request.range_from or dataset["range_from"]
             replay_range_to = request.range_to or dataset["range_to"]
             if replay_range_from < dataset["range_from"] or replay_range_to > dataset["range_to"]:
-                raise validation("replay_range_outside_dataset", "backtest range must be inside the immutable dataset")
+                raise validation(
+                    "replay_range_outside_dataset",
+                    "backtest range must be inside the immutable dataset",
+                )
             replay_count = connection.execute(
                 """
                 SELECT count(*) AS count FROM market_dataset_candles
@@ -1294,9 +1362,7 @@ class Store:
                 """,
                 (experiment_id,),
             ).fetchall()
-        return [
-            _as_float_fields(row, ("open", "high", "low", "close", "volume")) for row in rows
-        ]
+        return [_as_float_fields(row, ("open", "high", "low", "close", "volume")) for row in rows]
 
     def list_live_candles(
         self, provider: str, symbol: str, timeframe: str, limit: int
@@ -1315,10 +1381,17 @@ class Store:
             ).fetchall()
         return [
             Candle(
-                provider=row["provider"], symbol=row["symbol"], timeframe=row["timeframe"],
-                open_time=row["open_time"], close_time=row["close_time"],
-                open=float(row["open"]), high=float(row["high"]), low=float(row["low"]),
-                close=float(row["close"]), volume=float(row["volume"]), trade_count=row["trade_count"],
+                provider=row["provider"],
+                symbol=row["symbol"],
+                timeframe=row["timeframe"],
+                open_time=row["open_time"],
+                close_time=row["close_time"],
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=float(row["volume"]),
+                trade_count=row["trade_count"],
             )
             for row in rows
         ]
@@ -1382,7 +1455,9 @@ class Store:
     def list_experiment_trade_page(
         self, experiment_id: UUID, *, after_sequence: int | None, limit: int
     ) -> dict[str, Any]:
-        rows = self.list_experiment_trades(experiment_id, after_sequence=after_sequence, limit=limit + 1)
+        rows = self.list_experiment_trades(
+            experiment_id, after_sequence=after_sequence, limit=limit + 1
+        )
         page = rows[:limit]
         return {
             "trades": page,
@@ -1424,7 +1499,10 @@ class Store:
                 """,
                 (experiment_id,),
             ).fetchall()
-        return [_as_float_fields(row, ("entry_price", "exit_price", "sl_price", "tp_price")) for row in rows]
+        return [
+            _as_float_fields(row, ("entry_price", "exit_price", "sl_price", "tp_price"))
+            for row in rows
+        ]
 
     def create_search_run(
         self, request: SearchRunCreateIn, correlation_id: str | None = None
@@ -1486,12 +1564,20 @@ class Store:
                 raise validation("concurrent_run_quota_exceeded", "concurrent run quota exceeded")
             stop_conditions = request.stop_conditions.model_dump(exclude_none=True)
             search_space = request.search_space.model_dump()
-            requested_limit = int(
-                stop_conditions.get("max_candidates") or owner["max_candidates"]
-            )
+            requested_limit = int(stop_conditions.get("max_candidates") or owner["max_candidates"])
             if requested_limit > owner["max_candidates"]:
                 raise validation("candidate_quota_exceeded", "search exceeds candidate quota")
             candidate_limit = min(requested_limit, 500)
+            if request.generator_id == "discovery":
+                return self._create_discovery_run(
+                    connection,
+                    request,
+                    dataset,
+                    search_space,
+                    stop_conditions,
+                    candidate_limit,
+                    correlation_id,
+                )
             # Ask for one extra item so persistence can distinguish a bounded
             # max-candidates stop from a genuinely exhausted finite space.
             generated = generate_candidates(
@@ -1602,6 +1688,529 @@ class Store:
             )
         return self._search_row(row, reused=False)
 
+    def _create_discovery_run(
+        self,
+        connection: Any,
+        request: SearchRunCreateIn,
+        dataset: dict[str, Any],
+        search_space: dict[str, Any],
+        stop_conditions: dict[str, Any],
+        candidate_limit: int,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
+        candles = connection.execute(
+            "SELECT open_time,close_time FROM market_dataset_candles WHERE market_dataset_id=%s ORDER BY open_time",
+            (dataset["id"],),
+        ).fetchall()
+        split = discovery_split(len(candles))
+        ranges = {
+            name: {
+                "from": candles[start]["open_time"].isoformat(),
+                "to": candles[end - 1]["close_time"].isoformat(),
+            }
+            for name, (start, end) in split.items()
+        }
+        stop_conditions["max_candidates"] = candidate_limit
+        demo_mode = self._discovery_demo_enabled()
+        row = connection.execute(
+            """
+            INSERT INTO search_runs(owner_id,generator_id,search_space,stop_conditions,market_dataset_id,
+                                    seed,idempotency_key,generator_exhausted,correlation_id,discovery_state)
+            VALUES (%s,'discovery',%s,%s,%s,%s,%s,false,%s,%s) RETURNING *
+            """,
+            (
+                request.owner_id,
+                Jsonb(search_space),
+                Jsonb(stop_conditions),
+                dataset["id"],
+                request.seed,
+                request.idempotency_key,
+                correlation_id,
+                Jsonb({"split": ranges, "demo_mode": demo_mode}),
+            ),
+        ).fetchone()
+        admitted = self._admit_discovery_candidate(connection, row, dataset, ranges, correlation_id)
+        if not admitted:
+            row = connection.execute(
+                "UPDATE search_runs SET status='completed',stop_reason='no_eligible_candidate',updated_at=now() WHERE id=%s RETURNING *",
+                (row["id"],),
+            ).fetchone()
+            row["dataset_version"], row["content_hash"] = (
+                request.dataset_version,
+                dataset["content_hash"],
+            )
+            return self._search_row(row)
+        row = connection.execute(
+            "UPDATE search_runs SET status='running',updated_at=now() WHERE id=%s RETURNING *",
+            (row["id"],),
+        ).fetchone()
+        row["dataset_version"], row["content_hash"] = (
+            request.dataset_version,
+            dataset["content_hash"],
+        )
+        connection.execute(
+            "INSERT INTO domain_events(event_type,aggregate_type,aggregate_id,correlation_id,payload) "
+            "VALUES ('SearchRunStarted','search_run',%s,%s,%s)",
+            (
+                row["id"],
+                correlation_id,
+                Jsonb({"generated": row["generated"], "generator_id": "discovery"}),
+            ),
+        )
+        return self._search_row(row)
+
+    def _admit_discovery_candidate(
+        self,
+        connection: Any,
+        run: dict[str, Any],
+        dataset: dict[str, Any],
+        ranges: dict[str, Any],
+        correlation_id: str | None,
+    ) -> bool:
+        records = connection.execute(
+            """SELECT c.id,c.candidate_definition,c.candidate_hash,c.generation_meta,da.score,da.accepted,da.facts
+               FROM search_candidates c LEFT JOIN discovery_assessments da ON da.search_candidate_id=c.id
+               WHERE c.search_run_id=%s ORDER BY c.ordinal""",
+            (run["id"],),
+        ).fetchall()
+        archive = [
+            {
+                "id": row["id"],
+                "candidate_definition": row["candidate_definition"],
+                "candidate_hash": row["candidate_hash"],
+                "generator": (row["generation_meta"] or {}).get("generator"),
+                "generation": (row["generation_meta"] or {}).get("generation", 0),
+                "terminal": (row["generation_meta"] or {}).get("phase") == "terminal",
+                "accepted": row["accepted"] or False,
+                "score": float(row["score"] or 0),
+                "assessment": row.get("facts") or {},
+            }
+            for row in records
+        ]
+        research = self._discovery_research_context(connection, run, dataset, archive)
+        try:
+            candidate = discovery_propose(
+                run["search_space"],
+                int(run["seed"]) + len(records),
+                archive,
+                self._discovery_llm.propose if self._discovery_llm is not None else None,
+                research,
+            )
+        except (DiscoveryLLMUnavailable, DiscoveryProposalError) as exc:
+            state = dict(run.get("discovery_state") or {})
+            failures = dict(state.get("generator_failures") or {})
+            failure_key = "llm_invalid" if isinstance(exc, DiscoveryProposalError) else "llm_unavailable"
+            failures[failure_key] = int(failures.get(failure_key, 0)) + 1
+            state["generator_failures"] = failures
+            connection.execute(
+                "UPDATE search_runs SET discovery_state=%s,updated_at=now() WHERE id=%s",
+                (Jsonb(state), run["id"]),
+            )
+            # Re-sample from runnable non-LLM generators after recording the
+            # provider failure; this is not a silent random fallback.
+            candidate = discovery_propose(
+                run["search_space"], int(run["seed"]) + len(records), archive, None, research
+            )
+        if candidate is None:
+            return False
+        strategy = connection.execute(
+            "SELECT id FROM strategy_versions WHERE strategy_id=%s AND version=%s",
+            (candidate["strategy_id"], candidate["strategy_version"]),
+        ).fetchone()
+        if strategy is None:
+            return False
+        metadata = {**candidate["generation_meta"], "phase": "train"}
+        candidate_row = connection.execute(
+            """INSERT INTO search_candidates(search_run_id,ordinal,candidate_definition,candidate_hash,generated_by,generation_meta)
+               VALUES (%s,%s,%s,%s,'discovery',%s) RETURNING id""",
+            (
+                run["id"],
+                len(records) + 1,
+                Jsonb(candidate["candidate_definition"]),
+                candidate["candidate_hash"],
+                Jsonb(metadata),
+            ),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO discovery_trial_reservations(search_candidate_id) VALUES (%s)",
+            (candidate_row["id"],),
+        )
+        experiment = self._create_discovery_experiment(
+            connection,
+            run,
+            dataset,
+            strategy["id"],
+            candidate_row["id"],
+            candidate,
+            ranges["train"],
+            "train",
+            None,
+            correlation_id,
+        )
+        connection.execute(
+            "UPDATE search_candidates SET experiment_id=%s WHERE id=%s",
+            (experiment, candidate_row["id"]),
+        )
+        connection.execute(
+            "UPDATE search_runs SET generated=generated+1,current_candidate_hash=%s WHERE id=%s",
+            (candidate["candidate_hash"], run["id"]),
+        )
+        return True
+
+    @staticmethod
+    def _discovery_research_context(
+        connection: Any,
+        run: dict[str, Any],
+        dataset: dict[str, Any],
+        archive: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        market = connection.execute(
+            "SELECT provider,symbol,timeframe::text AS timeframe,dataset_version,candle_count "
+            "FROM market_datasets WHERE id=%s",
+            (dataset["id"],),
+        ).fetchone()
+        catalog = connection.execute(
+            "SELECT v.strategy_id,v.version,v.parameters_schema,v.default_params "
+            "FROM strategy_versions v WHERE v.strategy_id = ANY(%s) ORDER BY v.strategy_id,v.version",
+            (list(run["search_space"].get("strategy_ids") or []),),
+        ).fetchall()
+        return {
+            "market": market or {},
+            "dataset": {"content_hash": dataset.get("content_hash"), "bbo_content_hash": dataset.get("bbo_content_hash")},
+            "catalog": [dict(item) for item in catalog],
+            "archive_terminal_count": sum(bool(item.get("terminal")) for item in archive),
+            "archive_accepted_count": sum(bool(item.get("accepted")) for item in archive),
+            "test_metrics": "sealed and unavailable during proposal",
+        }
+
+    @staticmethod
+    def _create_discovery_experiment(
+        connection: Any,
+        run: dict[str, Any],
+        dataset: dict[str, Any],
+        strategy_id: UUID,
+        candidate_id: UUID,
+        candidate: dict[str, Any],
+        interval: dict[str, Any],
+        partition: str,
+        ordinal: int | None,
+        correlation_id: str | None,
+    ) -> UUID:
+        experiment = connection.execute(
+            """INSERT INTO experiments(owner_id,strategy_version_id,candidate_definition,candidate_hash,market_dataset_id,
+               replay_range_from,replay_range_to,bbo_dataset_hash,evaluator_version,search_candidate_id,correlation_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'v1',%s,%s) RETURNING id""",
+            (
+                run["owner_id"],
+                strategy_id,
+                Jsonb(candidate["candidate_definition"]),
+                candidate["candidate_hash"],
+                dataset["id"],
+                interval["from"],
+                interval["to"],
+                dataset["bbo_content_hash"],
+                candidate_id,
+                correlation_id,
+            ),
+        ).fetchone()["id"]
+        connection.execute("INSERT INTO backtest_jobs(experiment_id) VALUES (%s)", (experiment,))
+        if partition in {"train", "validation"}:
+            connection.execute(
+                """UPDATE discovery_trial_reservations
+                   SET consumed_jobs=LEAST(reserved_jobs, consumed_jobs+1),
+                       status=CASE WHEN consumed_jobs+1 >= reserved_jobs THEN 'consumed' ELSE status END,
+                       updated_at=now()
+                   WHERE search_candidate_id=%s""",
+                (candidate_id,),
+            )
+        connection.execute(
+            """INSERT INTO discovery_candidate_experiments(search_candidate_id,partition,validation_ordinal,experiment_id,range_from,range_to)
+               VALUES (%s,%s,%s,%s,%s,%s)""",
+            (candidate_id, partition, ordinal, experiment, interval["from"], interval["to"]),
+        )
+        return experiment
+
+    def advance_discovery_for_experiment(self, experiment_id: UUID) -> None:
+        """Advance one durable discovery candidate after its evaluation commits.
+
+        Idempotent partition rows make event redelivery and controller restart
+        safe: a completed phase never creates its experiments twice.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT p.search_candidate_id,p.partition,p.validation_ordinal,c.search_run_id,
+                          c.candidate_definition,c.candidate_hash,c.generation_meta,s.*,d.id AS dataset_id,
+                          d.bbo_content_hash,d.content_hash
+                   FROM discovery_candidate_experiments p
+                   JOIN search_candidates c ON c.id=p.search_candidate_id
+                   JOIN search_runs s ON s.id=c.search_run_id
+                   JOIN market_datasets d ON d.id=s.market_dataset_id
+                   WHERE p.experiment_id=%s FOR UPDATE OF c,s""",
+                (experiment_id,),
+            ).fetchone()
+            if row is None or row["status"] != "running":
+                return
+            phase = (row["generation_meta"] or {}).get("phase")
+            if row["partition"] != "test" and (
+                phase == "terminal" or (row["partition"] == "train" and phase != "train")
+            ):
+                return
+            if row["partition"] == "validation" and phase != "validation":
+                return
+            evaluation = connection.execute(
+                """SELECT e.id,e.sharpe_ratio,e.trade_count,e.max_drawdown_pct
+                   FROM evaluations e JOIN backtest_runs r ON r.id=e.backtest_run_id
+                   WHERE r.experiment_id=%s ORDER BY e.computed_at DESC LIMIT 1""",
+                (experiment_id,),
+            ).fetchone()
+            if evaluation is None:
+                return
+            ranges = row["discovery_state"]["split"]
+            dataset = {"id": row["dataset_id"], "bbo_content_hash": row["bbo_content_hash"]}
+            candidate = {
+                "strategy_id": row["candidate_definition"]["strategy_id"],
+                "strategy_version": row["candidate_definition"].get("version", "v1"),
+                "candidate_definition": row["candidate_definition"],
+                "candidate_hash": row["candidate_hash"],
+            }
+            demo_mode = bool((row.get("discovery_state") or {}).get("demo_mode")) or self._discovery_demo_enabled()
+            if row["partition"] == "train":
+                if not demo_mode and not self._discovery_metric_passes(evaluation):
+                    self._finish_discovery_candidate(
+                        connection,
+                        row,
+                        evaluation["id"],
+                        [],
+                        {"accepted": False, "rejection_reason": "cheap_filter"},
+                    )
+                    self._continue_discovery(connection, row, dataset, ranges)
+                    return
+                parts = connection.execute(
+                    "SELECT count(*) AS count FROM discovery_candidate_experiments WHERE search_candidate_id=%s AND partition='validation'",
+                    (row["search_candidate_id"],),
+                ).fetchone()["count"]
+                if not parts:
+                    strategy = connection.execute(
+                        "SELECT id FROM strategy_versions WHERE strategy_id=%s AND version=%s",
+                        (candidate["strategy_id"], candidate["strategy_version"]),
+                    ).fetchone()
+                    for ordinal in range(1, 4):
+                        self._create_discovery_experiment(
+                            connection,
+                            row,
+                            dataset,
+                            strategy["id"],
+                            row["search_candidate_id"],
+                            candidate,
+                            ranges[f"validation_{ordinal}"],
+                            "validation",
+                            ordinal,
+                            row["correlation_id"],
+                        )
+                    metadata = {**row["generation_meta"], "phase": "validation"}
+                    connection.execute(
+                        "UPDATE search_candidates SET generation_meta=%s WHERE id=%s",
+                        (Jsonb(metadata), row["search_candidate_id"]),
+                    )
+                return
+            if row["partition"] == "validation":
+                validations = connection.execute(
+                    """SELECT e.id,e.sharpe_ratio,e.trade_count,e.max_drawdown_pct,e.total_return_pct,e.win_rate_pct,e.profit_factor
+                       FROM discovery_candidate_experiments p JOIN backtest_runs r ON r.experiment_id=p.experiment_id
+                       JOIN evaluations e ON e.backtest_run_id=r.id WHERE p.search_candidate_id=%s AND p.partition='validation'
+                       ORDER BY p.validation_ordinal""",
+                    (row["search_candidate_id"],),
+                ).fetchall()
+                if len(validations) != 3:
+                    return
+                train = connection.execute(
+                    """SELECT e.id,e.sharpe_ratio,e.trade_count,e.max_drawdown_pct,e.total_return_pct,e.win_rate_pct,e.profit_factor FROM discovery_candidate_experiments p
+                       JOIN backtest_runs r ON r.experiment_id=p.experiment_id JOIN evaluations e ON e.backtest_run_id=r.id
+                       WHERE p.search_candidate_id=%s AND p.partition='train'""",
+                    (row["search_candidate_id"],),
+                ).fetchone()
+                assessment = discovery_assessment(
+                    dict(train),
+                    [dict(item) for item in validations],
+                    discovery_complexity(candidate["candidate_definition"]),
+                    demo_mode=demo_mode,
+                )
+                assessment = {
+                    **assessment,
+                    "train_metrics": self._discovery_metric_facts(train),
+                    "validation_metrics": [self._discovery_metric_facts(item) for item in validations],
+                }
+                self._finish_discovery_candidate(
+                    connection, row, train["id"], [item["id"] for item in validations], assessment
+                )
+                self._continue_discovery(connection, row, dataset, ranges)
+                return
+            # Sealed test has no effect on assessment or parent selection.
+            connection.execute(
+                "UPDATE search_runs SET status='completed',stop_reason='final_test_completed',updated_at=now() WHERE id=%s",
+                (row["search_run_id"],),
+            )
+
+    def _discovery_metric_passes(self, metric: dict[str, Any]) -> bool:
+        sharpe = metric["sharpe_ratio"]
+        return (
+            sharpe is not None and math.isfinite(float(sharpe)) and int(metric["trade_count"]) >= 10
+        )
+
+    def _discovery_demo_enabled(self) -> bool:
+        return self._discovery_demo_mode or os.getenv("DISCOVERY_DEMO_MODE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @staticmethod
+    def _discovery_metric_facts(metric: dict[str, Any]) -> dict[str, Any]:
+        facts = {
+            name: None if metric.get(name) is None else float(metric[name])
+            for name in ("total_return_pct", "win_rate_pct", "max_drawdown_pct", "profit_factor", "sharpe_ratio")
+        }
+        facts["trade_count"] = None if metric.get("trade_count") is None else int(metric["trade_count"])
+        return facts
+
+    def _finish_discovery_candidate(
+        self,
+        connection: Any,
+        row: dict[str, Any],
+        train_id: UUID,
+        validation_ids: list[UUID],
+        assessment: dict[str, Any],
+    ) -> None:
+        connection.execute(
+            """INSERT INTO discovery_assessments(search_candidate_id,train_evaluation_id,validation_evaluation_ids,score,accepted,rejection_reason,facts)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (search_candidate_id) DO NOTHING""",
+            (
+                row["search_candidate_id"],
+                train_id,
+                Jsonb([str(item) for item in validation_ids]),
+                assessment.get("score"),
+                assessment["accepted"],
+                assessment.get("rejection_reason"),
+                Jsonb(assessment),
+            ),
+        )
+        metadata = {
+            **row["generation_meta"],
+            "phase": "terminal",
+            "accepted": assessment["accepted"],
+        }
+        connection.execute(
+            "UPDATE search_candidates SET generation_meta=%s WHERE id=%s",
+            (Jsonb(metadata), row["search_candidate_id"]),
+        )
+        connection.execute(
+            """UPDATE discovery_trial_reservations
+               SET released_jobs=GREATEST(0, reserved_jobs-consumed_jobs),
+                   status=CASE WHEN consumed_jobs >= reserved_jobs THEN 'consumed' ELSE 'released' END,
+                   updated_at=now()
+               WHERE search_candidate_id=%s""",
+            (row["search_candidate_id"],),
+        )
+        connection.execute(
+            """UPDATE search_runs SET tested=tested+1,
+               non_improving=CASE
+                   WHEN %s::numeric IS NOT NULL AND (best_score IS NULL OR %s::numeric >= best_score+.02)
+                       THEN 0
+                   ELSE non_improving+1
+               END,
+               best_score=CASE
+                   WHEN %s::numeric IS NULL THEN best_score
+                   WHEN best_score IS NULL OR %s::numeric > best_score THEN %s::numeric
+                   ELSE best_score
+               END,
+               updated_at=now() WHERE id=%s""",
+            (
+                assessment.get("score"),
+                assessment.get("score"),
+                assessment.get("score"),
+                assessment.get("score"),
+                assessment.get("score"),
+                row["search_run_id"],
+            ),
+        )
+
+    def _continue_discovery(
+        self, connection: Any, row: dict[str, Any], dataset: dict[str, Any], ranges: dict[str, Any]
+    ) -> None:
+        run = connection.execute(
+            "SELECT * FROM search_runs WHERE id=%s FOR UPDATE", (row["search_run_id"],)
+        ).fetchone()
+        limit = int(run["stop_conditions"].get("max_candidates", 500))
+        elapsed = connection.execute(
+            "SELECT extract(epoch FROM now()-created_at) AS seconds FROM search_runs WHERE id=%s",
+            (run["id"],),
+        ).fetchone()["seconds"]
+        if (
+            run["generated"] < limit
+            and run["non_improving"] < 100
+            and elapsed < min(7200, int(run["stop_conditions"].get("max_duration_sec", 7200)))
+        ):
+            if self._admit_discovery_candidate(
+                connection, run, dataset, ranges, run["correlation_id"]
+            ):
+                return
+        accepted = connection.execute(
+            """SELECT c.id,c.candidate_definition,c.candidate_hash,da.score FROM search_candidates c JOIN discovery_assessments da ON da.search_candidate_id=c.id
+               WHERE c.search_run_id=%s AND da.accepted ORDER BY da.score DESC,c.id LIMIT 1""",
+            (run["id"],),
+        ).fetchone()
+        if accepted is None:
+            connection.execute(
+                "UPDATE search_runs SET status='completed',stop_reason='no_accepted_candidate',updated_at=now() WHERE id=%s",
+                (run["id"],),
+            )
+            return
+        strategy = connection.execute(
+            "SELECT id FROM strategy_versions WHERE strategy_id=%s AND version=%s",
+            (
+                accepted["candidate_definition"]["strategy_id"],
+                accepted["candidate_definition"].get("version", "v1"),
+            ),
+        ).fetchone()
+        candidate = {
+            "strategy_id": accepted["candidate_definition"]["strategy_id"],
+            "strategy_version": accepted["candidate_definition"].get("version", "v1"),
+            "candidate_definition": accepted["candidate_definition"],
+            "candidate_hash": accepted["candidate_hash"],
+        }
+        self._create_discovery_experiment(
+            connection,
+            run,
+            dataset,
+            strategy["id"],
+            accepted["id"],
+            candidate,
+            ranges["test"],
+            "test",
+            None,
+            run["correlation_id"],
+        )
+        connection.execute(
+            "UPDATE search_runs SET discovery_state=discovery_state || %s,stop_reason='final_test_started',updated_at=now() WHERE id=%s",
+            (Jsonb({"final_candidate_id": str(accepted["id"])}), run["id"]),
+        )
+
+    def reconcile_discovery(self) -> int:
+        """Replay completed partitions after worker/controller restart without requeueing them."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.experiment_id FROM discovery_candidate_experiments p
+                   JOIN backtest_runs r ON r.experiment_id=p.experiment_id AND r.status='completed'
+                   JOIN evaluations e ON e.backtest_run_id=r.id
+                   JOIN search_candidates c ON c.id=p.search_candidate_id
+                   JOIN search_runs s ON s.id=c.search_run_id AND s.status='running'
+                   ORDER BY p.created_at"""
+            ).fetchall()
+        for item in rows:
+            self.advance_discovery_for_experiment(item["experiment_id"])
+        return len(rows)
+
     @staticmethod
     def _search_row(row: dict[str, Any], reused: bool = False) -> dict[str, Any]:
         return {
@@ -1635,6 +2244,64 @@ class Store:
         if row is None or (owner_id is not None and row["owner_id"] != owner_id):
             raise not_found("search_run")
         return self._search_row(row)
+
+    def list_discovery_runs(self, owner_id: UUID, limit: int) -> list[dict[str, Any]]:
+        """Return recent Discovery runs for one owner, newest first."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.*,d.dataset_version,d.content_hash
+                FROM search_runs s JOIN market_datasets d ON d.id=s.market_dataset_id
+                WHERE s.owner_id=%s AND s.generator_id='discovery'
+                ORDER BY s.updated_at DESC,s.id DESC
+                LIMIT %s
+                """,
+                (owner_id, limit),
+            ).fetchall()
+        return [self._search_row(row) for row in rows]
+
+    def get_discovery_archive(self, run_id: UUID, owner_id: UUID) -> dict[str, Any]:
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT owner_id,generator_id,discovery_state FROM search_runs WHERE id=%s",
+                (run_id,),
+            ).fetchone()
+            if run is None or run["owner_id"] != owner_id or run["generator_id"] != "discovery":
+                raise not_found("discovery_run")
+            rows = connection.execute(
+                """SELECT c.id,c.ordinal,c.candidate_hash,c.candidate_definition,c.generation_meta,da.score,da.accepted,
+                          da.rejection_reason,da.facts,da.created_at,r.reserved_jobs,r.consumed_jobs,
+                          r.released_jobs,r.status AS reservation_status
+                   FROM search_candidates c LEFT JOIN discovery_assessments da ON da.search_candidate_id=c.id
+                   LEFT JOIN discovery_trial_reservations r ON r.search_candidate_id=c.id
+                   WHERE c.search_run_id=%s ORDER BY c.ordinal""",
+                (run_id,),
+            ).fetchall()
+        return {
+            "search_run_id": run_id,
+            "state": run["discovery_state"] or {},
+            "candidates": [
+                {
+                    "candidate_id": item["id"],
+                    "ordinal": item["ordinal"],
+                    "candidate_hash": item["candidate_hash"],
+                    "candidate_definition": item["candidate_definition"],
+                    "lineage": item["generation_meta"],
+                    "score": _float(item["score"]),
+                    "accepted": item["accepted"],
+                    "rejection_reason": item["rejection_reason"],
+                    "assessment": item["facts"],
+                    "reservation": {
+                        "reserved_jobs": item["reserved_jobs"],
+                        "consumed_jobs": item["consumed_jobs"],
+                        "released_jobs": item["released_jobs"],
+                        "status": item["reservation_status"],
+                    },
+                    "assessed_at": item["created_at"],
+                }
+                for item in rows
+            ],
+        }
 
     def apply_search_action(self, run_id: UUID, request: SearchActionIn) -> dict[str, Any]:
         allowed = {
@@ -1695,7 +2362,14 @@ class Store:
                     command_id,search_run_id,action,actor_id,requested_from,resulted_in
                 ) VALUES (%s,%s,%s,%s,%s,%s)
                 """,
-                (request.command_id, run_id, request.action, request.actor_id, row["status"], target),
+                (
+                    request.command_id,
+                    run_id,
+                    request.action,
+                    request.actor_id,
+                    row["status"],
+                    target,
+                ),
             )
         return {"search_run_id": run_id, "status": target, "reused": False}
 
@@ -1714,7 +2388,9 @@ class Store:
             "sharpe": "sharpe_ratio DESC NULLS LAST",
         }
         if sort_by not in sort_columns:
-            raise validation("unsupported_sort_field", "unsupported leaderboard sort field", "sort_by")
+            raise validation(
+                "unsupported_sort_field", "unsupported leaderboard sort field", "sort_by"
+            )
         with self._connect() as connection:
             dataset = connection.execute(
                 "SELECT id FROM market_datasets WHERE dataset_version=%s", (dataset_version,)
@@ -2064,7 +2740,9 @@ class Store:
             ).fetchone()
         return row["id"]
 
-    def find_news_extraction(self, document_id: UUID, cache_key: str | None) -> CollectedItem | None:
+    def find_news_extraction(
+        self, document_id: UUID, cache_key: str | None
+    ) -> CollectedItem | None:
         if not cache_key:
             return None
         with self._connect() as connection:
@@ -2112,13 +2790,22 @@ class Store:
         resolved_key = cache_key or hash_canonical_json(
             {"document_id": str(document_id), "method": method}
         )
-        result_json = None if item is None else {
-            "source_id": str(item.source_id), "canonical_url": item.canonical_url,
-            "url_hash": item.url_hash, "title": item.title, "content": item.content,
-            "content_hash": item.content_hash, "published_at": item.published_at.isoformat(),
-            "related_coins": list(item.related_coins), "extraction_version": item.extraction_version,
-            "tagging_version": item.tagging_version,
-        }
+        result_json = (
+            None
+            if item is None
+            else {
+                "source_id": str(item.source_id),
+                "canonical_url": item.canonical_url,
+                "url_hash": item.url_hash,
+                "title": item.title,
+                "content": item.content,
+                "content_hash": item.content_hash,
+                "published_at": item.published_at.isoformat(),
+                "related_coins": list(item.related_coins),
+                "extraction_version": item.extraction_version,
+                "tagging_version": item.tagging_version,
+            }
+        )
         with self._connect() as connection:
             connection.execute(
                 """
@@ -2129,7 +2816,16 @@ class Store:
                     status=EXCLUDED.status,model=EXCLUDED.model,model_version=EXCLUDED.model_version,
                     result_json=EXCLUDED.result_json,error_code=EXCLUDED.error_code,created_at=now()
                 """,
-                (document_id, resolved_key, method, status, model, model_version, Jsonb(result_json), error_code),
+                (
+                    document_id,
+                    resolved_key,
+                    method,
+                    status,
+                    model,
+                    model_version,
+                    Jsonb(result_json),
+                    error_code,
+                ),
             )
 
     def pending_sentiment_items(

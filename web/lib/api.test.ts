@@ -252,6 +252,31 @@ test("experiment submission uses the market selected by the backtest form", asyn
   }
 });
 
+test("experiment submission uses the dataset version selected by the backtest form", async () => {
+  const originalFetch = globalThis.fetch;
+  let submitted: Record<string, unknown> | undefined;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/markets/datasets")) {
+      return new Response(JSON.stringify({
+        datasets: [
+          { id: "dataset-new", dataset_version: "fixture:BTCUSDT:5m:v2", market: { provider: "binance_usdm", symbol: "BTCUSDT", timeframe: "5m" }, range_from: "2026-01-01T00:00:00Z", range_to: "2026-01-02T00:00:00Z", revision_no: 2, candle_count: 288, content_hash: "new", bbo_content_hash: "new-bbo" },
+          { id: "dataset-old", dataset_version: "fixture:BTCUSDT:5m:v1", market: { provider: "binance_usdm", symbol: "BTCUSDT", timeframe: "5m" }, range_from: "2025-01-01T00:00:00Z", range_to: "2025-01-02T00:00:00Z", revision_no: 1, candle_count: 288, content_hash: "old", bbo_content_hash: "old-bbo" },
+        ],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    submitted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ run_id: "run-dataset", experiment_id: "experiment-dataset", status: "queued" }), { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.createExperiment([{ strategy_id: "ma_cross", weight: 1 }], { provider: "binance_usdm", symbol: "BTCUSDT" }, "5m", undefined, undefined, "fixture:BTCUSDT:5m:v1");
+    assert.equal(submitted?.dataset_version, "fixture:BTCUSDT:5m:v1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("search submission preserves the catalog strategy version and defaults", async () => {
   const originalFetch = globalThis.fetch;
   const submitted: Array<Record<string, unknown>> = [];
@@ -298,6 +323,7 @@ test("search submission preserves the catalog strategy version and defaults", as
       ...createDraft({ provider: "binance_usdm", symbol: "ETHUSDT" }, "5m"),
       selectedStrategyIds: ["generated.rsi-9f3c"],
       weights: { "generated.rsi-9f3c": 1 },
+      method: "random_search" as const,
     };
     await api.startSearch(draft, [
       { strategy_id: "generated.rsi-9f3c", strategy_version: "v2", parameters: { period: 21 }, weight: 1 },
@@ -308,6 +334,126 @@ test("search submission preserves the catalog strategy version and defaults", as
       parameters: { period: 21 },
       weight: 1,
     }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("discovery submission uses the durable generator and archive endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  const requested: string[] = [];
+  const submitted: Record<string, unknown>[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.includes("/markets/datasets")) {
+      return new Response(JSON.stringify({
+        datasets: [{
+          id: "dataset-sol",
+          dataset_version: "binance_usdm:SOLUSDT:1m:2026-03-04",
+          market: { provider: "binance_usdm", symbol: "SOLUSDT", timeframe: "1m" },
+          range_from: "2026-03-04T00:00:00Z",
+          range_to: "2026-03-05T00:00:00Z",
+          revision_no: 1,
+          candle_count: 1443,
+          content_hash: "candle-hash",
+          bbo_content_hash: "bbo-hash",
+        }],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/archive")) {
+      return new Response(JSON.stringify({
+        search_run_id: "discovery-1",
+        state: { final_candidate_id: "candidate-1" },
+        candidates: [{
+          candidate_id: "candidate-1",
+          ordinal: 1,
+          candidate_hash: "candidate-hash",
+          candidate_definition: { strategy_id: "rsi", version: "v1", parameters: {} },
+          lineage: { generator: "random", phase: "terminal" },
+          score: 0.42,
+          accepted: true,
+          rejection_reason: null,
+          assessment: { score: 0.42 },
+          assessed_at: "2026-03-04T01:00:00Z",
+        }],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    submitted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({
+      search_run_id: "discovery-1",
+      status: "running",
+      generator_id: "discovery",
+      generated: 1,
+      tested: 0,
+      failed: 0,
+      best_score: null,
+      current_candidate_hash: "candidate-hash",
+      dataset_version: "binance_usdm:SOLUSDT:1m:2026-03-04",
+      content_hash: "candle-hash",
+      stop_reason: null,
+      updated_at: "2026-03-04T00:00:00Z",
+    }), { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const draft = {
+      ...createDraft({ provider: "binance_usdm", symbol: "SOLUSDT" }, "1m"),
+      selectedStrategyIds: ["ma_cross", "rsi"],
+      weights: { ma_cross: 0.5, rsi: 0.5 },
+      method: "discovery" as const,
+      maxCandidates: 3,
+    };
+    const run = await api.startSearch(draft);
+    const archive = await api.discoveryArchive(run.search_run_id);
+    assert.equal(submitted[0]?.generator_id, "discovery");
+    assert.equal((submitted[0]?.market as { dataset_version: string }).dataset_version, "binance_usdm:SOLUSDT:1m:2026-03-04");
+    assert.equal(archive.candidates[0]?.accepted, true);
+    assert.ok(requested.some((url) => url.endsWith("/api/v1/search-runs/discovery-1/archive")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("discovery session history uses the owner-scoped search run collection", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({
+      runs: [{
+        search_run_id: "run-history", generator_id: "discovery", status: "completed",
+        generated: 2, tested: 2, failed: 0, best_score: 1.1,
+        current_candidate_hash: null, dataset_version: "fixture:SOLUSDT:1h:v1",
+        content_hash: "a".repeat(64), stop_reason: "final_test_completed",
+        updated_at: "2026-09-02T00:00:00Z",
+      }],
+    }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const sessions = await api.discoveryRuns();
+    assert.match(requestedURL, /\/api\/v1\/search-runs$/);
+    assert.equal(sessions[0]?.search_run_id, "run-history");
+    assert.equal(sessions[0]?.candidates.tested, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("leaderboard requests the selected market and timeframe", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({ entries: [] }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.leaderboard({ provider: "binance_usdm", symbol: "SOLUSDT" }, "1m");
+    assert.match(requestedURL, /provider=binance_usdm/);
+    assert.match(requestedURL, /symbol=SOLUSDT/);
+    assert.match(requestedURL, /timeframe=1m/);
   } finally {
     globalThis.fetch = originalFetch;
   }

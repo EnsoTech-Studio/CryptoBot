@@ -209,7 +209,7 @@ class BacktestWorker:
         self._dispatcher = dispatcher
         self._engine = engine if engine is not None else DeterministicEngine()
         self._evaluator = evaluator if evaluator is not None else DeterministicEvaluator()
-        self._config = config if config is not None else WorkerConfig(worker_id="worker-1")
+        self._config = config if config is not None else WorkerConfig(worker_id="worker-v2")
         self._stopped = threading.Event()
 
     def stop(self, *_: object) -> None:
@@ -349,7 +349,7 @@ def run_queue_mode() -> int:
     )
     settings = Settings.from_env()
     config = WorkerConfig(
-        worker_id=os.environ.get("WORKER_ID", "worker-1"),
+        worker_id=os.environ.get("WORKER_ID", "worker-v2"),
         poll_interval_s=float(os.environ.get("POLL_INTERVAL_S", "1.0")),
         lease_s=settings.worker_lease_s,
         heartbeat_s=settings.worker_heartbeat_s,

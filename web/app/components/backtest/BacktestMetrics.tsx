@@ -29,6 +29,8 @@ export function BacktestMetrics({
   const profitAbs = isMock ? MOCK_KPIS.totalProfitUsd : aggregateKpis.netProfit;
   const profitPct = isMock ? MOCK_KPIS.totalProfitPct : metrics?.total_return_pct ?? 0;
   const drawdownPct = isMock ? MOCK_KPIS.maxDrawdownPct : metrics?.max_drawdown_pct ?? 0;
+  const profitFactor = isMock ? 1.84 : metrics?.profit_factor ?? 0;
+  const sharpeRatio = isMock ? 1.27 : metrics?.sharpe_ratio ?? 0;
 
   return (
     <div className={styles.metricsRow}>
@@ -61,6 +63,7 @@ export function BacktestMetrics({
         <span className={`${styles.kpiCaption} ${profitPct >= 0 ? styles.gain : styles.loss}`}>
           {profitPct >= 0 ? "+" : ""}{profitPct.toFixed(2)}%
         </span>
+        <span className={styles.equityLabel}>Equity Curve</span>
         <span className={styles.kpiSpark}>
           <Sparkline points={equity.map((point) => point.equity)} rising={profitPct >= 0} isMock={isMock} />
         </span>
@@ -102,6 +105,10 @@ export function BacktestMetrics({
       </Panel>
 
       <Panel title="Giả định Backtest" className={styles.assumptionPanel}>
+        <div className={styles.advancedMetrics} aria-label="Metrics nâng cao">
+          <div><span>Profit Factor</span><strong>{profitFactor.toFixed(2)}</strong></div>
+          <div><span>Sharpe Ratio</span><strong>{sharpeRatio.toFixed(2)}</strong></div>
+        </div>
         <ul className={styles.assumptionList}>
           {ASSUMPTIONS.map((item) => (
             <li key={item}>

@@ -2,7 +2,6 @@
 
 import { MarketControls } from "./MarketControls";
 import { RealtimeChartGrid } from "./RealtimeChartGrid";
-import { RealtimeInfoRail } from "./RealtimeInfoRail";
 import styles from "./realtime.module.css";
 
 export function RealtimeScreen() {
@@ -13,7 +12,6 @@ export function RealtimeScreen() {
           <MarketControls />
           <RealtimeChartGrid />
         </div>
-        <RealtimeInfoRail />
       </div>
     </section>
   );

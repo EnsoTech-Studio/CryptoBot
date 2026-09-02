@@ -1,8 +1,8 @@
 "use client";
 
-import { PAGE_SIZES, type BacktestDraft } from "../../../lib/backtest";
+import { PAGE_SIZES, type BacktestDraft, type BacktestMode } from "../../../lib/backtest";
 import { marketKey } from "../../../lib/market";
-import type { MarketPair, Strategy } from "../../../lib/api";
+import type { MarketDataset, MarketPair, Strategy } from "../../../lib/api";
 import { Field, Select, TextInput } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./backtest.module.css";
@@ -14,6 +14,7 @@ export function BacktestFilters({
   pairs,
   timeframes,
   strategies,
+  datasets,
   disabled,
   onChange,
 }: {
@@ -21,6 +22,7 @@ export function BacktestFilters({
   pairs: MarketPair[];
   timeframes: string[];
   strategies: Strategy[];
+  datasets: MarketDataset[];
   disabled: boolean;
   onChange: (patch: Partial<BacktestDraft>) => void;
 }) {
@@ -58,6 +60,21 @@ export function BacktestFilters({
         </Select>
       </Field>
 
+      <Field label="Dataset lịch sử">
+        <Select
+          value={draft.datasetVersion}
+          disabled={disabled || datasets.length === 0}
+          onChange={(event) => onChange({ datasetVersion: event.target.value })}
+        >
+          {datasets.length === 0 ? <option value="">Đang tải dataset…</option> : null}
+          {datasets.map((dataset) => (
+            <option key={dataset.dataset_version} value={dataset.dataset_version}>
+              {dataset.dataset_version} · {dataset.candle_count.toLocaleString("en-US")} nến
+            </option>
+          ))}
+        </Select>
+      </Field>
+
       <DateField
         label="From date"
         value={draft.rangeFrom}
@@ -83,13 +100,54 @@ export function BacktestFilters({
         />
       </Field>
 
-      <Field label="Strategy">
-        <Select value={draft.strategyId} disabled={disabled || strategies.length === 0} onChange={(event) => onChange({ strategyId: event.target.value })}>
-          {strategies.map((strategy) => (
-            <option key={strategy.strategy_id} value={strategy.strategy_id}>{strategy.display_name}</option>
-          ))}
+      <Field label="Strategy mode">
+        <Select
+          value={draft.mode}
+          disabled={disabled || strategies.length === 0}
+          onChange={(event) => {
+            const mode = event.target.value as BacktestMode;
+            onChange({
+              mode,
+              selectedStrategyIds: mode === "composite" && draft.selectedStrategyIds.length < 2
+                ? strategies.slice(0, 3).map((strategy) => strategy.strategy_id)
+                : draft.selectedStrategyIds,
+            });
+          }}
+        >
+          <option value="single">Single strategy</option>
+          <option value="composite">Composite strategy</option>
         </Select>
       </Field>
+
+      {draft.mode === "single" ? (
+        <Field label="Strategy">
+          <Select value={draft.strategyId} disabled={disabled || strategies.length === 0} onChange={(event) => onChange({ strategyId: event.target.value })}>
+            {strategies.map((strategy) => (
+              <option key={strategy.strategy_id} value={strategy.strategy_id}>{strategy.display_name}</option>
+            ))}
+          </Select>
+        </Field>
+      ) : (
+        <Field label="Composite strategies" hint="Chọn từ 2 strategy; trọng số chia đều khi gửi.">
+          <div className={styles.strategyChecks}>
+            {strategies.map((strategy) => (
+              <label key={strategy.strategy_id} className={styles.strategyCheck}>
+                <input
+                  type="checkbox"
+                  checked={draft.selectedStrategyIds.includes(strategy.strategy_id)}
+                  disabled={disabled}
+                  onChange={(event) => onChange({
+                    selectedStrategyIds: event.target.checked
+                      ? [...new Set([...draft.selectedStrategyIds, strategy.strategy_id])]
+                      : draft.selectedStrategyIds.filter((id) => id !== strategy.strategy_id),
+                  })}
+                />
+                <span>{strategy.display_name}</span>
+              </label>
+            ))}
+          </div>
+        </Field>
+      )}
 
       <Field label="Transaction Cost" hint="Phí giao dịch tính theo phần trăm; API nhận basis points.">
         <TextInput

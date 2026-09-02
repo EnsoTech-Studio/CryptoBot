@@ -69,7 +69,12 @@ def _connect_with_retry(database_url: str) -> psycopg.Connection[object]:
     last_error: psycopg.OperationalError | None = None
     for attempt in range(attempts):
         try:
-            return psycopg.connect(database_url, autocommit=False, connect_timeout=5)
+            return psycopg.connect(
+                database_url,
+                autocommit=False,
+                connect_timeout=5,
+                prepare_threshold=None,
+            )
         except psycopg.OperationalError as exc:
             last_error = exc
             if attempt == attempts - 1:

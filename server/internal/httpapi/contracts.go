@@ -109,7 +109,9 @@ func (request *searchRunRequest) validate() error {
 		request.GeneratorID = "grid"
 	}
 	if request.GeneratorID != "grid" && request.GeneratorID != "random" &&
-		request.GeneratorID != "random_search" && request.GeneratorID != "domain_guided" {
+		request.GeneratorID != "random_search" && request.GeneratorID != "domain_guided" &&
+		request.GeneratorID != "genetic" &&
+		request.GeneratorID != "discovery" {
 		return fmt.Errorf("unknown generator_id")
 	}
 	if len(request.SearchSpace.StrategyIDs) == 0 || len(request.SearchSpace.StrategyIDs) > 20 {

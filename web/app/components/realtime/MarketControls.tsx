@@ -15,9 +15,6 @@ export function MarketControls() {
     selectMarket,
     retryMarketPairs,
     availableTimeframes,
-    panels,
-    focusIndex,
-    setFocusIndex,
     realtimeEnabled,
     setRealtimeEnabled,
     streamLabel,
@@ -50,30 +47,6 @@ export function MarketControls() {
           <Icon name="chevron-down" aria-hidden="true" />
         </span>
       </label>
-
-      <div className={`${styles.controlGroup} ${styles.timeframeGroup}`}>
-        <span className={styles.controlLabel}>Khung thời gian</span>
-        <div className={styles.timeframes} role="tablist" aria-label="Khung thời gian biểu đồ">
-          {["1m", "5m", "15m", "1h", "4h"]
-            .filter((timeframe) => availableTimeframes.includes(timeframe))
-            .map((timeframe) => {
-              const panelIndex = panels.findIndex((panel) => panel.timeframe === timeframe);
-              const active = focusIndex === panelIndex;
-              return (
-                <button
-                  key={timeframe}
-                  type="button"
-                  className={active ? styles.timeframeActive : undefined}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setFocusIndex(panelIndex >= 0 ? panelIndex : 0)}
-                >
-                  {timeframe}
-                </button>
-              );
-            })}
-        </div>
-      </div>
 
       <div className={`${styles.controlGroup} ${styles.realtimeControl}`}>
         <span className={styles.controlLabel}>Realtime</span>

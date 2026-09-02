@@ -37,6 +37,15 @@ def _positive_int(name: str, default: int) -> int:
     return value
 
 
+def _boolean(name: str, default: bool = False) -> bool:
+    raw = _env(name, "true" if default else "false").lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -50,6 +59,7 @@ class Settings:
     event_lease_s: int
     sentiment_model: str
     sentiment_model_version: str
+    discovery_demo_mode: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -57,10 +67,11 @@ class Settings:
         heartbeat = _positive_float("WORKER_HEARTBEAT_SECONDS", 30.0)
         if heartbeat >= lease:
             raise ValueError("WORKER_HEARTBEAT_SECONDS must be smaller than WORKER_LEASE_SECONDS")
+        postgres_port = _env("POSTGRES_PORT", "5432")
         return cls(
             database_url=_env(
                 "DATABASE_URL",
-                "postgres://cryptobot:cryptobot@localhost:5432/cryptobot?sslmode=disable",
+                f"postgres://cryptobot:cryptobot@127.0.0.1:{postgres_port}/cryptobot?sslmode=disable",
             ),
             internal_service_token=_env("INTERNAL_SERVICE_TOKEN", "development-internal-token"),
             ai_service_url=_env("AI_SERVICE_URL", "http://localhost:8000").rstrip("/"),
@@ -72,4 +83,5 @@ class Settings:
             event_lease_s=_positive_int("EVENT_LEASE_SECONDS", 60),
             sentiment_model=_env("SENTIMENT_MODEL", "sentiment-v1"),
             sentiment_model_version=_env("SENTIMENT_MODEL_VERSION", "2026-08-01"),
+            discovery_demo_mode=_boolean("DISCOVERY_DEMO_MODE"),
         )

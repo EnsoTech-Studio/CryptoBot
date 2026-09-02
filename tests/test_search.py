@@ -37,7 +37,7 @@ def test_domain_guided_generator_filters_invalid_fast_slow_pairs() -> None:
 
 
 def test_generators_share_candidate_contract() -> None:
-    for generator_id in ("grid", "random_search", "domain_guided"):
+    for generator_id in ("grid", "random_search", "domain_guided", "genetic"):
         candidate = generate_candidates(generator_id, SPACE, 1, 7)[0]
         assert set(candidate) >= {
             "strategy_id",

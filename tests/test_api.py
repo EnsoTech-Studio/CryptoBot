@@ -296,6 +296,36 @@ def test_strategy_draft_list_is_owned_and_bounded() -> None:
     assert app.state.store.listed_strategy_limit == 3
 
 
+def test_discovery_session_history_is_owned_and_bounded() -> None:
+    owner_id = uuid4()
+
+    class HistoryStore(FakeStore):
+        def list_discovery_runs(self, received_owner, limit):
+            assert received_owner == owner_id
+            assert limit == 3
+            now = datetime(2026, 9, 1, tzinfo=UTC)
+            return [{
+                "search_run_id": uuid4(), "owner_id": owner_id, "generator_id": "discovery",
+                "status": "completed", "generated": 4, "tested": 4, "failed": 0,
+                "best_score": 1.2, "current_candidate_hash": None, "stop_reason": "final_test_completed",
+                "created_at": now, "updated_at": now, "dataset_version": "fixture:SOLUSDT:1h:v1",
+                "content_hash": "a" * 64, "reused": False,
+            }]
+
+    previous = app.state.store
+    app.state.store = HistoryStore()
+    try:
+        response = client.get(
+            "/api/v1/search-runs?limit=3",
+            headers={**TOKEN_HEADERS, "X-User-ID": str(owner_id)},
+        )
+    finally:
+        app.state.store = previous
+
+    assert response.status_code == 200
+    assert response.json()["runs"][0]["owner_id"] == str(owner_id)
+
+
 def test_strategy_draft_command_submits_a_durable_job() -> None:
     owner_id = uuid4()
     now = datetime(2026, 9, 1, tzinfo=UTC)

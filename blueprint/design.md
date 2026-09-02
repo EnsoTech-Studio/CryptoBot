@@ -1917,7 +1917,7 @@ type CandidateGenerator interface {
 	GeneratorID() string
 	Generate(context.Context, search.Space, int, *int64, search.History) ([]search.Candidate, error)
 }
-// Implement: RandomSearchGenerator, DomainGuidedGenerator, (GeneticGenerator...).
+// Implement: RandomSearchGenerator, DomainGuidedGenerator, Discovery generators.
 
 // ---------- 5. Thực thi backtest ----------
 type BacktestEngine interface {
@@ -2783,6 +2783,67 @@ Idempotency của control command: client gửi `command_id`; `search_actions.co
 
 Cộng thêm `lease_expires_at`: worker chết giữa job (OOM, container killed) → lease hết hạn → một job sweeper (hoặc điều kiện trong query claim) đưa job về `queued` với `attempt += 1`. Sau `max_attempts` thì `status='failed'` với `last_error`. Không có job nào bị treo mãi ở `leased`.
 
+#### 6.3.1 Discovery MVP — archive-driven one-candidate controller
+
+`generator_id: "discovery"` là target mode của SearchRun, không phải claim
+runtime hiện có. Python thêm `DiscoveryController` bên trong research boundary;
+nó chạy đúng một active candidate để lineage, generator adaptation và stopping
+deterministic. Go chỉ proxy command/query, auth/quota và persisted progress.
+
+```text
+select runnable generator
+  -> propose CandidateSpec
+  -> archive duplicate + atomic cost admission
+  -> immutable train experiment
+  -> cheap filter
+  -> three validation experiments
+  -> immutable assessment/archive
+  -> accept/reject, update generator stats, select parents
+```
+
+Candidate hash là canonical JSON của catalog strategy/flat composite **và**
+risk policy. Train must terminal trước V1/V2/V3 admission; admission reserve
+cost cho đủ bốn experiment. Dataset snapshot freeze 60% train, 20% ba validation
+window contiguous bằng nhau, 20% sealed test; warmup chỉ được load preceding
+candles causally. Test không thể đi vào prompt, parent selection, acceptance,
+score hay generator probability.
+
+Cheap gate: successful terminal run, finite Sharpe, >=10 settled trades.
+Validation reject nếu bất kỳ window không finite/<10 trades hoặc train-to-median
+Sharpe gap >1.0. Survivor score:
+
+```text
+median_validation_sharpe
+- .5 * abs(train_sharpe - median_validation_sharpe)
+- .2 * abs(worst_validation_drawdown_pct) / 100
+- .1 * complexity
+- .2 * similarity
+```
+
+Archive owns duplicate detection, lineage, parent selection, correlation
+diversity, generator stats and all terminal failures. Add immutable candidate
+partition links (`train`/`validation` ordinal/`test`) and assessment records;
+ordinary search retains existing one-experiment link. `GET
+/api/v1/search-runs/{id}/archive` returns archive detail; progress adds accepted/
+rejected, active generator statistics, best candidate/score, lineage and sealed
+test state. Event vocabulary adds proposed, cheap-rejected, validation-completed,
+assessed, accepted/rejected and final-test started/completed.
+
+Five generators share contract: seeded random, mutation, crossover, flat
+Dirichlet `weighted_vote` ensemble and typed LLM. Every 20 terminal trials
+adapt initial `.35/.30/.15/.10/.10` probabilities with 5% floor each and
+remaining 75% proportional to `.1 + acceptance_rate`; unavailable/parentless
+generators are re-sampled, never fabricated. Parent sampling is 80% top-scoring
+20% accepted, 20% all accepted. LLM has only strict-JSON `new`, `improve`,
+`combine` prompts; provider failure persists and does not fallback to random.
+
+First stop wins: 500 trials, 2 hours active time, quota/budget exhaustion, or
+100 terminal trials without >=.02 best-score improvement. Pause stops next
+admission; cancel blocks future work/final test. Normal completion schedules
+one sealed final test for highest accepted candidate; no acceptance or cancel
+schedules none. Restart reconciliation derives state from archive plus unique
+candidate-partition experiment links, so it cannot duplicate work.
+
 ### 6.4 News → Sentiment Flow (Data Flow phụ, cô lập hoàn toàn)
 
 ```mermaid
@@ -3489,7 +3550,7 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 ### ADR-004: Tách CandidateGenerator khỏi execution pipeline
 
 - **Quyết định**: `CandidateGenerator.Generate(..., limit, history) → []CandidateStrategy`. Pipeline phía sau chỉ nhận `CandidateStrategy`, không biết nó sinh ra bằng cách nào; batch luôn bounded.
-- **Vì sao trả batch bounded**: Genetic Search cần biết kết quả của thế hệ trước để sinh thế hệ sau. `SearchHistory` truyền state qua các batch mà không đổi interface, còn `limit × attempt_bound` chặn vòng lặp vô hạn.
+- **Vì sao trả batch bounded**: Discovery parent selection cần history accepted/archive để sinh trial tiếp theo. `SearchHistory` truyền state qua các batch mà không đổi interface, còn `limit × attempt_bound` chặn vòng lặp vô hạn.
 - **Vì sao có `seed`**: Random Search với cùng seed sinh cùng chuỗi candidate → search run tái lập được, không chỉ backtest tái lập được.
 - **Vì sao có `generation_meta`**: đề bài §17 hỏi *"domain knowledge được đưa vào search như thế nào?"*. Meta ghi rule đã áp dụng. Không có nó thì "domain-guided" không kiểm chứng được.
 - **Đánh đổi**: một lớp indirection cho MVP chỉ có Random Search. Chấp nhận vì đây là seam mà scenario đánh giá §42 nhắm vào.
@@ -3608,8 +3669,8 @@ Trả `sentiment: NEUTRAL` khi model chết, hay trả nến provisional như n�
 
 ### ADR-018: Agent là logical role trong Python, không phải microservice
 
-- **Quyết định**: một deterministic `AgentOrchestrator` điều khiển sáu role profile trong `research`: Designer, Implementation, Repair, News Extraction; Candidate Discovery và Market Insight là optional/default-off. Các role dùng chung ModelGateway, ToolRegistry, state store, budget, policy và observability.
-- **Vì sao**: workflow cần transition/idempotency nhất quán hơn là sáu network boundary. Tách container chỉ nhân auth, retry và state coordination mà không tạo isolation có ích; isolation thực sự nằm ở typed tool boundary và Sandbox Runner.
+- **Quyết định**: một deterministic `AgentOrchestrator` điều khiển năm role profile trong `research`: Designer, Implementation, Repair, News Extraction và optional Market Insight. Discovery là typed LLM generator do `DiscoveryController` gọi, không phải agent/tool loop. Các role dùng chung ModelGateway, ToolRegistry, state store, budget, policy và observability.
+- **Vì sao**: workflow cần transition/idempotency nhất quán hơn là năm network boundary. Tách container chỉ nhân auth, retry và state coordination mà không tạo isolation có ích; isolation thực sự nằm ở typed tool boundary và Sandbox Runner.
 
 ### ADR-019: Agent chỉ gọi typed domain tools
 
@@ -3659,15 +3720,15 @@ fingerprint và upsert version vào DB. `GET /strategies`, form UI và generator
 
 **Không ảnh hưởng.** Thêm một Python implementation của `CandidateGenerator` và
 một dòng cấu hình. `BacktestEngine.Run(ctx, snapshot, candles, bbo)` chỉ nhận
-snapshot bất biến; nó không biết candidate được Random, Domain-guided hay
-Genetic sinh ra.
+snapshot bất biến; nó không biết candidate được Random, Domain-guided,
+mutation, crossover, ensemble hay LLM sinh ra.
 
 ```python
-class GeneticGenerator(CandidateGenerator):
+class MutationGenerator(CandidateGenerator):
     def generate(self, space: SearchSpace, limit: int, seed: int | None,
                  history: SearchHistory) -> list[CandidateStrategy]:
-        # đọc history.top_k; tạo batch bounded, deterministic theo seed
-        return generate_bounded_population(space, limit, seed, history)
+        # đọc accepted parents; tạo candidate bounded, deterministic theo seed
+        return mutate_selected_parent(space, limit, seed, history)
 ```
 
 → Kiểm chứng: demo S4. Backtest/Evaluator/Leaderboard không đổi dòng nào.
@@ -3935,7 +3996,7 @@ provenance record thật (cột "verification gate" ở `traceability.md`).
 10. Queue có lease, retry, dedup, ordering, dead-letter; leaderboard truy tới immutable strategy/dataset/execution/model versions và có benchmark scale (§8.3, `specs/observability.md`).
 11. Mỗi chart panel bootstrap đúng 1.000 nến đã đóng và merge provisional candle theo `open_time`; đổi panel nào chỉ thay request/subscription của panel đó.
 12. Agent runs/attempts/artifacts/sandbox evidence và mọi transition được persist/idempotent; repair mặc định tối đa 3 lần và không tự approve/publish.
-13. CandidateDiscoveryAgent và MarketInsightAgent là optional/default-off; Random Search vẫn là MVP, insight luôn read-only và không phải lệnh giao dịch.
+13. Discovery là archive-driven SearchRun mode với typed LLM `new`/`improve`/`combine`; MarketInsightAgent là optional/default-off, read-only và không phải lệnh giao dịch.
 14. SMC được architecture-admit qua plugin/custom-code review path nhưng không được ghi là đã implement nếu chưa có code/test/demo evidence.
 
 **Bất biến xuyên sơ đồ (cross-diagram invariants)**
@@ -3953,7 +4014,7 @@ provenance record thật (cột "verification gate" ở `traceability.md`).
 
 ### 12.5 Agent Architecture — logical roles, tools và state
 
-Agent Platform nằm **bên trong Python `research`**, không phải sáu service. `AgentOrchestrator` là state machine deterministic; sáu logical role chỉ là handler + model/prompt profile dùng chung `ModelGateway`, `ToolRegistry`, permission/budget middleware, repositories và event publisher.
+Agent Platform nằm **bên trong Python `research`**, không phải năm service. `AgentOrchestrator` là state machine deterministic; năm logical role chỉ là handler + model/prompt profile dùng chung `ModelGateway`, `ToolRegistry`, permission/budget middleware, repositories và event publisher. Discovery LLM generator được `DiscoveryController` gọi qua typed provider boundary, không có tool loop.
 
 | Ưu tiên | Agent | Kết quả | Tool family chính |
 | --- | --- | --- | --- |
@@ -3961,7 +4022,7 @@ Agent Platform nằm **bên trong Python `research`**, không phải sáu servic
 | P0 | `StrategyImplementationAgent` | Artifact + policy/sandbox evidence | `artifact.*`, `sandbox.*`, `draft.mark_review_required` |
 | P0 | `StrategyRepairAgent` | Spec/code patch trong budget | `agent.get_attempt_context`, validation/policy/sandbox tools, `draft.mark_failed` |
 | P1 | `NewsExtractionAgent` | Structured article sau deterministic failure | `document.*`, `news.get_item_schema`, `news.validate_extraction`, `news.save_extraction` |
-| P2 optional | `CandidateDiscoveryAgent` | Validated candidate batch vào queue chuẩn | `search.*`, `leaderboard.get_summary`, `candidate.*` |
+| Discovery | `LLMGenerator` | One strict-JSON candidate from `new`/`improve`/`combine` | frozen typed context; deterministic admission only |
 | P2 optional | `MarketInsightAgent` | Read-only research draft | `market.*`, `indicator.*`, `news.*`, `experiment.*`, `insight.save_draft` |
 
 State chính: `DRAFT_CREATED → SOURCE_READY → SPEC_GENERATING → SPEC_VALIDATING → CODE_GENERATING → POLICY_CHECKING → SANDBOX_TESTING`; fail còn budget thì `REPAIRING → CODE_GENERATING`, hết budget thì `FAILED`; pass thì `REVIEW_REQUIRED → APPROVED → PUBLISHED` hoặc `REJECTED`. Mọi transition có compare-and-set/idempotency, artifact hash và evidence reference. Chi tiết canonical, exact tool list, error taxonomy, persistence, sandbox policy, API/events/metrics và acceptance gates nằm tại `specs/agent-architecture.md`; sơ đồ 25–33 là visual contract tương ứng.

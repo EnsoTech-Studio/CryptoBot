@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   MAX_COMBINED,
@@ -10,8 +10,9 @@ import {
   type DiscoveryDraft,
 } from "../../../lib/discovery";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
+import { api, type LeaderboardEntry } from "../../../lib/api";
 import { useWorkspace } from "../../providers/workspace";
-import { StatusMessage } from "../ui/Foundation";
+import { Field, Panel, Select, StatusMessage } from "../ui/Foundation";
 import { BuilderActions, CombinedStrategyBuilder } from "./CombinedStrategyBuilder";
 import { DiscoveryLeaderboard } from "./DiscoveryLeaderboard";
 import { DiscoveryMethodSelector, DiscoveryProgress } from "./DiscoveryControls";
@@ -26,25 +27,31 @@ export function DiscoveryScreen() {
     dataMode,
     selectedMarket,
     panels,
-    leaderboard,
-    refreshStaticData,
+    discoveryArchive,
+    discoveryArchiveState,
     loadProvenance,
     search,
+    discoverySessions,
+    discoverySessionsState,
     submittedDraft,
     startSearch,
     searchAction,
+    selectDiscoverySession,
     runBacktest,
     focusIndex,
+    availableTimeframes,
   } = useWorkspace();
 
   const timeframe = panels[0]?.timeframe ?? "5m";
+  const [discoveryTimeframe, setDiscoveryTimeframe] = useState(timeframe);
+  const [discoveryLeaderboard, setDiscoveryLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [draft, setDraft] = useState<DiscoveryDraft>(() => {
     const base = createDraft(selectedMarket, timeframe);
     return {
       ...base,
       selectedStrategyIds: ["ma_cross", "rsi", "support_resistance"],
       weights: { ma_cross: 0.4, rsi: 0.3, support_resistance: 0.3 },
-      method: "random_search",
+      method: "discovery",
     };
   });
   const availableStrategies = dataMode === "mock" ? STRATEGIES_MOCK : strategies;
@@ -56,7 +63,34 @@ export function DiscoveryScreen() {
 
   /* The market and timeframe are owned by the Realtime screen, so the draft
      mirrors them rather than keeping its own stale copy. */
-  const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe };
+  const timeframeOptions = availableTimeframes.length > 0 ? availableTimeframes : [timeframe];
+  const activeTimeframe = timeframeOptions.includes(discoveryTimeframe) ? discoveryTimeframe : timeframeOptions[0];
+  const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe: activeTimeframe };
+
+  async function refreshDiscoveryLeaderboard() {
+    if (dataMode === "mock") {
+      setDiscoveryLeaderboard([]);
+      return;
+    }
+    try {
+      const payload = await api.leaderboard(selectedMarket, activeTimeframe);
+      setDiscoveryLeaderboard(payload.entries ?? []);
+    } catch {
+      setDiscoveryLeaderboard([]);
+    }
+  }
+
+  useEffect(() => {
+    if (dataMode === "mock") return;
+    let cancelled = false;
+    void api.leaderboard(selectedMarket, activeTimeframe).then(
+      (payload) => { if (!cancelled) setDiscoveryLeaderboard(payload.entries ?? []); },
+      () => { if (!cancelled) setDiscoveryLeaderboard([]); },
+    );
+    return () => { cancelled = true; };
+    // Search status changes are the completion boundary; polling otherwise stays local to the provider.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTimeframe, dataMode, selectedMarket.provider, selectedMarket.symbol, search?.search_run_id, search?.status]);
   const missingStrategies = activeDraft.selectedStrategyIds.filter((id) => !registryIds.has(id));
   const issues = [
     ...draftIssues(activeDraft),
@@ -99,6 +133,19 @@ export function DiscoveryScreen() {
         <StatusMessage tone="syncing">{issues[0]}</StatusMessage>
       ) : null}
 
+      <div className={styles.toolbar}>
+        <label className={styles.toolbarField}>
+          <span>Khung thời gian Discovery</span>
+          <select
+            aria-label="Khung thời gian Discovery"
+            value={activeTimeframe}
+            onChange={(event) => setDiscoveryTimeframe(event.target.value)}
+          >
+            {timeframeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+      </div>
+
       <div className={styles.workspace}>
         <StrategyCatalog
           strategies={availableStrategies}
@@ -133,11 +180,38 @@ export function DiscoveryScreen() {
         <div className={styles.rightColumn}>
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
-            entries={leaderboard}
+            entries={discoveryLeaderboard}
+            archive={discoveryArchive}
+            run={search}
+            archiveState={discoveryArchiveState}
             referenceMode={dataMode === "mock"}
-            onRefresh={() => void refreshStaticData()}
+            onRefresh={() => void refreshDiscoveryLeaderboard()}
             onTrace={(id) => void loadProvenance(id)}
           />
+          <Panel title="Discovery sessions" bodyClassName={styles.sessionHistory}>
+            <Field label="Past sessions">
+              <Select
+                aria-label="Discovery sessions"
+                value={search?.search_run_id ?? ""}
+                disabled={discoverySessionsState === "loading" || discoverySessions.length === 0}
+                onChange={(event) => { if (event.target.value) void selectDiscoverySession(event.target.value); }}
+              >
+                <option value="">Select saved Discovery session</option>
+                {discoverySessions.map((session) => (
+                  <option key={session.search_run_id} value={session.search_run_id}>
+                    {sessionLabel(session)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <p className={styles.sessionHint}>
+              {discoverySessionsState === "unavailable"
+                ? "Could not load saved sessions."
+                : discoverySessions.length === 0
+                  ? "No saved Discovery sessions yet."
+                  : "Past sessions include archive, candidate status, and results."}
+            </p>
+          </Panel>
           <div className={styles.methodProgressRow}>
             <DiscoveryMethodSelector
               method={activeDraft.method}
@@ -158,6 +232,11 @@ export function DiscoveryScreen() {
       </div>
     </section>
   );
+}
+
+function sessionLabel(session: { search_run_id: string; status: string; candidates: { tested: number; generated: number }; updated_at: string }) {
+  const when = new Date(session.updated_at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+  return `${session.status} · ${session.candidates.tested}/${session.candidates.generated} candidates · ${when}`;
 }
 
 /* New rows start at an even split. Existing user-set weights survive because
