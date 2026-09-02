@@ -1,6 +1,9 @@
 # Use with docker-compose.stack.yml. Only the browser-facing web app and Go
 # API bind host ports; internal traffic stays on the Compose network.
 services:
+  postgres:
+    ports: !reset []
+
   ai:
     ports: !reset []
 

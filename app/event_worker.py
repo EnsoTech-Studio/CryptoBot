@@ -11,8 +11,10 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from .config import Settings
+from .infrastructure.ai import DiscoveryLLMHTTPAdapter
 from .infrastructure.postgres.dispatcher import PostgresJobDispatcher
 from .infrastructure.postgres.outbox import ClaimedEvent, PostgresOutbox
+from .infrastructure.postgres.store import Store
 from .services.evaluator import DeterministicEvaluator
 from .worker import default_evaluation_policy
 
@@ -42,8 +44,12 @@ def _log_event(level: str, operation: str, event: ClaimedEvent, **fields: object
 
 class EventWorker:
     def __init__(self, conninfo: str, worker_id: str, lease_seconds: int = 60) -> None:
+        settings = Settings.from_env()
         self._outbox = PostgresOutbox(conninfo, worker_id, lease_seconds=lease_seconds)
         self._dispatcher = PostgresJobDispatcher(conninfo)
+        self._discovery_llm = DiscoveryLLMHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
+        self._store = Store(conninfo, self._discovery_llm)
+        self._store.reconcile_discovery()
         self._evaluator = DeterministicEvaluator()
         self._stop = threading.Event()
 
@@ -53,6 +59,7 @@ class EventWorker:
     def close(self) -> None:
         self._outbox.close()
         self._dispatcher.close()
+        self._discovery_llm.close()
 
     def run_forever(self) -> None:
         while not self._stop.is_set():
@@ -66,7 +73,9 @@ class EventWorker:
             except Exception as exc:  # noqa: BLE001 - retry/dead-letter boundary
                 self._outbox.fail(event, type(exc).__name__)
                 _log_event(
-                    "error", "event_delivery_failed", event,
+                    "error",
+                    "event_delivery_failed",
+                    event,
                     error_code=type(exc).__name__,
                 )
 
@@ -80,13 +89,16 @@ class EventWorker:
             evaluation_input, default_evaluation_policy(timeframe)
         )
         self._dispatcher.persist_evaluation(event.aggregate_id, evaluation)
+        self._store.advance_discovery_for_experiment(
+            self._dispatcher.experiment_id_for_run(UUID(str(event.aggregate_id)))
+        )
 
 
 def main() -> int:
     settings = Settings.from_env()
     worker = EventWorker(
         settings.database_url,
-        os.getenv("EVENT_WORKER_ID", "events-1"),
+        os.getenv("EVENT_WORKER_ID", "events-v2"),
         lease_seconds=settings.event_lease_s,
     )
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -25,7 +25,7 @@ from .domain.common import ERR_UNKNOWN_STRATEGY, DomainError, hash_canonical_jso
 from .domain.strategy import Definition
 from .domain.strategy.plugins import default_registry
 from .errors import ApplicationError
-from .infrastructure.ai import NewsExtractionHTTPAdapter, StrategyDesignHTTPAdapter
+from .infrastructure.ai import DiscoveryLLMHTTPAdapter, NewsExtractionHTTPAdapter, StrategyDesignHTTPAdapter
 from .infrastructure.postgres.store import Store
 from .infrastructure.news import HtmlNewsProvider, RssNewsProvider, SsrfBlocked, assert_public_https
 from .infrastructure.sentiment import (
@@ -46,7 +46,6 @@ from .schemas import (
     NewsCollectIn,
     NewsItemOut,
     NewsSourceCreateIn,
-    OverlayPointOut,
     ScorePolicyCreateIn,
     SearchActionIn,
     SearchRunCreateIn,
@@ -59,7 +58,6 @@ from .schemas import (
     StrategyApprovalIn,
     StrategyDraftCreateIn,
     StrategyDraftOut,
-    TradeOut,
     TradePageOut,
 )
 from .services.news import NewsService
@@ -95,17 +93,20 @@ def _definition_payload(definition: Definition) -> dict[str, Any]:
 
 _strategy_payloads = [_definition_payload(item) for item in _registry.list()]
 _builtin_warmups = {
-    (item["strategy_id"], item["version"]): item["warm_up_candles"]
-    for item in _strategy_payloads
+    (item["strategy_id"], item["version"]): item["warm_up_candles"] for item in _strategy_payloads
 }
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    discovery_llm = None
     try:
-        store = Store(Settings.from_env().database_url)
+        settings = Settings.from_env()
+        discovery_llm = DiscoveryLLMHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
+        store = Store(settings.database_url, discovery_llm)
         store.sync_strategies(_strategy_payloads)
         application.state.store = store
+        application.state.discovery_llm = discovery_llm
         application.state.registry_sync_error = None
     except Exception as exc:  # readiness exposes failure; health remains live
         application.state.registry_sync_error = type(exc).__name__
@@ -116,6 +117,9 @@ async def lifespan(application: FastAPI):
     service = getattr(application.state, "authoring_service", None)
     if service is not None:
         service.close()
+    discovery_llm = getattr(application.state, "discovery_llm", None)
+    if discovery_llm is not None:
+        discovery_llm.close()
 
 
 app = FastAPI(
@@ -134,7 +138,10 @@ _request_duration_seconds: dict[tuple[str, str], float] = {}
 def _store(request: Request) -> Store:
     store = getattr(request.app.state, "store", None)
     if store is None:
-        store = Store(Settings.from_env().database_url)
+        settings = Settings.from_env()
+        discovery_llm = DiscoveryLLMHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
+        store = Store(settings.database_url, discovery_llm)
+        request.app.state.discovery_llm = discovery_llm
         request.app.state.store = store
     return store
 
@@ -145,10 +152,14 @@ def _news_service(request: Request) -> NewsService:
         settings = Settings.from_env()
         analyzer = SentimentHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
         service = NewsService(
-            _store(request), {"rss": RssNewsProvider(), "url": HtmlNewsProvider()}, analyzer,
+            _store(request),
+            {"rss": RssNewsProvider(), "url": HtmlNewsProvider()},
+            analyzer,
             NewsExtractionHTTPAdapter(
-                settings.ai_service_url, settings.ai_timeout_s,
-                model=settings.sentiment_model, model_version=settings.sentiment_model_version,
+                settings.ai_service_url,
+                settings.ai_timeout_s,
+                model=settings.sentiment_model,
+                model_version=settings.sentiment_model_version,
             ),
         )
         request.app.state.news_service = service
@@ -171,7 +182,9 @@ def _owner_id(x_user_id: Annotated[str | None, Header()] = None) -> UUID:
     try:
         return UUID(x_user_id or "")
     except ValueError as exc:
-        raise ApplicationError("user_context_required", "valid X-User-ID header required", 401) from exc
+        raise ApplicationError(
+            "user_context_required", "valid X-User-ID header required", 401
+        ) from exc
 
 
 def _admin_role(x_user_role: Annotated[str | None, Header()] = None) -> None:
@@ -280,7 +293,9 @@ def health() -> dict[str, str]:
 def ready(request: Request) -> JSONResponse:
     try:
         checks = _store(request).ready()
-        checks["strategy_registry"] = getattr(request.app.state, "registry_sync_error", None) is None
+        checks["strategy_registry"] = (
+            getattr(request.app.state, "registry_sync_error", None) is None
+        )
         ready_now = all(checks.values())
     except Exception:  # noqa: BLE001 - readiness must return a bounded response
         checks = {"database": False, "active_score_policy": False, "strategy_registry": False}
@@ -350,7 +365,9 @@ def chart_overlays(
         if not strategy_id or not version:
             raise ValueError
     except ValueError as exc:
-        raise ApplicationError("invalid_strategy", "strategy must be strategy_id@version", 422, "strategy") from exc
+        raise ApplicationError(
+            "invalid_strategy", "strategy must be strategy_id@version", 422, "strategy"
+        ) from exc
 
     store = _store(request)
     try:
@@ -388,11 +405,15 @@ def chart_overlay_delta(
         if not strategy_id or not version:
             raise ValueError
     except ValueError as exc:
-        raise ApplicationError("invalid_strategy", "strategy must be strategy_id@version", 422, "strategy") from exc
+        raise ApplicationError(
+            "invalid_strategy", "strategy must be strategy_id@version", 422, "strategy"
+        ) from exc
 
     try:
         return build_chart_overlay_delta(
-            _store(request).list_live_candles(provider, symbol, timeframe, limit), strategy_id, version
+            _store(request).list_live_candles(provider, symbol, timeframe, limit),
+            strategy_id,
+            version,
         )
     except DomainError as exc:
         raise ApplicationError(
@@ -437,16 +458,18 @@ def approve_strategy_draft(
 
 @app.post("/api/v1/strategy-drafts/{draft_id}/actions", response_model=StrategyDraftOut)
 def act_on_strategy_draft(
-    draft_id: UUID, body: StrategyDraftActionIn, _auth: Internal, owner_id: OwnerID, request: Request
+    draft_id: UUID,
+    body: StrategyDraftActionIn,
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
 ) -> dict[str, Any]:
     assert body.action == "cancel"
     return _store(request).cancel_strategy_draft(draft_id, owner_id)
 
 
 @app.post("/api/v1/experiments", response_model=AcceptedRunOut)
-def create_experiment(
-    body: ExperimentCreateIn, _auth: Internal, request: Request
-) -> JSONResponse:
+def create_experiment(body: ExperimentCreateIn, _auth: Internal, request: Request) -> JSONResponse:
     result = _store(request).create_experiment(body, request.state.request_id)
     return JSONResponse(
         status_code=status.HTTP_200_OK if result["reused"] else status.HTTP_202_ACCEPTED,
@@ -491,7 +514,9 @@ def get_experiment_trades(
                 "X-Content-Type-Options": "nosniff",
             },
         )
-    return store.list_experiment_trade_page(experiment_id, after_sequence=after_sequence, limit=limit)
+    return store.list_experiment_trade_page(
+        experiment_id, after_sequence=after_sequence, limit=limit
+    )
 
 
 def _trade_csv(store: Store, experiment_id: UUID, experiment: dict[str, Any]):
@@ -510,14 +535,39 @@ def _trade_csv(store: Store, experiment_id: UUID, experiment: dict[str, Any]):
             "open_position_at_end": execution["open_position_at_end"],
             "fee_bps": execution["fee_bps"],
             "slippage_bps": execution["slippage_bps"],
-            "risk_policy": json.dumps({key: execution.get(key) for key in ("stop_loss_pct", "take_profit_pct", "intrabar_priority")}, separators=(",", ":")),
+            "risk_policy": json.dumps(
+                {
+                    key: execution.get(key)
+                    for key in ("stop_loss_pct", "take_profit_pct", "intrabar_priority")
+                },
+                separators=(",", ":"),
+            ),
         }.items()
     )
     yield f"# {provenance}\n"
     columns = [
-        "sequence_no", "symbol", "quote_currency", "side", "signal_t", "entry_time", "entry_price", "quantity",
-        "entry_notional", "fee_paid", "spread_cost", "slippage_cost", "exit_time", "exit_price", "exit_notional",
-        "gross_pnl", "net_pnl", "pnl_absolute", "pnl_percent", "exit_reason", "sl_price", "tp_price",
+        "sequence_no",
+        "symbol",
+        "quote_currency",
+        "side",
+        "signal_t",
+        "entry_time",
+        "entry_price",
+        "quantity",
+        "entry_notional",
+        "fee_paid",
+        "spread_cost",
+        "slippage_cost",
+        "exit_time",
+        "exit_price",
+        "exit_notional",
+        "gross_pnl",
+        "net_pnl",
+        "pnl_absolute",
+        "pnl_percent",
+        "exit_reason",
+        "sl_price",
+        "tp_price",
     ]
     output = StringIO(newline="")
     writer = csv.writer(output, lineterminator="\n")
@@ -525,21 +575,27 @@ def _trade_csv(store: Store, experiment_id: UUID, experiment: dict[str, Any]):
     yield output.getvalue()
     after_sequence: int | None = None
     while True:
-        page = store.list_experiment_trade_page(experiment_id, after_sequence=after_sequence, limit=200)
+        page = store.list_experiment_trade_page(
+            experiment_id, after_sequence=after_sequence, limit=200
+        )
         for trade in page["trades"]:
             output.seek(0)
             output.truncate(0)
-            writer.writerow([
-                value.isoformat() if isinstance(value, datetime) else value
-                for value in (trade.get(column) for column in columns)
-            ])
+            writer.writerow(
+                [
+                    value.isoformat() if isinstance(value, datetime) else value
+                    for value in (trade.get(column) for column in columns)
+                ]
+            )
             yield output.getvalue()
         after_sequence = page["next_cursor"]
         if after_sequence is None:
             return
 
 
-@app.get("/api/v1/experiments/{experiment_id}/equity", response_model=dict[str, list[EquityPointOut]])
+@app.get(
+    "/api/v1/experiments/{experiment_id}/equity", response_model=dict[str, list[EquityPointOut]]
+)
 def get_experiment_equity(
     experiment_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
 ) -> dict[str, Any]:
@@ -556,22 +612,41 @@ def get_experiment_overlays(
     store.get_experiment(experiment_id, owner_id)
     execution_markers = []
     for trade in store.list_experiment_execution_markers(experiment_id):
-        entry_type = "long_entry" if str(trade["side"]).upper().startswith("LONG") else "short_entry"
-        execution_markers.append({
-            "sequence_no": trade["sequence_no"], "t": trade["entry_time"],
-            "overlay_type": entry_type, "price": trade["entry_price"],
-        })
-        for overlay_type, price in (("stop_loss", trade["sl_price"]), ("take_profit", trade["tp_price"])):
+        entry_type = (
+            "long_entry" if str(trade["side"]).upper().startswith("LONG") else "short_entry"
+        )
+        execution_markers.append(
+            {
+                "sequence_no": trade["sequence_no"],
+                "t": trade["entry_time"],
+                "overlay_type": entry_type,
+                "price": trade["entry_price"],
+            }
+        )
+        for overlay_type, price in (
+            ("stop_loss", trade["sl_price"]),
+            ("take_profit", trade["tp_price"]),
+        ):
             if price is not None:
-                execution_markers.append({
-                    "sequence_no": trade["sequence_no"], "t": trade["entry_time"],
-                    "line_until": trade["exit_time"], "overlay_type": overlay_type, "price": price,
-                })
+                execution_markers.append(
+                    {
+                        "sequence_no": trade["sequence_no"],
+                        "t": trade["entry_time"],
+                        "line_until": trade["exit_time"],
+                        "overlay_type": overlay_type,
+                        "price": price,
+                    }
+                )
         if trade["exit_time"] is not None and trade["exit_price"] is not None:
-            execution_markers.append({
-                "sequence_no": trade["sequence_no"], "t": trade["exit_time"],
-                "overlay_type": "exit", "price": trade["exit_price"], "exit_reason": trade["exit_reason"],
-            })
+            execution_markers.append(
+                {
+                    "sequence_no": trade["sequence_no"],
+                    "t": trade["exit_time"],
+                    "overlay_type": "exit",
+                    "price": trade["exit_price"],
+                    "exit_reason": trade["exit_reason"],
+                }
+            )
     return {
         "overlays": store.list_experiment_overlays(experiment_id),
         "execution_markers": [
@@ -582,9 +657,7 @@ def get_experiment_overlays(
 
 
 @app.post("/api/v1/search-runs", response_model=SearchRunOut)
-def create_search_run(
-    body: SearchRunCreateIn, _auth: Internal, request: Request
-) -> JSONResponse:
+def create_search_run(body: SearchRunCreateIn, _auth: Internal, request: Request) -> JSONResponse:
     result = _store(request).create_search_run(body, request.state.request_id)
     return JSONResponse(
         status_code=200 if result["reused"] else 202,
@@ -597,6 +670,13 @@ def get_search_run(
     run_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
 ) -> dict[str, Any]:
     return _store(request).get_search_run(run_id, owner_id)
+
+
+@app.get("/api/v1/search-runs/{run_id}/archive")
+def get_discovery_archive(
+    run_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
+) -> dict[str, Any]:
+    return _store(request).get_discovery_archive(run_id, owner_id)
 
 
 @app.post("/api/v1/search-runs/{run_id}/actions")
@@ -626,9 +706,7 @@ def get_leaderboard(
 
 
 @app.get("/api/v1/leaderboard/{entry_id}/provenance")
-def get_leaderboard_provenance(
-    entry_id: UUID, _auth: Internal, request: Request
-) -> dict[str, Any]:
+def get_leaderboard_provenance(entry_id: UUID, _auth: Internal, request: Request) -> dict[str, Any]:
     return _store(request).get_provenance(entry_id)
 
 

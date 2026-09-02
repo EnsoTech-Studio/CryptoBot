@@ -213,6 +213,31 @@ export type SearchRun = {
   updated_at: string;
 };
 
+export type DiscoveryArchiveCandidate = {
+  candidate_id: string;
+  ordinal: number;
+  candidate_hash: string;
+  candidate_definition: Record<string, unknown>;
+  lineage: Record<string, unknown>;
+  score: number | null;
+  accepted: boolean | null;
+  rejection_reason: string | null;
+  assessment: Record<string, unknown> | null;
+  reservation?: {
+    reserved_jobs: number | null;
+    consumed_jobs: number | null;
+    released_jobs: number | null;
+    status: string | null;
+  };
+  assessed_at: string | null;
+};
+
+export type DiscoveryArchive = {
+  search_run_id: string;
+  state: Record<string, unknown>;
+  candidates: DiscoveryArchiveCandidate[];
+};
+
 export type NewsItem = {
   id: string;
   title: string;
@@ -713,10 +738,21 @@ export const api = {
       body: JSON.stringify({ action, command_id: `${action}-${Date.now()}` }),
     });
   },
-  leaderboard(sortBy = "score") {
-    return request<{ entries: ResearchLeaderboardEntry[] }>(`/api/v1/leaderboard?limit=10&sort_by=${sortBy}`).then(
+  leaderboard(marketOrSortBy: MarketSelection | string = DEFAULT_MARKET, timeframe = "5m", sortBy = "score") {
+    const market = typeof marketOrSortBy === "string" ? DEFAULT_MARKET : marketOrSortBy;
+    const requestedTimeframe = typeof marketOrSortBy === "string" ? "5m" : timeframe;
+    const requestedSort = typeof marketOrSortBy === "string" ? marketOrSortBy : sortBy;
+    const path = marketRequestPath("/api/v1/leaderboard", market, {
+      timeframe: requestedTimeframe,
+      limit: 10,
+      sort_by: requestedSort,
+    });
+    return request<{ entries: ResearchLeaderboardEntry[] }>(path).then(
       (payload) => ({ entries: payload.entries.map((entry) => ({ ...entry, id: entry.entry_id })) }),
     );
+  },
+  discoveryArchive(id: string) {
+    return request<DiscoveryArchive>(`/api/v1/search-runs/${encodeURIComponent(id)}/archive`);
   },
   provenance(id: string) {
     return request<Record<string, unknown>>(`/api/v1/leaderboard/${id}/provenance`);

@@ -873,6 +873,13 @@ func (h *Handler) searchRunByID(w http.ResponseWriter, r *http.Request) {
 		h.callResearch(w, r, http.MethodGet, "/api/v1/search-runs/"+parts[0], nil, &principal)
 		return
 	}
+	if parts[1] == "archive" {
+		if len(parts) != 2 || !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		h.callResearch(w, r, http.MethodGet, "/api/v1/search-runs/"+parts[0]+"/archive", nil, &principal)
+		return
+	}
 	if parts[1] == "actions" {
 		if !allowMethod(w, r, http.MethodPost) {
 			return

@@ -36,6 +36,9 @@ services:
       - ./migrations/020_agent_cancellation.sql:/docker-entrypoint-initdb.d/20_agent_cancellation.sql:ro
       - ./migrations/021_agent_tool_invocations.sql:/docker-entrypoint-initdb.d/21_agent_tool_invocations.sql:ro
       - ./migrations/022_trade_cost_provenance.sql:/docker-entrypoint-initdb.d/22_trade_cost_provenance.sql:ro
+      - ./migrations/023_discovery_loop.sql:/docker-entrypoint-initdb.d/23_discovery_loop.sql:ro
+      - ./migrations/025_discovery_worker_guard.sql:/docker-entrypoint-initdb.d/25_discovery_worker_guard.sql:ro
+      - ./migrations/026_discovery_trial_reservations.sql:/docker-entrypoint-initdb.d/26_discovery_trial_reservations.sql:ro
       - ./scripts/queue-scale-proof.sql:/proof/queue-scale-proof.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cryptobot -d cryptobot"]

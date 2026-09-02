@@ -27,6 +27,8 @@ export function DiscoveryScreen() {
     selectedMarket,
     panels,
     leaderboard,
+    discoveryArchive,
+    discoveryArchiveState,
     refreshStaticData,
     loadProvenance,
     search,
@@ -44,7 +46,7 @@ export function DiscoveryScreen() {
       ...base,
       selectedStrategyIds: ["ma_cross", "rsi", "support_resistance"],
       weights: { ma_cross: 0.4, rsi: 0.3, support_resistance: 0.3 },
-      method: "random_search",
+      method: "discovery",
     };
   });
   const availableStrategies = dataMode === "mock" ? STRATEGIES_MOCK : strategies;
@@ -134,6 +136,9 @@ export function DiscoveryScreen() {
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
             entries={leaderboard}
+            archive={discoveryArchive}
+            run={search}
+            archiveState={discoveryArchiveState}
             referenceMode={dataMode === "mock"}
             onRefresh={() => void refreshStaticData()}
             onTrace={(id) => void loadProvenance(id)}

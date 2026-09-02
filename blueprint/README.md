@@ -52,6 +52,11 @@ blueprint/
     └── observability.md           # Metrics, correlation ID, structured log, progress panel, scale gate
 ```
 
+`discovery-mvp-plan.md` là handoff target cho Discovery MVP. Canonical contract
+ở `specs/search-loop.md`: archive per-run, controller one-active-candidate,
+five generator, frozen 60/20/20 split, ba validation window và one sealed final
+test. Tài liệu này không claim runtime/database/API/UI đã tồn tại.
+
 **Canonical implementation handoff**: `specs/*.md` giữ contract; `server/` chỉ là Go
 API/Market implementation; `app/` là Python Research domain/runtime; `ai/` chỉ là inference
 adapter. Không copy Strategy/Backtest/Search/News sang Go để tạo runtime thứ hai. Backlog giữ

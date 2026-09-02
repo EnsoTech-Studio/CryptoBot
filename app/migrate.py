@@ -72,7 +72,12 @@ def migrate() -> list[str]:
         raise RuntimeError(f"no SQL migrations found in {migration_dir}")
 
     applied: list[str] = []
-    with psycopg.connect(database_url, autocommit=False, connect_timeout=5) as connection:
+    with psycopg.connect(
+        database_url,
+        autocommit=False,
+        connect_timeout=5,
+        prepare_threshold=None,
+    ) as connection:
         connection.execute("SELECT pg_advisory_lock(hashtext(%s))", (_LOCK_NAME,))
         try:
             connection.execute(

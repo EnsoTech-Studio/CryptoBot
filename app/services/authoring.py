@@ -21,6 +21,7 @@ from ..infrastructure.news.rss import NewsProviderError, _pinned_https_get
 from ..infrastructure.news.security import assert_public_https, sanitize_text
 from ..schemas import StrategyApprovalIn, StrategyDraftCreateIn, StrategySpecResponse
 from .agent_tools import AgentWorkflow, ToolRegistry
+from .artifact_store import persist_generated_artifact
 
 _INDICATOR_ALIASES = {
     "bollinger_bands": "bollinger",
@@ -398,10 +399,14 @@ class StrategyAuthoringService:
                 "correlation_id": correlation_id,
             }
             if pending_draft_id is not None:
-                return self._store.complete_pending_strategy_draft(
+                result = self._store.complete_pending_strategy_draft(
                     draft_id=pending_draft_id, job_id=job_id, lease_token=lease_token, **result
                 )
-            return self._store.create_strategy_draft(**result)
+                _persist_if_stored(result, artifact)
+                return result
+            result = self._store.create_strategy_draft(**result)
+            _persist_if_stored(result, artifact)
+            return result
         if request.source.type == "dsl":
             advance("SPEC_VALIDATING")
             spec = StrategySpecResponse.model_validate(request.source.spec)
@@ -514,13 +519,17 @@ class StrategyAuthoringService:
             "correlation_id": correlation_id,
         }
         if pending_draft_id is not None:
-            return self._store.complete_pending_strategy_draft(
+            result = self._store.complete_pending_strategy_draft(
                 draft_id=pending_draft_id,
                 job_id=job_id,
                 lease_token=lease_token,
                 **result,
             )
-        return self._store.create_strategy_draft(**result)
+            _persist_if_stored(result, artifact)
+            return result
+        result = self._store.create_strategy_draft(**result)
+        _persist_if_stored(result, artifact)
+        return result
 
     def process_claimed_job(self, job: dict[str, Any]) -> dict[str, Any]:
         payload = job["payload_json"]
@@ -595,3 +604,11 @@ def _fetch_approved_url(url: str) -> str:
     if len(text) < 40:
         raise ApplicationError("source_rejected", "approved URL did not contain enough readable content", 422)
     return text
+
+
+def _persist_if_stored(result: dict[str, Any], artifact: str) -> None:
+    """Persist only real DB-backed drafts; lightweight unit stores return inputs."""
+    draft_id = result.get("draft_id")
+    revision = result.get("current_revision")
+    if draft_id is not None and revision is not None:
+        persist_generated_artifact(UUID(str(draft_id)), int(revision), artifact)

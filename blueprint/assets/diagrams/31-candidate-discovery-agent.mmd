@@ -1,27 +1,30 @@
 flowchart TB
-    Trigger["Optional discovery trigger<br/>authorized SearchRun and bounded budget"]
-    Space["search.get_search_space<br/>allowed strategies, parameters,<br/>bounds and policy version"]
-    Tested["search.get_tested_hashes<br/>candidate hashes already evaluated"]
-    Board["leaderboard.get_summary<br/>Top-K metric/history summary"]
-    Agent["CandidateDiscoveryAgent<br/>propose CandidateStrategy DSL values<br/>with model/prompt/history provenance"]
-    Validate["candidate.validate<br/>schema, semantic, causal, bounds and duplicate"]
-    Cost["candidate.estimate_cost<br/>quota, worker cost and deadline impact"]
-    Admit{"Valid and within budget?"}
-    Submit["candidate.submit_batch<br/>idempotent standard bounded queue"]
-    Queue["Deterministic pipeline<br/>backtest -> evaluate -> rank -> Top-K"]
-    Reject["Reject proposal and persist reason<br/>cannot change quota or stop condition"]
+    Controller["DiscoveryController<br/>owns state, archive, admission and stop"]
+    Context["Frozen typed context<br/>catalog, archive summary, diversity gap,<br/>parent/failure evidence, correlations"]
+    Mode{"Prompt mode"}
+    New["new hypothesis"]
+    Improve["improve failed strategy<br/>exactly one structural change"]
+    Combine["combine<br/>flat complementary ensemble"]
+    LLM["Typed LLM generator<br/>strict JSON CandidateSpec,<br/>hypothesis, operation, provenance"]
+    Gate["Deterministic gate<br/>catalog, parameter, causality, risk,<br/>canonical hash, duplicate, quota, cost"]
+    Archive["Persist archive outcome<br/>candidate or provider/schema failure"]
+    Queue["Standard admission queue<br/>train then V1/V2/V3"]
+    Deny["No shell/SQL/HTTP/filesystem;<br/>no Python/publish/backtest/result writes;<br/>no queue/quota/stop control"]
 
-    Trigger --> Space --> Tested --> Board --> Agent --> Validate
-    Validate -->|valid| Cost --> Admit
-    Validate -->|invalid| Reject
-    Admit -->|yes| Submit --> Queue
-    Admit -->|no| Reject
+    Controller --> Context --> Mode
+    Mode --> New --> LLM
+    Mode --> Improve --> LLM
+    Mode --> Combine --> LLM
+    LLM --> Gate
+    Gate -->|accepted| Queue --> Archive
+    Gate -->|rejected/provider failure| Archive
+    LLM -. forbidden .-> Deny
 
-    classDef agent fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
-    classDef tool fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
+    classDef controller fill:#e9f1eb,stroke:#426b55,color:#2a251f,stroke-width:1.5px;
+    classDef typed fill:#e8f0f4,stroke:#315f7d,color:#2a251f;
     classDef gate fill:#f5eddf,stroke:#8a6127,color:#2a251f;
-    classDef stop fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
-    class Agent agent;
-    class Space,Tested,Board,Validate,Cost,Submit tool;
-    class Admit gate;
-    class Reject stop;
+    classDef deny fill:#f5e8e6,stroke:#8a4545,color:#2a251f;
+    class Controller,Archive controller;
+    class Context,New,Improve,Combine,LLM,Queue typed;
+    class Mode,Gate gate;
+    class Deny deny;

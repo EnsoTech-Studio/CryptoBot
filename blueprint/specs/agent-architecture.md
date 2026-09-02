@@ -9,8 +9,8 @@ Sơ đồ: `25-agent-platform-components` đến `33-tool-invocation-security-bo
 
 Agent Platform biến yêu cầu tự nhiên thành artifact có thể kiểm tra, nhưng không trao
 quyền hệ thống cho mô hình. Một `AgentOrchestrator` deterministic giữ workflow, state,
-budget và idempotency. Sáu agent chỉ là logical role bên trong Python `research`; chúng
-không phải sáu service hoặc container.
+budget và idempotency. Năm agent role chỉ là logical role bên trong Python `research`; chúng
+không phải năm service hoặc container.
 
 Bốn role cần cho yêu cầu bổ sung:
 
@@ -19,10 +19,11 @@ Bốn role cần cho yêu cầu bổ sung:
 3. `StrategyRepairAgent`: structured failure -> bounded patch.
 4. `NewsExtractionAgent`: sanitized HTML -> structured news khi parser deterministic fail.
 
-Hai role extension, default-off:
+Một role extension, default-off:
 
-5. `CandidateDiscoveryAgent`: đề xuất candidate DSL qua search queue chuẩn.
-6. `MarketInsightAgent`: tạo insight read-only, không tạo order.
+5. `MarketInsightAgent`: tạo insight read-only, không tạo order.
+
+Discovery dùng typed LLM generator của SearchRun, không phải AgentOrchestrator role.
 
 Agent Platform thuộc Python `research`. Go chỉ xác thực public request, enforce edge
 quota, ký principal context, proxy command/query và fan-out event đã được Python persist.
@@ -227,21 +228,30 @@ Mục đích: phục hồi structured news khi deterministic Readability Extract
 
 Agent không có URL/browser tool. Safe Fetcher deterministic sở hữu network và SSRF guard.
 
-### CandidateDiscoveryAgent - P2, default-off
+### Discovery LLM generator — typed, bounded
 
-Mục đích: đề xuất `CandidateStrategy` DSL từ bounded search history.
+Discovery MVP không tạo autonomous agent hay tool loop. `DiscoveryController`
+gọi một typed internal LLM generator duy nhất sau khi deterministic selector
+chọn `llm`; controller giữ archive, admission, cost, state và stop policy.
 
-| Tool | Purpose | Loại |
+Ba strict-JSON prompt mode:
+
+| Mode | Input tối thiểu | Output |
 |---|---|---|
-| `search.get_search_space` | Đọc allowed search space/policy | read |
-| `search.get_tested_hashes` | Đọc de-dup history | read |
-| `leaderboard.get_summary` | Đọc authorized metric/history summary | read |
-| `candidate.validate` | Schema/semantic/causal/bounds validation | compute |
-| `candidate.estimate_cost` | Ước lượng run/quota/worker cost | compute |
-| `candidate.submit_batch` | Submit vào standard bounded queue | async write |
+| `new` | allowed catalog, data capability, archive summary, diversity gap | one new `CandidateSpec` + hypothesis/operation |
+| `improve` | one parent, train/validation metrics, failure evidence | exactly one structural change + `CandidateSpec` |
+| `combine` | top candidates, validation-return correlation | one complementary flat ensemble + `CandidateSpec` |
 
-Agent không gọi Backtest Engine, không ghi Leaderboard, không bypass quota và không điều
-khiển stop condition. SearchRun vẫn sở hữu pause/resume/cancel/stop.
+Provider dùng existing `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `MODEL_CHEAP`,
+`LUNA_REASONING_EFFORT`; archive giữ provider model/version và prompt version.
+Provider fail là terminal generator failure, không fallback random.
+
+Output chỉ tham chiếu catalog version, parameter/risk configured và flat
+composite. Nó không có shell, SQL, HTTP, filesystem, definition publishing,
+BacktestEngine, result-table, leaderboard, queue, quota, pause/resume/cancel
+hoặc stop-condition capability. Catalog/causality/risk/hash/duplicate/quota/cost
+validation vẫn chạy trước queue admission. Chi tiết lifecycle ở
+`specs/search-loop.md`.
 
 ### MarketInsightAgent - P2, default-off
 
@@ -333,6 +343,7 @@ Tất cả bảng dưới đây do Python `research` sở hữu write:
 | `tool_invocations` | run/attempt/tool/version/request hash/result/evidence | auditable write idempotency |
 | `news_extractions` | content/model/prompt/schema hashes, quality/result | deterministic cache key |
 | `insight_drafts` | as-of data, observation/risk/confidence/evidence | no order relation |
+| discovery candidate provenance | candidate/model/prompt/input hash/provider version | immutable; references Python-owned search archive |
 
 Large source/report được lưu content-addressed trong artifact/evidence store; database giữ
 hash, media type, size và object reference. Không nhét arbitrary HTML/source/report vào
@@ -476,7 +487,7 @@ signal, model failure rate, tool permission denial spike và outbox delivery bac
 - Mỗi model/tool/sandbox call có deadline; workflow không có `while(true)`.
 - Tool output chỉ chứa dữ liệu principal được phép đọc.
 - Sandbox và tool policy version là một phần reproducibility fingerprint.
-- Agent-generated candidate/insight luôn có model/prompt/input-history provenance.
+- Discovery LLM candidate/insight luôn có model/prompt/input-history provenance.
 - P2 feature không được làm thay đổi deterministic engine/evaluator/ranking contracts.
 
 ## Tiêu chí chấp nhận
@@ -494,7 +505,7 @@ signal, model failure rate, tool permission denial spike và outbox delivery bac
 - [ ] AC-11: Re-approval/publish cùng idempotency key trả cùng result hoặc conflict rõ ràng.
 - [ ] AC-12: Realtime và backtest resolve cùng approved StrategyVersion/runtime.
 - [ ] AC-13: News agent chỉ chạy sau deterministic quality gate fail và không có URL tool.
-- [ ] AC-14: Candidate agent không bypass queue, quota, de-dup hoặc stop condition.
+- [ ] AC-14: Discovery LLM không bypass queue, quota, de-dup hoặc stop condition; provider failure được persist, không random fallback.
 - [ ] AC-15: Market insight không tạo order/publish/search candidate trực tiếp.
 - [ ] AC-16: Audit truy được principal -> run -> attempt -> model/tool -> artifact -> approval.
 
@@ -507,7 +518,7 @@ signal, model failure rate, tool permission denial spike và outbox delivery bac
 | DSL strategy availability | Safe runtime admission sau approval |
 | Repair attempts | 3 |
 | Authoring URL | Explicit allowlist + Safe Fetcher |
-| Candidate Discovery | P2, default-off |
+| Discovery LLM generator | Discovery MVP; typed `new`/`improve`/`combine`, controller-owned |
 | Market Insight | P2, read-only, default-off |
 
 Thay đổi bất kỳ default nào phải cập nhật proposal, design, authoring spec, traceability,

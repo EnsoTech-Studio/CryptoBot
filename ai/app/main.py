@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, status
 
-from app.schemas import NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategyDesignResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
+from app.schemas import DiscoveryProposalRequest, DiscoveryProposalResponse, NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategyDesignResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
 from app.services.predictor import predictor
 
 app = FastAPI(
@@ -47,6 +47,24 @@ def design_strategy(payload: StrategySpecRequest) -> StrategyDesignResponse:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "strategy_design_unavailable"},
+        ) from exc
+
+
+@app.post("/discovery/propose", response_model=DiscoveryProposalResponse)
+def propose_discovery(payload: DiscoveryProposalRequest) -> DiscoveryProposalResponse:
+    try:
+        result = predictor.propose_discovery(payload.model_dump())
+        return DiscoveryProposalResponse(
+            proposal=result,
+            provider="groq",
+            model=predictor.model,
+            model_version=predictor.model_version,
+            prompt_version="discovery-proposal/v1",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "discovery_inference_unavailable"},
         ) from exc
 
 

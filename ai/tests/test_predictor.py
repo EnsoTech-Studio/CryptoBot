@@ -153,6 +153,37 @@ def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) 
     assert "untrusted code" in observed["messages"][0]["content"]
 
 
+def test_discovery_proposal_normalizes_component_shorthand(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    response = {
+        "hypothesis": "Trend and momentum complement each other.",
+        "operation": "combine",
+        "candidate_json": json.dumps(
+            {
+                "components": [
+                    {"strategy_id": "ma_cross", "parameters": {"fast": 5, "slow": 20}},
+                    {"strategy_id": "rsi", "parameters": {"period": 14}},
+                ],
+                "weights": [0.7, 0.3],
+                "policy": "weighted_vote",
+            }
+        ),
+    }
+
+    def requester(request, _timeout):
+        payload = json.loads(request.data)
+        assert "test_metrics" in payload["messages"][1]["content"]
+        return json.dumps({"choices": [{"message": {"content": json.dumps(response)}}]}).encode()
+
+    result = Predictor(requester).propose_discovery(
+        {"mode": "combine", "search_space": {"strategy_ids": ["ma_cross", "rsi"]}, "archive": [], "research": {"test_metrics": "sealed"}}
+    )
+
+    assert result["operation"] == "combine"
+    assert result["candidate_definition"]["strategy_id"] == "composite"
+    assert [child["weight"] for child in result["candidate_definition"]["children"]] == [0.7, 0.3]
+
+
 def test_near_spec_is_normalized_before_contract_validation() -> None:
     result = _canonicalize_strategy_spec(
         {
