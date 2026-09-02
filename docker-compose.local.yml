@@ -1,0 +1,25 @@
+services:
+  postgres:
+    profiles: ["local-db"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-cryptobot}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-cryptobot}"
+      POSTGRES_DB: "${POSTGRES_DB:-cryptobot}"
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-native-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-native-data:

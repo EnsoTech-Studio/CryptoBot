@@ -38,6 +38,14 @@ def test_production_compose_keeps_internal_services_private() -> None:
         )
 
 
+def test_local_compose_fallback_waits_for_postgres_before_migrations() -> None:
+    compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+
+    assert "postgres:" in compose
+    assert 'profiles: ["local-db"]' in compose
+    assert "condition: service_healthy" in compose
+
+
 def test_event_outbox_lease_configuration_is_positive_and_has_a_safe_default(
     monkeypatch,
 ) -> None:

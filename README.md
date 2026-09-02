@@ -107,13 +107,34 @@ docker compose --profile local-db up -d postgres
 Full-container production/rehearsal topology:
 
 ```powershell
-docker compose -f docker-compose.stack.yml -f docker-compose.prod.yml up --build
+docker compose -f docker-compose.stack.yml -f docker-compose.prod.yml --env-file .env up --build
 ```
 
 The full-stack file is intentionally separate from local development. It expects
 `MIGRATION_DATABASE_URL`, `DATABASE_URL`, and `MARKET_DATABASE_URL` in `.env`.
 The production override publishes only `web` and `api`; research and AI remain
-on the internal Compose network, and PostgreSQL is not hosted by Docker.
+on the internal Compose network, and PostgreSQL is not hosted by Docker. If
+Supabase is waking up or recovering and the `migrate` service logs `Hot standby
+mode is disabled`, wait for the project database to become available and rerun
+the same command. You can increase the startup wait with
+`MIGRATION_CONNECT_RETRIES` and `MIGRATION_CONNECT_RETRY_DELAY_SECONDS` in
+`.env`.
+
+Local Docker fallback when Supabase is unavailable:
+
+```powershell
+docker compose `
+  -f docker-compose.stack.yml `
+  -f docker-compose.prod.yml `
+  -f docker-compose.local.yml `
+  --env-file .env `
+  --env-file .runtime\local-docker.env `
+  --profile local-db `
+  up -d --build --remove-orphans
+```
+
+The fallback env maps the web container to `http://localhost:3001` and the Go
+API to `http://localhost:8081`; PostgreSQL is exposed locally on port `5433`.
 
 ## As-built architecture
 

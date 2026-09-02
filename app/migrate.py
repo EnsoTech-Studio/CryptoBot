@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import sys
+import time
 
 import psycopg
 from psycopg import sql
@@ -61,6 +63,28 @@ def _migration_dir() -> Path:
     return Path(configured) if configured else Path(__file__).resolve().parents[1] / "migrations"
 
 
+def _connect_with_retry(database_url: str) -> psycopg.Connection[object]:
+    attempts = max(1, int(os.getenv("MIGRATION_CONNECT_RETRIES", "8")))
+    delay = max(0.1, float(os.getenv("MIGRATION_CONNECT_RETRY_DELAY_SECONDS", "2")))
+    last_error: psycopg.OperationalError | None = None
+    for attempt in range(attempts):
+        try:
+            return psycopg.connect(database_url, autocommit=False, connect_timeout=5)
+        except psycopg.OperationalError as exc:
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            wait_seconds = min(delay * (2 ** attempt), 15.0)
+            print(
+                f"database connection failed; retrying in {wait_seconds:.1f}s "
+                f"({attempt + 1}/{attempts})",
+                file=sys.stderr,
+            )
+            time.sleep(wait_seconds)
+    assert last_error is not None
+    raise last_error
+
+
 def migrate() -> list[str]:
     database_url = os.getenv("MIGRATION_DATABASE_URL", os.getenv("DATABASE_URL", "")).strip()
     if not database_url:
@@ -72,7 +96,7 @@ def migrate() -> list[str]:
         raise RuntimeError(f"no SQL migrations found in {migration_dir}")
 
     applied: list[str] = []
-    with psycopg.connect(database_url, autocommit=False, connect_timeout=5) as connection:
+    with _connect_with_retry(database_url) as connection:
         connection.execute("SELECT pg_advisory_lock(hashtext(%s))", (_LOCK_NAME,))
         try:
             connection.execute(
