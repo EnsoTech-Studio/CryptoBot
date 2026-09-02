@@ -52,3 +52,12 @@ def test_event_outbox_lease_configuration_is_positive_and_has_a_safe_default(
     monkeypatch.setenv("EVENT_LEASE_SECONDS", "0")
     with pytest.raises(ValueError, match="EVENT_LEASE_SECONDS must be greater than zero"):
         Settings.from_env()
+
+
+def test_database_fallback_uses_the_configured_postgres_port(monkeypatch) -> None:
+    from app.config import Settings
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("POSTGRES_PORT", "5433")
+
+    assert ":5433/cryptobot" in Settings.from_env().database_url

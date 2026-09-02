@@ -51,13 +51,20 @@ class DiscoveryLLMHTTPAdapter:
             "archive": archive[-20:],
             "research": research,
         }
+        # Archive rows come from psycopg and contain UUID/Decimal/datetime
+        # values.  Convert the complete envelope before handing it to httpx;
+        # otherwise json= raises TypeError locally and gets misreported as
+        # ``llm_unavailable`` even though the AI service is healthy.
+        encoded_payload = json.loads(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        )
         request_hash = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+            json.dumps(encoded_payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         try:
             response = self._client.post(
                 self._base_url + "/discovery/propose",
-                json=payload,
+                json=encoded_payload,
                 headers={"X-Request-ID": request_id} if request_id else {},
             )
             response.raise_for_status()

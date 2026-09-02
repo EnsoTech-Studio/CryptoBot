@@ -98,6 +98,7 @@ export type LoadState = "idle" | "loading" | "ready" | "unavailable";
 
 const requiredTimeframes = ["1m", "5m", "15m", "1h", "4h", "1d"];
 const referenceModeEnabled = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true";
+const DISCOVERY_SESSION_KEY = "crypto-lab-discovery-session";
 const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true" || referenceModeEnabled;
 const panelSeed = DEFAULT_PANEL_TIMEFRAMES.map((timeframe, index) => ({
   id: `chart-${index + 1}`,
@@ -220,7 +221,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [marketPairs, setMarketPairs] = useState<MarketPair[]>(referenceModeEnabled ? MOCK_MARKET_PAIRS : []);
   const [marketPairsState, setMarketPairsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [dataMode, setDataMode] = useState<DataMode>(referenceModeEnabled ? "mock" : "live");
-  const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(referenceModeEnabled ? REFERENCE_MARKET : DEFAULT_MARKET);
+  const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(() => (
+    referenceModeEnabled ? REFERENCE_MARKET : readPersistedMarket() ?? DEFAULT_MARKET
+  ));
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
   const [recentTicks, setRecentTicks] = useState<DisplayTick[]>(() => referenceModeEnabled ? createMockTicks(REFERENCE_MARKET.symbol) : []);
@@ -258,6 +261,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const realtimeEnabledRef = useRef(realtimeEnabled);
   const dataModeRef = useRef<DataMode>(dataMode);
   const mockTickRef = useRef(0);
+
+  useEffect(() => {
+    if (!user || !searchId || !submittedDraft) return;
+    try {
+      window.sessionStorage.setItem(
+        DISCOVERY_SESSION_KEY,
+        JSON.stringify({ ownerId: user.id, searchId, submittedDraft }),
+      );
+    } catch {
+      // Storage can be unavailable in a privacy-restricted browser; the live run still works.
+    }
+  }, [searchId, submittedDraft, user]);
   useEffect(() => {
     panelsRef.current = panels;
   }, [panels]);
@@ -592,6 +607,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     api.me()
       .then((payload) => {
         setUser(payload.user);
+        const session = readPersistedDiscoverySession(payload.user.id);
+        if (session) {
+          setSearchId(session.searchId);
+          setSubmittedDraft(session.submittedDraft);
+          setDiscoveryArchiveState("loading");
+        }
         void refreshStaticData();
       })
       .catch(() => report("Sign in to run experiments and search loops.", "warn"));
@@ -1105,9 +1126,34 @@ function timeframeOrder(timeframe: string) {
 }
 
 function readPersistedMarket(): MarketSelection | null {  try {
+    if (typeof window === "undefined") return null;
     const value = JSON.parse(window.localStorage.getItem("crypto-lab-market") ?? "null") as Partial<MarketSelection> | null;
     if (!value?.provider || !value.symbol) return null;
     return { provider: value.provider, symbol: value.symbol.toUpperCase() };
+  } catch {
+    return null;
+  }
+}
+
+function readPersistedDiscoverySession(ownerId: string): {
+  searchId: string;
+  submittedDraft: DiscoveryDraft;
+} | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const value = JSON.parse(window.sessionStorage.getItem(DISCOVERY_SESSION_KEY) ?? "null") as {
+      ownerId?: unknown;
+      searchId?: unknown;
+      submittedDraft?: Partial<DiscoveryDraft>;
+    } | null;
+    if (
+      value?.ownerId !== ownerId ||
+      typeof value.searchId !== "string" ||
+      !value.searchId ||
+      !Array.isArray(value.submittedDraft?.selectedStrategyIds) ||
+      typeof value.submittedDraft?.timeframe !== "string"
+    ) return null;
+    return { searchId: value.searchId, submittedDraft: value.submittedDraft as DiscoveryDraft };
   } catch {
     return null;
   }

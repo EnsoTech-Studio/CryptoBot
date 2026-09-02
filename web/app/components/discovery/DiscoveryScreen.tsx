@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   MAX_COMBINED,
@@ -10,6 +10,7 @@ import {
   type DiscoveryDraft,
 } from "../../../lib/discovery";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
+import { api, type LeaderboardEntry } from "../../../lib/api";
 import { useWorkspace } from "../../providers/workspace";
 import { StatusMessage } from "../ui/Foundation";
 import { BuilderActions, CombinedStrategyBuilder } from "./CombinedStrategyBuilder";
@@ -26,10 +27,8 @@ export function DiscoveryScreen() {
     dataMode,
     selectedMarket,
     panels,
-    leaderboard,
     discoveryArchive,
     discoveryArchiveState,
-    refreshStaticData,
     loadProvenance,
     search,
     submittedDraft,
@@ -37,9 +36,12 @@ export function DiscoveryScreen() {
     searchAction,
     runBacktest,
     focusIndex,
+    availableTimeframes,
   } = useWorkspace();
 
   const timeframe = panels[0]?.timeframe ?? "5m";
+  const [discoveryTimeframe, setDiscoveryTimeframe] = useState(timeframe);
+  const [discoveryLeaderboard, setDiscoveryLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [draft, setDraft] = useState<DiscoveryDraft>(() => {
     const base = createDraft(selectedMarket, timeframe);
     return {
@@ -58,7 +60,34 @@ export function DiscoveryScreen() {
 
   /* The market and timeframe are owned by the Realtime screen, so the draft
      mirrors them rather than keeping its own stale copy. */
-  const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe };
+  const timeframeOptions = availableTimeframes.length > 0 ? availableTimeframes : [timeframe];
+  const activeTimeframe = timeframeOptions.includes(discoveryTimeframe) ? discoveryTimeframe : timeframeOptions[0];
+  const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe: activeTimeframe };
+
+  async function refreshDiscoveryLeaderboard() {
+    if (dataMode === "mock") {
+      setDiscoveryLeaderboard([]);
+      return;
+    }
+    try {
+      const payload = await api.leaderboard(selectedMarket, activeTimeframe);
+      setDiscoveryLeaderboard(payload.entries ?? []);
+    } catch {
+      setDiscoveryLeaderboard([]);
+    }
+  }
+
+  useEffect(() => {
+    if (dataMode === "mock") return;
+    let cancelled = false;
+    void api.leaderboard(selectedMarket, activeTimeframe).then(
+      (payload) => { if (!cancelled) setDiscoveryLeaderboard(payload.entries ?? []); },
+      () => { if (!cancelled) setDiscoveryLeaderboard([]); },
+    );
+    return () => { cancelled = true; };
+    // Search status changes are the completion boundary; polling otherwise stays local to the provider.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTimeframe, dataMode, selectedMarket.provider, selectedMarket.symbol, search?.search_run_id, search?.status]);
   const missingStrategies = activeDraft.selectedStrategyIds.filter((id) => !registryIds.has(id));
   const issues = [
     ...draftIssues(activeDraft),
@@ -101,6 +130,19 @@ export function DiscoveryScreen() {
         <StatusMessage tone="syncing">{issues[0]}</StatusMessage>
       ) : null}
 
+      <div className={styles.toolbar}>
+        <label className={styles.toolbarField}>
+          <span>Khung thời gian Discovery</span>
+          <select
+            aria-label="Khung thời gian Discovery"
+            value={activeTimeframe}
+            onChange={(event) => setDiscoveryTimeframe(event.target.value)}
+          >
+            {timeframeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+      </div>
+
       <div className={styles.workspace}>
         <StrategyCatalog
           strategies={availableStrategies}
@@ -135,12 +177,12 @@ export function DiscoveryScreen() {
         <div className={styles.rightColumn}>
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
-            entries={leaderboard}
+            entries={discoveryLeaderboard}
             archive={discoveryArchive}
             run={search}
             archiveState={discoveryArchiveState}
             referenceMode={dataMode === "mock"}
-            onRefresh={() => void refreshStaticData()}
+            onRefresh={() => void refreshDiscoveryLeaderboard()}
             onTrace={(id) => void loadProvenance(id)}
           />
           <div className={styles.methodProgressRow}>

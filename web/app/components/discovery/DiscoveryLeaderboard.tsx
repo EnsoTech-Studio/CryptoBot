@@ -36,6 +36,7 @@ export function DiscoveryLeaderboard({
     : [];
   const discoveryRun = run?.generator_id === "discovery";
   const live = !discoveryRun && entries.length > 0;
+  const hasLiveLeaderboard = entries.length > 0;
   const showMock = referenceMode && !discoveryRun && !live;
   const archiveMessage = archiveState === "unavailable"
     ? "Không tải được Discovery archive."
@@ -44,14 +45,15 @@ export function DiscoveryLeaderboard({
       : "Chưa có assessment từ Discovery loop.";
 
   return (
-    <Panel
-      title={discoveryRun ? "Discovery archive" : "Leaderboard (Top strategies)"}
-      action={
-        <Button variant="ghost" onClick={onRefresh} aria-label="Làm mới leaderboard">
-          <Icon name="refresh" aria-hidden="true" />
-        </Button>
-      }
-    >
+    <>
+      <Panel
+        title={discoveryRun ? "Discovery archive" : "Leaderboard (Top strategies)"}
+        action={
+          <Button variant="ghost" onClick={onRefresh} aria-label="Làm mới leaderboard">
+            <Icon name="refresh" aria-hidden="true" />
+          </Button>
+        }
+      >
       <table className={styles.leaderTable}>
         <thead>
           <tr>
@@ -104,7 +106,40 @@ export function DiscoveryLeaderboard({
           </Button>
         </div>
       ) : null}
-    </Panel>
+      </Panel>
+      {discoveryRun && hasLiveLeaderboard ? (
+        <Panel title="Leaderboard (Top strategies)">
+        <table className={styles.leaderTable} aria-label="Leaderboard (Top strategies)">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Strategy</th>
+              <th>Return (%)</th>
+              <th>Winrate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.slice(0, 5).map((entry) => (
+              <tr key={entry.id}>
+                <RankCell rank={entry.rank} />
+                <td><PartList parts={[shortLabel(entry.strategy_id)]} /></td>
+                <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
+                  {entry.total_return_pct >= 0 ? "+" : ""}
+                  {entry.total_return_pct.toFixed(2)}%
+                </td>
+                <td className={styles.winrateCell}>{entry.win_rate_pct.toFixed(2)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className={styles.runActions}>
+          <Button variant="ghost" onClick={() => onTrace(entries[0].id)}>
+            Provenance top 1
+          </Button>
+        </div>
+        </Panel>
+      ) : null}
+    </>
   );
 }
 

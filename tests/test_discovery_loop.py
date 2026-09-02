@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from app.services.search import (
     discovery_assessment,
     discovery_generator_probabilities,
@@ -39,6 +41,26 @@ def test_discovery_assessment_applies_gates_and_penalties() -> None:
 
     rejected = discovery_assessment({"sharpe_ratio": None, "trade_count": 12}, validations, 0.2)
     assert rejected == {"accepted": False, "rejection_reason": "cheap_filter"}
+
+
+def test_demo_mode_admits_low_trade_candidate_with_explicit_override() -> None:
+    empty = {"sharpe_ratio": None, "trade_count": 0, "total_return_pct": 0.0}
+    assessment = discovery_assessment(empty, [empty, empty, empty], 0.2, demo_mode=True)
+    assert assessment["accepted"] is True
+    assert assessment["score"] == 0.0
+    assert assessment["demo_override"] == "cheap_filter"
+
+
+def test_demo_mode_accepts_database_decimal_metrics() -> None:
+    empty = {"sharpe_ratio": None, "trade_count": 0, "total_return_pct": Decimal("0")}
+    assessment = discovery_assessment(
+        {"sharpe_ratio": Decimal("0.76"), "trade_count": 3, "total_return_pct": Decimal("0.19")},
+        [empty, empty, empty],
+        0.2,
+        demo_mode=True,
+    )
+    assert assessment["accepted"] is True
+    assert assessment["demo_override"] == "cheap_filter"
 
 
 def test_discovery_generator_selection_and_lineage_are_seeded() -> None:

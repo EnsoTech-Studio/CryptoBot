@@ -48,7 +48,7 @@ class EventWorker:
         self._outbox = PostgresOutbox(conninfo, worker_id, lease_seconds=lease_seconds)
         self._dispatcher = PostgresJobDispatcher(conninfo)
         self._discovery_llm = DiscoveryLLMHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
-        self._store = Store(conninfo, self._discovery_llm)
+        self._store = Store(conninfo, self._discovery_llm, settings.discovery_demo_mode)
         self._store.reconcile_discovery()
         self._evaluator = DeterministicEvaluator()
         self._stop = threading.Event()

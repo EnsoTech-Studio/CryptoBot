@@ -4,6 +4,12 @@
 
 .screen { min-width: 0; margin: 0 var(--screen-right-overflow) 0 var(--screen-left-offset); padding-top: 34px; }
 
+.toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+
+.toolbarField { display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: var(--weight-semibold); }
+
+.toolbarField select { min-width: 112px; min-height: 38px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface-1); padding: 0 10px; color: var(--ink-1); font: inherit; }
+
 @media (min-width: 1041px) and (max-height: 800px) {
   .screen { margin-right: 0; margin-left: 0; }
 }
@@ -449,7 +455,7 @@
 .methodProgressRow > section { min-height: 0; height: 100%; overflow: visible; }
 .methodProgressRow > section > div { gap: 8px; padding: 12px 16px; }
 
-.progressMockActions { display: none; }
+.progressMockActions { display: grid; gap: 8px; }
 
 .methodList { display: grid; gap: 4px; }
 
@@ -548,7 +554,7 @@
   .methodProgressRow { grid-template-columns: minmax(0, 1fr); }
   .methodProgressRow { height: auto; overflow: visible; }
   .methodProgressRow > section { height: auto; overflow: visible; }
-  .progressMockActions { display: grid; gap: 12px; }
+  .progressMockActions { gap: 12px; }
 }
 
 @media (max-width: 700px) {

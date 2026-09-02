@@ -56,7 +56,7 @@ def propose_discovery(payload: DiscoveryProposalRequest) -> DiscoveryProposalRes
         result = predictor.propose_discovery(payload.model_dump())
         return DiscoveryProposalResponse(
             proposal=result,
-            provider="groq",
+            provider=predictor.provider,
             model=predictor.model,
             model_version=predictor.model_version,
             prompt_version="discovery-proposal/v1",

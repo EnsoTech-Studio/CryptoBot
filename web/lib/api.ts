@@ -374,6 +374,27 @@ async function ensureDataset(market: MarketSelection, timeframe: string): Promis
   return existing.datasets[0] ?? api.createDataset(market, timeframe);
 }
 
+/* Discovery needs enough legal, reproducible variants for a real demo run.
+   Defaults-only plus one composite produces one candidate and makes the loop
+   look broken. These bounded values stay inside each built-in plugin's schema;
+   the model still sees this grid and may choose from it using archive/research. */
+const DISCOVERY_PARAMETER_GRID: Record<string, Record<string, number[]>> = {
+  ma_cross: { fast: [5, 10, 20], slow: [30, 50, 80] },
+  ema_cross: { fast: [5, 10, 20], slow: [30, 50, 80] },
+  rsi: { period: [10, 14, 21], oversold: [25, 30], overbought: [70, 75] },
+  support_resistance: { period: [14, 20, 30, 40] },
+  bollinger: { period: [14, 20, 30], deviation: [1.5, 2, 2.5] },
+  macd: { fast: [8, 12], slow: [20, 26, 40], signal: [5, 9] },
+};
+
+function discoveryParameterGrid(strategyIds: string[]): Record<string, Record<string, number[]>> {
+  return Object.fromEntries(
+    strategyIds
+      .filter((strategyId) => DISCOVERY_PARAMETER_GRID[strategyId])
+      .map((strategyId) => [strategyId, DISCOVERY_PARAMETER_GRID[strategyId]]),
+  );
+}
+
 /* Execution assumptions the Backtest screen puts on screen. They used to be
    literals inside createExperiment, which meant the visible fee and slippage
    inputs changed nothing. Bounds mirror app/schemas.py ExperimentCreateIn. */
@@ -555,7 +576,7 @@ export const api = {
         timeframe,
         revision_no: 1,
       }),
-    });
+    }, 30_000);
   },
   async createExperiment(
     children: StrategyExecution[],
@@ -699,9 +720,13 @@ export const api = {
         generator_id: draft.method,
         search_space: {
           strategy_ids: draft.selectedStrategyIds,
-          cardinality: [draft.selectedStrategyIds.length],
+          /* Keep individual leaves and smaller composites in the candidate
+             pool. The builder's selected combination remains the execution
+             default, while discovery can test alternatives. */
+          cardinality: Array.from(new Set([1, 2, draft.selectedStrategyIds.length]))
+            .filter((value) => value <= draft.selectedStrategyIds.length),
           policies: [draft.policy],
-          parameter_grid: {},
+          parameter_grid: discoveryParameterGrid(draft.selectedStrategyIds),
         },
         stop_conditions: {
           max_candidates: draft.maxCandidates,
@@ -727,7 +752,7 @@ export const api = {
         seed: draft.seed,
         idempotency_key: `search-${Date.now()}`,
       }),
-    }).then(normalizeSearchRun);
+    }, 45_000).then(normalizeSearchRun);
   },
   searchRun(id: string) {
     return request<ResearchSearchRun>(`/api/v1/search-runs/${id}`).then(normalizeSearchRun);

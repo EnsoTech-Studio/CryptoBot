@@ -103,7 +103,7 @@ async def lifespan(application: FastAPI):
     try:
         settings = Settings.from_env()
         discovery_llm = DiscoveryLLMHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
-        store = Store(settings.database_url, discovery_llm)
+        store = Store(settings.database_url, discovery_llm, settings.discovery_demo_mode)
         store.sync_strategies(_strategy_payloads)
         application.state.store = store
         application.state.discovery_llm = discovery_llm
@@ -140,7 +140,7 @@ def _store(request: Request) -> Store:
     if store is None:
         settings = Settings.from_env()
         discovery_llm = DiscoveryLLMHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
-        store = Store(settings.database_url, discovery_llm)
+        store = Store(settings.database_url, discovery_llm, settings.discovery_demo_mode)
         request.app.state.discovery_llm = discovery_llm
         request.app.state.store = store
     return store

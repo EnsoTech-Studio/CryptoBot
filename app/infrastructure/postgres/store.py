@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 import math
+import os
 from typing import Any
 from uuid import UUID
 
@@ -55,11 +56,17 @@ class Store:
     separate worker threads without sharing transaction state.
     """
 
-    def __init__(self, conninfo: str, discovery_llm: Any | None = None) -> None:
+    def __init__(
+        self,
+        conninfo: str,
+        discovery_llm: Any | None = None,
+        discovery_demo_mode: bool = False,
+    ) -> None:
         if not conninfo.strip():
             raise ValueError("database connection string is required")
         self._conninfo = conninfo
         self._discovery_llm = discovery_llm
+        self._discovery_demo_mode = discovery_demo_mode
 
     def _connect(self) -> psycopg.Connection[dict[str, Any]]:
         return psycopg.connect(
@@ -1704,6 +1711,7 @@ class Store:
             for name, (start, end) in split.items()
         }
         stop_conditions["max_candidates"] = candidate_limit
+        demo_mode = self._discovery_demo_enabled()
         row = connection.execute(
             """
             INSERT INTO search_runs(owner_id,generator_id,search_space,stop_conditions,market_dataset_id,
@@ -1718,7 +1726,7 @@ class Store:
                 request.seed,
                 request.idempotency_key,
                 correlation_id,
-                Jsonb({"split": ranges}),
+                Jsonb({"split": ranges, "demo_mode": demo_mode}),
             ),
         ).fetchone()
         admitted = self._admit_discovery_candidate(connection, row, dataset, ranges, correlation_id)
@@ -1965,8 +1973,9 @@ class Store:
                 "candidate_definition": row["candidate_definition"],
                 "candidate_hash": row["candidate_hash"],
             }
+            demo_mode = bool((row.get("discovery_state") or {}).get("demo_mode")) or self._discovery_demo_enabled()
             if row["partition"] == "train":
-                if not self._discovery_metric_passes(evaluation):
+                if not demo_mode and not self._discovery_metric_passes(evaluation):
                     self._finish_discovery_candidate(
                         connection,
                         row,
@@ -2024,6 +2033,7 @@ class Store:
                     dict(train),
                     [dict(item) for item in validations],
                     discovery_complexity(candidate["candidate_definition"]),
+                    demo_mode=demo_mode,
                 )
                 assessment = {
                     **assessment,
@@ -2041,12 +2051,19 @@ class Store:
                 (row["search_run_id"],),
             )
 
-    @staticmethod
-    def _discovery_metric_passes(metric: dict[str, Any]) -> bool:
+    def _discovery_metric_passes(self, metric: dict[str, Any]) -> bool:
         sharpe = metric["sharpe_ratio"]
         return (
             sharpe is not None and math.isfinite(float(sharpe)) and int(metric["trade_count"]) >= 10
         )
+
+    def _discovery_demo_enabled(self) -> bool:
+        return self._discovery_demo_mode or os.getenv("DISCOVERY_DEMO_MODE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     @staticmethod
     def _discovery_metric_facts(metric: dict[str, Any]) -> dict[str, Any]:
