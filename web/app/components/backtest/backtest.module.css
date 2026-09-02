@@ -422,7 +422,8 @@
 .historyTable td small { display: block; margin-top: 2px; color: var(--ink-3); font-family: var(--font-mono); }
 .historyStatus { display: inline-flex; align-items: center; gap: 5px; text-transform: capitalize; }
 .historyStatus > span { width: 7px; height: 7px; }
-.historyActions { display: flex; gap: 6px; }
+.historyActions { vertical-align: middle; }
+.historyActionButtons { display: flex; align-items: center; gap: 6px; }
 .historyActions button { min-height: 28px; padding: 0 8px; font-size: 11px; }
 .historyFoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--ink-3); font-size: 11px; }
 .compareHint { color: var(--ink-3); font-size: 11px; }
