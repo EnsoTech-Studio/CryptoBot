@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { api, type StrategyDraft } from "../../../lib/api";
 import { SAMPLE_PROMPT, SAMPLE_URL, SAVE_FORM } from "../../../lib/strategy-authoring";
@@ -14,6 +15,7 @@ import styles from "./strategy.module.css";
 
 export function StrategyScreen() {
   const { strategies, strategyDrafts, dataMode, user, refreshStaticData, runBacktest } = useWorkspace();
+  const router = useRouter();
 
   const [prompt, setPrompt] = useState(SAMPLE_PROMPT);
   const [url, setUrl] = useState(SAMPLE_URL);
@@ -105,6 +107,10 @@ export function StrategyScreen() {
     }
   }
 
+  async function backtestStrategy(strategyId: string) {
+    if (await runBacktest([{ strategy_id: strategyId, weight: 1 }])) router.push("/backtests");
+  }
+
   return (
     <section className={styles.screen} aria-label="Không gian tạo strategy từ prompt hoặc URL">
       <div className={styles.stack}>
@@ -149,7 +155,7 @@ export function StrategyScreen() {
         <RecentImports
           drafts={strategyDrafts}
           referenceMode={dataMode === "mock"}
-          onRun={(strategyId) => void runBacktest([{ strategy_id: strategyId, weight: 1 }])}
+          onRun={(strategyId) => void backtestStrategy(strategyId)}
           onReview={(draftId) => void openReview(draftId)}
         />
         {error ? <p className={styles.authoringError} role="alert">{error}</p> : null}

@@ -5,9 +5,9 @@
 
 ### Kết Nối Kiến Trúc Toàn Cục & Kỹ Thuật
 * **Frontend (Next.js):** SPA / JAMstack, Event Streaming (SSE/WS) cho biểu đồ realtime.
-* **Middleware (Go API Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Adapter.
-* **Backend Research (Python):** Plugin Architecture, Event-Driven Job Queue, Backtest Worker pool.
-* **Database (Tách nhóm data):** PostgreSQL (ACID Outbox, Candles, Experiments, News) & In-memory Ring Buffers (Go API Edge).
+* **Middleware (Go API Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Ingestion.
+* **Backend Research (Python):** Strategy Plugin Architecture, Event-Driven Job Queue, Backtest Worker pool.
+* **Database:** PostgreSQL (ACID Outbox, Candles, Experiments, News) & In-memory Ring Buffers (Go API Edge).
 * **Agent & External:** Strategy AI Agent, Crawling Agent, Binance API, OpenAI/Groq.
 
 </div>
@@ -27,13 +27,13 @@
 
 ### Các Pattern Cốt Lõi Áp Dụng
 * **CQRS (Go API):**
-  * Tách biệt lệnh Command (tạo thí nghiệm) và Query (đọc nến, leaderboard) tối ưu hiệu năng.
+  * Tách biệt Command (tạo experiment) và Query (đọc candles, leaderboard) tối ưu latency.
 * **Dual-Channel Market Engine with Parity:**
-  * Đồng nhất mô hình dữ liệu nến cho cả luồng Realtime (WSS) và Historical Backfill (REST).
+  * Đồng nhất data model cho cả luồng Realtime (WSS) và Historical Backfill (REST).
 * **Transactional Outbox Pattern:**
   * Đảm bảo tính nguyên tử (Atomic) khi tạo Experiment và đẩy Job, loại bỏ rủi ro Dual-write.
 * **Plugin Architecture:**
-  * Tách rời hoàn toàn Core Engine khỏi logic chiến lược và thuật toán tìm kiếm.
+  * Tách rời hoàn toàn Core Engine khỏi strategy logic và search algorithms.
 
 </div>
 <div>
@@ -51,13 +51,13 @@
 <div>
 
 ### Hệ Thống Multi-Agent & Vòng Lặp Tự Sửa Lỗi
-* **Strategy Designer Agent:** Nhận prompt tự nhiên hoặc URL → sinh đặc tả Draft dạng JSON.
-* **Implementation Agent:** Chuyển đổi JSON Draft thành mã Python tuân thủ `IStrategy`.
+* **Strategy Designer Agent:** Nhận natural language prompt / URL → sinh đặc tả Draft dạng JSON.
+* **Implementation Agent:** Chuyển đổi JSON Draft thành Python code tuân thủ `IStrategy`.
 * **Self-Repair Loop (AST + Sandbox):**
-  * Kiểm tra cú pháp và chạy thử trong sandbox.
-  * Phản hồi lỗi runtime về LLM để tự sửa mã (tối đa 3 lần).
+  * Kiểm tra cú pháp và dry-run trong execution sandbox.
+  * Phản hồi runtime errors về LLM để tự sửa code (tối đa 3 lần).
 * **Candidate Discovery & Crawling Agent:**
-  * Tự động kết hợp tham số và crawl tin tức đa nguồn.
+  * Tự động kết hợp hyperparameters và crawl tin tức đa nguồn.
 
 </div>
 <div>

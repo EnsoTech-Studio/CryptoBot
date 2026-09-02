@@ -5,15 +5,15 @@
 
 ### Tác tử (Actors) & Nhóm Chức năng
 * **Quant Researcher / Trader:**
-  * Xem biểu đồ nến realtime đa khung thời gian (1m, 5m, 1h, 1d).
-  * Thử nghiệm chiến lược đơn và composite.
-  * Chạy Backtest, xem equity curve, drawdown.
-  * Nhập prompt tự nhiên để sinh & sửa mã chiến lược.
+  * Xem realtime candlestick chart đa timeframe (1m, 5m, 1h, 1d).
+  * Thử nghiệm single strategy và composite strategy.
+  * Chạy Backtest, phân tích equity curve, max drawdown, win rate.
+  * Nhập prompt tự nhiên hoặc URL để AI sinh & sửa strategy code.
 * **Autonomous AI Agent:**
-  * Crawl tin tức, trích xuất text & chấm điểm sentiment.
-  * Tự động chạy vòng lặp tìm kiếm (Loop Discovery).
+  * Crawl financial news, trích xuất text & scoring sentiment.
+  * Tự động chạy Auto Search Loop (Loop Discovery).
 * **System Worker:**
-  * Nạp nến định kỳ, xử lý hàng đợi Backtest ngầm.
+  * Nạp candle định kỳ, xử lý ngầm Backtest Job Queue.
 
 </div>
 <div>
@@ -31,11 +31,11 @@
 <div>
 
 ### Ranh Giới & Hệ Thống Bên Ngoài
-* **CryptoBot Core Platform:** Hệ thống trung tâm thu nạp nến, nghiên cứu chiến lược và chấm điểm danh mục.
+* **CryptoBot Core Platform:** Nền tảng trung tâm thu nạp market data, research strategy và chấm điểm portfolio.
 * **External Systems:**
-  * **Binance Exchange:** Dữ liệu nến lịch sử (REST) và giá biến động trực tiếp (WebSocket).
+  * **Binance Exchange:** Historical candle data (REST) và BBO price stream (WebSocket).
   * **News Sources / RSS Feeds:** Cung cấp thông tin thị trường crypto đa nguồn.
-  * **LLM Providers (OpenAI / Groq):** Suy luận ngôn ngữ, phân tích sentiment & tự sửa mã (Self-repair).
+  * **LLM Providers (OpenAI / Groq):** Suy luận ngôn ngữ, sentiment analysis & strategy self-repair.
 
 </div>
 <div>
@@ -53,12 +53,12 @@
 <div>
 
 ### Phân Rã Các Container Chính
-* **Next.js Web (SPA):** UI biểu đồ realtime, cấu hình chiến lược & Leaderboard.
-* **Go Edge Gateway (`api`):** CQRS, RBAC, thu nạp Binance WSS & stream SSE/WS.
+* **Next.js Web (SPA):** UI biểu đồ realtime, cấu hình strategy & Leaderboard.
+* **Go Edge Gateway (`api`):** CQRS, RBAC, Binance WSS ingestion & SSE/WS stream.
 * **Python Research (`research`):** Strategy Registry, Backtest Engine & Search Loop.
-* **Async Workers (`worker` pool):** Xử lý Job Queue, Outbox Events, Crawl & AI Agent.
-* **AI Service (`ai`):** Cổng LLM (Groq/OpenAI) phân tích sentiment & sinh mã.
-* **PostgreSQL (Storage & Outbox):** Lưu trữ ACID nến, thí nghiệm và hàng đợi Outbox.
+* **Async Workers (`worker` pool):** Xử lý Job Queue, Outbox Events, News Crawl & AI Agent.
+* **AI Service (`ai`):** Cổng LLM (Groq/OpenAI) phân tích sentiment & sinh strategy code.
+* **PostgreSQL (Storage & Outbox):** Lưu trữ ACID candle data, experiments và Outbox table.
 
 </div>
 <div>
@@ -76,11 +76,11 @@
 <div>
 
 ### Cấu Trúc Nội Bộ Python Platform
-* **Strategy Registry:** Quản lý lifecycle và metadata của các plugin chiến lược.
-* **Deterministic Backtest Engine:** Mô phỏng khớp lệnh chính xác (BBO, Slippage, Fee).
-* **Search & Loop Manager:** Điều phối thuật toán tìm kiếm (Random, Genetic, Bayesian, LLM).
-* **Worker Lease Manager:** Phân phối công việc không khóa (Optimistic Lock) và tự phục hồi.
-* **AST Sandbox:** Kiểm tra an toàn cú pháp mã nguồn do AI tạo ra trước khi thực thi.
+* **Strategy Registry:** Quản lý lifecycle và metadata của các strategy plugins.
+* **Deterministic Backtest Engine:** Mô phỏng order execution chính xác (BBO, Slippage, Fee).
+* **Search & Loop Manager:** Điều phối search algorithms (Random, Genetic, Bayesian, LLM).
+* **Worker Lease Manager:** Phân phối jobs không khóa (Optimistic Lock) và tự phục hồi.
+* **AST Sandbox:** Kiểm tra an toàn syntax strategy code do AI tạo ra trước khi thực thi.
 
 </div>
 <div>
@@ -98,10 +98,10 @@
 <div>
 
 ### Cấu Trúc Nội Bộ Go Gateway
-* **Binance Adapter:** Duy trì kết nối WSS liên tục, tự động reconnect và gọi REST Backfill khi rớt mạng.
-* **Candle Aggregator & BBO Streamer:** Tổng hợp nến tạm thời (provisional candle) và đóng nến vào CSDL.
-* **CQRS Request Handler:** Phân tách rõ ràng luồng Command (tạo thí nghiệm) và Query (đọc nến, leaderboard).
-* **Security & Auth Middleware:** Kiểm tra JWT token, phân quyền RBAC và giới hạn tần suất gọi API.
+* **Binance Adapter:** Duy trì kết nối WSS liên tục, tự động reconnect và REST Gap Backfill.
+* **Candle Aggregator & BBO Streamer:** Tổng hợp provisional candle và lưu candle đóng vào CSDL.
+* **CQRS Request Handler:** Phân tách rõ ràng luồng Command (tạo experiment) và Query (đọc candle, leaderboard).
+* **Security & Auth Middleware:** Kiểm tra JWT token, phân quyền RBAC và rate limiting.
 
 </div>
 <div>

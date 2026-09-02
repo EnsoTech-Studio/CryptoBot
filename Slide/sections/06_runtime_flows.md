@@ -4,10 +4,10 @@
 <div>
 
 ### Xử Lý Nến & Khôi Phục Khoảng Trống (Gap Backfill)
-1. **Khởi Tạo Biểu Đồ:** Tải 1,000 nến lịch sử từ Postgres/Binance REST cho đa khung thời gian (1m, 5m, 1h, 1d).
-2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật nến tạm thời (provisional candle).
-3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán trực tiếp sự kiện `CandleClosed` qua SSE/WebSocket broadcaster.
-4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các nến bị khuyết, đảm bảo chuỗi thời gian liên tục.
+1. **Khởi Tạo Biểu Đồ:** Tải 1,000 historical candles từ Postgres/Binance REST cho đa timeframe (1m, 5m, 1h, 1d).
+2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật provisional candle.
+3. **Đóng Nến (Candle Close):** Lưu candle vào Postgres và phát trực tiếp sự kiện `CandleClosed` qua SSE/WebSocket broadcaster.
+4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các candle bị khuyết, đảm bảo continuous time-series.
 
 </div>
 <div>
@@ -19,7 +19,7 @@
 
 ---
 
-## 21. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
+## 21. Runtime Flow: Thực Thi & Thêm Mới Strategy
 
 <div class="columns">
 <div>
@@ -28,11 +28,11 @@
 * **Run Strategy Flow:**
   * Nạp `Datafeed` & `Sentiment Window` vào `StrategyContext`.
   * `IStrategy.evaluate()` sinh tín hiệu `BUY` / `SELL` / `HOLD`.
-  * `CompositeStrategy` tổng hợp theo trọng số hoặc đa số.
+  * `CompositeStrategy` tổng hợp theo majority hoặc weighted policy.
 * **Add Strategy Flow (Handcraft & AI):**
-  * Handcraft: Thêm file Python vào Registry tự động load.
-  * AI: LLM Agent sinh code qua AST Sandbox xác thực.
-* **Runtime Parity:** Logic chạy đồng nhất 100% trên cả Live và Backtest.
+  * Handcraft: Thêm file Python vào Strategy Registry tự động load.
+  * AI: LLM Agent sinh strategy code qua AST Sandbox xác thực.
+* **Runtime Parity:** Strategy logic chạy đồng nhất 100% giữa Live Trading và Backtest.
 
 </div>
 <div>
@@ -50,10 +50,10 @@
 <div>
 
 ### Quy Trình Thực Thi Thí Nghiệm & Khám Phá
-1. **Tạo Thí Nghiệm:** Ghi thông tin thí nghiệm và sự kiện vào Outbox cùng một ACID transaction.
-2. **Chiếm Quyền (Worker Lease Acquire):** Worker nhận job qua khóa lạc quan (Optimistic Lock) và gửi heartbeat.
+1. **Tạo Thí Nghiệm:** Ghi thông tin experiment và events vào Outbox cùng một ACID transaction.
+2. **Chiếm Quyền (Worker Lease Acquire):** Worker nhận job qua Optimistic Lock và gửi heartbeat.
 3. **Thực Thi Đa Phân Vùng:** Chạy kiểm thử trên `Train` (30d) → `Validation` (15d) → `Sealed Test` (15d).
-4. **Ghi Nhận Kết Quả:** Tính Sharpe, Drawdown, lưu Trade list và cập nhật Top-K Leaderboard.
+4. **Ghi Nhận Kết Quả:** Tính Sharpe Ratio, Max Drawdown, lưu Trade list và cập nhật Top-K Leaderboard.
 
 </div>
 <div>
@@ -71,11 +71,11 @@
 <div>
 
 ### Thu Thập & Phân Tích Tin Tức Tự Phục Hồi
-1. **Kiểm Tra An Toàn SSRF:** Duyệt nguồn từ `ApprovedSource`, thẩm tra DNS và IP đích.
+1. **Kiểm Tra An Toàn SSRF:** Duyệt nguồn từ `ApprovedSource`, thẩm tra DNS và target IP.
 2. **Thu Thập Chuẩn:** Trích xuất văn bản qua RSS/HTML Parser.
-3. **Cổng Kiểm Tra Chất Lượng (Quality Gate):** Nếu độ dài bài viết quá ngắn hoặc web đổi DOM → Kích hoạt fallback.
-4. **LLM Fallback Extraction:** Chuyển HTML sang LLM Extractor để tự động nhận diện nội dung.
-5. **Chấm Điểm Sentiment:** Chạy ngầm phân tích ngữ nghĩa và cập nhật điểm [-1.0, 1.0] vào cơ sở dữ liệu.
+3. **Cổng Kiểm Tra Chất Lượng (Quality Gate):** Nếu bài viết quá ngắn hoặc web đổi DOM → Kích hoạt fallback.
+4. **LLM Fallback Extraction:** Chuyển HTML sang LLM Extractor để tự động parse nội dung.
+5. **Scoring Sentiment:** Chạy ngầm phân tích ngữ nghĩa và cập nhật sentiment score [-1.0, 1.0] vào CSDL.
 
 </div>
 <div>

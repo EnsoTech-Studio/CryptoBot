@@ -125,8 +125,8 @@ export type Metrics = {
   wins: number;
   losses: number;
   net_profit: number;
-  profit_factor: number;
-  sharpe_ratio: number;
+  profit_factor: number | null;
+  sharpe_ratio: number | null;
   score: number | null;
   evaluator_version: string;
 };

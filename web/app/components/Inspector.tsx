@@ -19,7 +19,7 @@ export function Inspector() {
   ];
 
   return (
-    <aside className="inspector" aria-label="Inspector">
+    <aside id="workspace-inspector" className="inspector" aria-label="Inspector">
       <div className="inspector-head">
         <div>
           <p className="eyebrow">Inspector</p>

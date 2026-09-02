@@ -134,6 +134,11 @@ export function DiscoveryScreen() {
     if (await openExperiment(id)) router.push("/backtests");
   }
 
+  async function backtestDiscoveryStrategy() {
+    const accepted = await runBacktest(submittedChildren(), undefined, activeDraft.timeframe, undefined, activeDraft.market);
+    if (accepted) router.push("/backtests");
+  }
+
   return (
     <section className={styles.screen} aria-label="Không gian tạo và tìm kiếm strategy">
       {issues.length > 0 && draft.selectedStrategyIds.length > 0 ? (
@@ -180,7 +185,7 @@ export function DiscoveryScreen() {
           <BuilderActions
             canSubmit={canSubmit}
             onSave={() => void startSearch(activeDraft)}
-            onBacktest={() => void runBacktest(submittedChildren())}
+            onBacktest={() => void backtestDiscoveryStrategy()}
           />
         </div>
 

@@ -98,7 +98,7 @@ def build_latex():
 \midrule
 \textbf{Modifiability} & Thêm Strategy, Search, Data Provider không sửa Core & Plugin Architecture, Open-Closed Principle, Dynamic Registry \\
 \textbf{Scalability} & Xử lý đồng thời $>100,000$ backtests \& stream nến realtime & Scale-out Python Worker pool, Postgres Leased Job Queue, In-memory Broadcaster \\
-\textbf{Realtime / Perf} & Độ trễ cập nhật nến $<200$ms, Backtest throughput cao & Go Edge Gateway, WebSocket Streaming, Vectorized Engine \\
+\textbf{Realtime / Perf} & Độ trễ cập nhật nến $<200$ms, Backtest throughput cao & Go Edge Gateway, WebSocket Streaming, Deterministic Replay Engine \\
 \textbf{Reliability} & Lỗi crawl/search không làm sập API; reconnect sàn & Failure Isolation, Transactional Outbox, Lease Takeover, Idempotency \\
 \textbf{Observability} & Theo dõi Worker, tiến độ Search Loop \& nến realtime & Structured Logging, State Machine tracking, Loop Run Metrics \\
 \textbf{Reproducibility} & Kết quả Backtest \& Leaderboard bất biến & Immutable Market Dataset snapshots, SHA-256 Run Hash, Seed Lock \\

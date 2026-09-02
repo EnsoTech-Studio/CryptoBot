@@ -110,13 +110,13 @@ export function ExperimentHistory({
 
 function Comparison({ records }: { records: ExperimentHistoryRecord[] }) {
   const metrics: Array<[string, (value: Metrics) => string]> = [
-    ["Total Return", (value) => `${value.total_return_pct.toFixed(2)}%`],
-    ["Total Profit/Loss", (value) => value.net_profit.toFixed(2)],
-    ["Win Rate", (value) => `${value.win_rate_pct.toFixed(2)}%`],
+    ["Total Return", (value) => `${formatMetric(value.total_return_pct)}%`],
+    ["Total Profit/Loss", (value) => formatMetric(value.net_profit)],
+    ["Win Rate", (value) => `${formatMetric(value.win_rate_pct)}%`],
     ["Trades", (value) => String(value.trade_count)],
-    ["Max Drawdown", (value) => `${value.max_drawdown_pct.toFixed(2)}%`],
-    ["Profit Factor", (value) => value.profit_factor.toFixed(2)],
-    ["Sharpe Ratio", (value) => value.sharpe_ratio.toFixed(2)],
+    ["Max Drawdown", (value) => `${formatMetric(value.max_drawdown_pct)}%`],
+    ["Profit Factor", (value) => formatMetric(value.profit_factor)],
+    ["Sharpe Ratio", (value) => formatMetric(value.sharpe_ratio)],
   ];
   return (
     <Panel title="So sánh experiment" info="So sánh các experiment đã lưu trên thiết bị này.">
@@ -141,9 +141,13 @@ function ExperimentDetail({ record }: { record: ExperimentHistoryRecord }) {
       <Detail label="Dataset version" value={record.datasetVersion || "Chưa chọn"} />
       <Detail label="Parameters đã lưu" value={JSON.stringify(record.parameters)} wide />
       <Detail label="Execution config" value={JSON.stringify(record.execution)} wide />
-      {record.metrics ? <Detail label="Metrics" value={`Return ${record.metrics.total_return_pct.toFixed(2)}% · Win rate ${record.metrics.win_rate_pct.toFixed(2)}% · PF ${record.metrics.profit_factor.toFixed(2)} · Sharpe ${record.metrics.sharpe_ratio.toFixed(2)}`} wide /> : null}
+      {record.metrics ? <Detail label="Metrics" value={`Return ${formatMetric(record.metrics.total_return_pct)}% · Win rate ${formatMetric(record.metrics.win_rate_pct)}% · PF ${formatMetric(record.metrics.profit_factor)} · Sharpe ${formatMetric(record.metrics.sharpe_ratio)}`} wide /> : null}
     </div>
   );
+}
+
+function formatMetric(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "—" : value.toFixed(2);
 }
 
 function Detail({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {

@@ -412,6 +412,24 @@
   color: var(--ink-3);
 }
 
+.inspectorToggle {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line-1);
+  border-radius: 9px;
+  background: var(--surface-1);
+  padding: 0 10px;
+  color: var(--ink-3);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.inspectorToggle:hover { border-color: var(--line-2); color: var(--ink-1); }
+.inspectorToggle svg { width: 16px; height: 16px; }
+
 .headerIcon { position: relative; }
 .headerIcon::after {
   position: absolute;
@@ -546,6 +564,8 @@
   .pageTitle p { display: none; }
   .headerActions { gap: 6px; }
   .headerIcon { display: none; }
+  .inspectorToggle span { display: none; }
+  .inspectorToggle { width: 34px; justify-content: center; padding: 0; }
   .noticeSlot { padding-top: var(--space-2); }
   .content { padding-top: var(--space-2); }
 }

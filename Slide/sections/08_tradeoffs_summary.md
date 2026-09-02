@@ -3,10 +3,10 @@
 | Lựa Chọn Thiết Kế | Phương Án Được Chọn | Phương Án Thay Thế | Lý Do & Đánh Đổi Kiến Trúc (Rationale) |
 | :--- | :--- | :--- | :--- |
 | **Kiến trúc Tổng thể** | **Modular Monolith** | Microservices | **Chọn:** Giảm độ phức tạp vận hành mạng, đảm bảo ranh giới module rõ ràng qua contracts. |
-| **Lưu trữ Nến & Job** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Thí nghiệm & Outbox; B-Tree index đủ đáp ứng hàng triệu nến. |
+| **Lưu trữ Candle & Jobs** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Experiments & Outbox; B-Tree index đủ đáp ứng hàng triệu candles. |
 | **Hàng Đợi & Sự Kiện** | **PostgreSQL Outbox & Leases** | Apache Kafka / RabbitMQ / Redis | **Chọn:** Loại bỏ hoàn toàn Dual-write, đảm bảo Outbox nguyên tử ACID mà không cần duy trì thêm message broker ngoài. |
-| **Thực Thi Mã AI Sinh** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Khởi tạo sandbox tức thì (<10ms), kiểm soát an toàn cú pháp không tốn tài nguyên. |
-| **Phân Tích Sentiment** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Tiết kiệm chi phí token API, tránh nghẽn luồng crawl; chỉ gọi LLM khi cần phân tích sâu. |
+| **Thực Thi Mã AI Sinh** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Khởi tạo sandbox tức thì (<10ms), kiểm soát an toàn syntax không tốn tài nguyên container. |
+| **Phân Tích Sentiment** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Tiết kiệm chi phí token API, tránh nghẽn luồng crawl; chỉ gọi LLM khi cần scoring chuyên sâu. |
 
 ---
 
@@ -19,9 +19,9 @@
 * **Thay Thế Nguồn Dữ Liệu Thị Trường (Market Provider):**
   * Thiết kế `MarketProviderAdapter` cho phép đổi từ Binance sang OKX, Bybit, Coinbase mà **không thay đổi** Frontend hay Strategy Engine.
 * **Mở Rộng Thuật Toán Tìm Kiếm Nâng Cao:**
-  * Sẵn sàng tích hợp mô hình Reinforcement Learning (PPO) thông qua giao diện `ISearchAlgorithm`.
+  * Sẵn sàng tích hợp mô hình Reinforcement Learning (PPO) thông qua interface `ISearchAlgorithm`.
 * **Mở Rộng Nguồn Thu Thập Tin Tức:**
-  * Dễ dàng bổ sung CryptoPanic, CoinDesk API qua cấu hình.
+  * Dễ dàng bổ sung CryptoPanic, CoinDesk API qua cấu hình `ApprovedSource`.
 
 </div>
 <div>
@@ -41,7 +41,7 @@
 ### Thành Quả Đạt Được
 * **Chuỗi Quyết Định Rõ Ràng:** Bám sát theo ASRs và Quality Attributes.
 * **Kiến Trúc Rành Mạch, Chống Coupling:** Phân rã 5 module độc lập, triệt tiêu hoàn toàn God Service.
-* **AI Agent & Tự Động Hóa:** Multi-Agent với vòng lặp tự sửa lỗi (Self-repair) và chống Overfitting (Train/Val/Test).
+* **AI Agent & Tự Động Hóa:** Multi-Agent với vòng lặp self-repair và chống Overfitting (Train/Val/Test).
 * **Chịu Tải & Phục Hồi Cao:** Kiểm thử 100,000 backtests, cơ chế Lease Takeover và Idempotency.
 
 ### Phần Hỏi - Đáp (Q & A)

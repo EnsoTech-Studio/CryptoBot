@@ -22,13 +22,13 @@ export function RecentImports({
       title="Chiến lược đã import gần đây"
       className={styles.importsPanel}
       action={
-        <button type="button" className={styles.allLink}>
+        <a href="#strategy-imports" className={styles.allLink}>
           Xem tất cả
           <Icon name="chevron-right" aria-hidden="true" />
-        </button>
+        </a>
       }
     >
-      <div className={styles.importsWrap}>
+      <div id="strategy-imports" className={styles.importsWrap}>
         <table className={styles.importsTable}>
           <thead>
             <tr>
