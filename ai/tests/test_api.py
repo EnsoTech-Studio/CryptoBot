@@ -75,6 +75,18 @@ def test_news_extract_returns_structured_source_excerpt(monkeypatch) -> None:
     assert response.json()["body"].startswith("Bitcoin liquidity")
 
 
+def test_news_aggregate_sentiment_uses_its_dedicated_llm_operation(monkeypatch) -> None:
+    monkeypatch.setattr(main.predictor, "predict_aggregate", lambda _: Prediction(
+        "POSITIVE", 0.78, "openai/gpt-oss-120b", "groq-test"
+    ))
+
+    response = client.post("/news/aggregate-sentiment", json={"text": "BTC demand improved. ETH liquidity improved."})
+
+    assert response.status_code == 200
+    assert response.json()["label"] == "POSITIVE"
+    assert response.json()["score"] == 0.78
+
+
 def test_predict_rejects_oversized_text() -> None:
     response = client.post("/predict", json={"text": "a" * 10_001})
 

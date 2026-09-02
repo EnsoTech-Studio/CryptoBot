@@ -33,13 +33,19 @@ class SentimentHTTPAdapter:
             self._client.close()
 
     def analyze(self, text: str, request_id: str | None = None) -> Result:
+        return self._analyze(text, "/predict", request_id)
+
+    def analyze_aggregate(self, text: str, request_id: str | None = None) -> Result:
+        return self._analyze(text, "/news/aggregate-sentiment", request_id)
+
+    def _analyze(self, text: str, path: str, request_id: str | None) -> Result:
         normalized = text.strip()
         if not normalized or len(normalized) > 10_000:
             raise ContractViolation("sentiment input must contain 1..10000 characters")
         headers = {"X-Request-ID": request_id} if request_id else {}
         try:
             response = self._client.post(
-                self._base_url + "/predict",
+                self._base_url + path,
                 json={"text": normalized},
                 headers=headers,
             )
