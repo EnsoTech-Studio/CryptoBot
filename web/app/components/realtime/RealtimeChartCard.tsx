@@ -12,6 +12,8 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
     selectedMarket,
     focusIndex,
     setFocusIndex,
+    availableTimeframes,
+    panelHandlers,
     loadHistory,
     realtimeEnabled,
     dataMode,
@@ -28,6 +30,9 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
   const chartSummary = lastCandle
     ? `${selectedMarket.symbol} ${panel.timeframe}, giá đóng cửa ${formatPrice(lastCandle.close)}, ${signalLabel}${dataMode === "mock" ? ", dữ liệu mô phỏng" : ""}`
     : `${selectedMarket.symbol} ${panel.timeframe}, chưa có dữ liệu thị trường`;
+  const timeframeOptions = ["1m", "5m", "15m", "1h", "4h", "1d"]
+    .filter((timeframe) => availableTimeframes.includes(timeframe));
+  const onTimeframe = panelHandlers(index).onTimeframe;
 
   return (
     <article className={`${styles.chartCard} ${focusIndex === index ? styles.chartCardFocused : ""}`}>
@@ -59,6 +64,23 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
       </header>
 
       <div className={styles.chartMeta}>
+        <div className={styles.chartTimeframeControl}>
+          <span className={styles.chartControlLabel}>Khung</span>
+          <div className={styles.chartTimeframes} role="tablist" aria-label={`Khung thời gian cho biểu đồ ${selectedMarket.symbol}`}>
+            {timeframeOptions.map((timeframe) => (
+              <button
+                key={timeframe}
+                type="button"
+                className={panel.timeframe === timeframe ? styles.timeframeActive : undefined}
+                role="tab"
+                aria-selected={panel.timeframe === timeframe}
+                onClick={() => onTimeframe(timeframe)}
+              >
+                {timeframe}
+              </button>
+            ))}
+          </div>
+        </div>
         <span className={styles.overlayValue}>
           {overlay ? `${overlay.name} ${formatPrice(overlay.value)}` : "Overlay chưa có dữ liệu"}
         </span>
