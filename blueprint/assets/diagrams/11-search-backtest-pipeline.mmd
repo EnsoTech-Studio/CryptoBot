@@ -2,48 +2,72 @@ sequenceDiagram
     autonumber
     actor U as Researcher
     participant GO as Go Edge API
-    participant DC as Python DiscoveryController
-    participant AR as Discovery Archive
-    participant GEN as Selected Generator
-    participant EX as Experiment/Admission
-    participant DB as PostgreSQL Queue
-    participant W as Python Worker
-    participant EV as Evaluator
+    participant API as Python Research API
+    participant ST as Store
+    participant GEN as discovery_propose()
+    participant LLM as DiscoveryLLMHTTPAdapter
+    participant DB as PostgreSQL
+    participant W as BacktestWorker
+    participant ENG as DeterministicEngine
+    participant EV as EventWorker
+    participant EVAL as DeterministicEvaluator
 
     U->>GO: POST /search-runs {generator_id: discovery}
-    GO->>DC: signed command + principal/quota
-    DC->>AR: freeze split, policies and initial stats
+    GO->>API: signed internal create command
+    API->>ST: create_search_run(request, correlation_id)
+    ST->>DB: quota/dataset checks + discovery_split()
+    ST->>DB: INSERT search_runs(discovery_state with frozen split)
+    ST->>GEN: propose(space, seed, archive, research)
+    GEN->>LLM: optional typed proposal
+    LLM-->>GEN: candidate_definition + provenance
+    GEN-->>ST: CandidateEnvelope or provider failure
+    ST->>DB: INSERT search_candidate + reservation(reserved_jobs=4)
+    ST->>DB: INSERT train experiment + backtest job
+    ST-->>API: SearchRunOut(status=running)
+    API-->>GO: 202 + run_id
+    GO-->>U: 202 + run_id
 
-    loop one active candidate, stop check before admission
-        DC->>DC: select runnable generator
-        DC->>GEN: propose CandidateSpec + lineage
-        GEN-->>DC: candidate or recorded provider failure
-        DC->>AR: canonical hash + duplicate/parent checks
-        alt new candidate admitted
-            DC->>EX: reserve four backtests and create train snapshot
-            EX->>DB: immutable train experiment + job
-            W->>DB: claim with lease and run train
-            W->>EV: BacktestCompleted via outbox
-            EV->>AR: train metrics
-            alt cheap gate passes
-                DC->>EX: admit V1, V2, V3 snapshots
-                EX->>DB: three immutable validation jobs
-                W->>EV: execute/evaluate each window
-                EV->>AR: validation metrics + aligned returns
-                DC->>AR: assess score, correlation, accept/reject
-            else train rejected
-                DC->>AR: cheap rejection with no validation jobs
+    loop one active discovery candidate
+        W->>DB: claim queued job with lease token
+        W->>ENG: run(train snapshot, candles, bbo, sentiment)
+        ENG-->>W: Result or deterministic failure
+        W->>DB: persist facts + BacktestCompleted outbox atomically
+        EV->>DB: claim BacktestCompleted
+        EV->>EVAL: evaluate(run facts, policy)
+        EVAL-->>EV: evaluation
+        EV->>DB: persist evaluation + consume event
+        EV->>ST: advance_discovery_for_experiment(experiment_id)
+        alt train cheap gate fails
+            ST->>DB: archive cheap rejection and release reservation
+        else train gate passes
+            ST->>DB: INSERT three validation experiments/jobs
+            loop each validation completion
+                W->>ENG: run(validation snapshot)
+                ENG-->>W: Result
+                W->>DB: persist facts + BacktestCompleted outbox
+                EV->>EVAL: evaluate(validation facts)
+                EVAL-->>EV: evaluation
+                EV->>ST: advance_discovery_for_experiment()
             end
-        else duplicate or invalid
-            DC->>AR: terminal skip or failure with no experiment
+            ST->>DB: discovery_assessment(train, V1, V2, V3)
+            alt positive survivor score
+                ST->>DB: archive accepted candidate + update run counters
+            else validation/gap/correlation rejection
+                ST->>DB: archive rejected candidate
+            end
         end
+        ST->>GEN: next proposal uses archive and parent selection
     end
 
-    opt normal completion and accepted survivor
-        DC->>EX: exactly one sealed test for best candidate
-        EX->>DB: immutable test experiment + job
-        W->>EV: execute/evaluate and persist separately
-        EV->>AR: final test completed outside score and parent updates
+    opt normal stop with accepted survivor
+        ST->>DB: INSERT one sealed test experiment/job
+        W->>ENG: run(test snapshot)
+        ENG-->>W: final Result
+        W->>DB: persist final facts + outbox
+        EV->>EVAL: evaluate final test separately
+        EV->>DB: persist final evaluation, no archive or score update
+        ST->>DB: mark search_runs completed(final_test_completed)
     end
 
-    Note over DC,AR: Test data never reaches generation, acceptance,<br/>parent selection or generator adaptation.
+    Note over ST,DB: Current implementation: Store methods own sequencing.<br/>Reservation records four planned jobs and train is queued first.<br/>Target-only risk_policy and DiscoveryController are not shown as runtime fields.
+    Note over GEN,DB: Test data remains sealed and unavailable to proposal, parents or assessment.

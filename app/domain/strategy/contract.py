@@ -84,7 +84,7 @@ class ResolvedSignal:
 class CombinationPolicy:
     policy: str
     threshold: Decimal
-    encoding: str
+    encoding: dict[str, int]
 
 
 @dataclass

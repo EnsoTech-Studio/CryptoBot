@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoBot — Software Architecture Presentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <style>
+    :root {
+      --primary: #1e3a8a;
+      --primary-light: #2563eb;
+      --primary-dark: #172554;
+      --secondary: #0f766e;
+      --bg-canvas: #090d16;
+      --bg-slide: #ffffff;
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --border-color: #e2e8f0;
+      --accent: #f59e0b;
+      --card-bg: #f8fafc;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-canvas);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+    }
+    /* Top Header Bar */
+    header {
+      background: #111827;
+      color: #f8fafc;
+      padding: 10px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1f2937;
+      font-size: 14px;
+      z-index: 100;
+    }
+    .header-title {
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #93c5fd;
+    }
+    .header-badge {
+      background: #2563eb;
+      color: #ffffff;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .header-controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    button.btn-ctrl {
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #f8fafc;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    button.btn-ctrl:hover {
+      background: #374151;
+      border-color: #4b5563;
+    }
+    select.nav-select {
+      background: #1f2937;
+      color: #f8fafc;
+      border: 1px solid #374151;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      max-width: 360px;
+      cursor: pointer;
+    }
+
+    /* Main Presentation Stage */
+    #stage {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      background: #0b1120;
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    /* 16:9 Aspect Ratio Slide Container */
+    #slide-viewport {
+      width: 1280px;
+      height: 720px;
+      background: var(--bg-slide);
+      border-radius: 8px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transform-origin: center center;
+      transition: transform 0.1s ease;
+    }
+
+    .slide-body {
+      flex: 1;
+      padding: 32px 48px 20px 48px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Slide Typography & Layouts */
+    .slide-body h1 {
+      color: #0f172a;
+      font-size: 36px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
+    }
+    .slide-body h2 {
+      color: var(--primary);
+      font-size: 28px;
+      font-weight: 700;
+      border-bottom: 2px solid var(--border-color);
+      padding-bottom: 8px;
+      margin-top: 0;
+      margin-bottom: 14px;
+    }
+    .slide-body h3 {
+      color: var(--primary-light);
+      font-size: 23px;
+      font-weight: 600;
+      margin-top: 4px;
+      margin-bottom: 8px;
+    }
+    .slide-body p, .slide-body li {
+      font-size: 22px;
+      line-height: 1.45;
+      color: var(--text-main);
+    }
+    .slide-body ul {
+      margin-top: 4px;
+      margin-bottom: 8px;
+      padding-left: 24px;
+    }
+    .slide-body li {
+      margin-bottom: 6px;
+    }
+    .slide-body strong {
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Two Column Layout */
+    .columns {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      gap: 28px;
+      align-items: center;
+      margin-top: 4px;
+    }
+    .columns-equal {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* Tables */
+    .slide-body table {
+      font-size: 17px;
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 8px;
+      background: #ffffff;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+    .slide-body th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+      padding: 8px 12px;
+      font-weight: 700;
+      font-size: 18px;
+      text-align: left;
+    }
+    .slide-body td {
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      font-size: 16.5px;
+      line-height: 1.4;
+    }
+    .slide-body tr:nth-child(even) {
+      background-color: #f8fafc;
+    }
+
+    /* Diagram Images */
+    .slide-body img {
+      max-height: 480px;
+      max-width: 100%;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      background-color: #ffffff;
+      display: block;
+      margin: 0 auto;
+      cursor: zoom-in;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .slide-body img:hover {
+      transform: scale(1.012);
+      box-shadow: 0 8px 20px rgba(30, 58, 138, 0.12);
+    }
+
+    /* Title / Lead Slide */
+    .slide-body.lead {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }
+    .slide-body.lead h1 {
+      font-size: 38px;
+      color: var(--primary);
+      margin-bottom: 16px;
+    }
+    .slide-body.lead h2 {
+      border-bottom: none;
+      font-size: 22px;
+      color: #475569;
+      margin-bottom: 24px;
+    }
+
+    /* Slide Footer */
+    .slide-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 48px 10px 48px;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      border-top: 1px solid #f1f5f9;
+      background: #ffffff;
+    }
+
+    /* Bottom Control Bar */
+    footer.bottom-bar {
+      background: #111827;
+      padding: 8px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #94a3b8;
+      font-size: 13px;
+      border-top: 1px solid #1f2937;
+    }
+    .progress-track {
+      flex: 1;
+      height: 6px;
+      background: #1f2937;
+      border-radius: 3px;
+      margin: 0 20px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #2563eb, #60a5fa);
+      width: 0%;
+      transition: width 0.2s ease;
+    }
+
+    /* Modal for Image Zoom */
+    #zoom-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      cursor: zoom-out;
+    }
+    #zoom-modal img {
+      max-width: 92vw;
+      max-height: 92vh;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      background: #ffffff;
+    }
+
+    /* Help Overlay */
+    #help-overlay {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #1f2937;
+      color: #f8fafc;
+      padding: 24px 32px;
+      border-radius: 12px;
+      border: 1px solid #374151;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+      z-index: 500;
+      font-size: 14px;
+    }
+    #help-overlay h3 {
+      color: #93c5fd;
+      margin-bottom: 12px;
+      font-size: 18px;
+    }
+    #help-overlay table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    #help-overlay td {
+      padding: 6px 12px;
+      border-bottom: 1px solid #374151;
+    }
+    #help-overlay kbd {
+      background: #111827;
+      border: 1px solid #374151;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: #60a5fa;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="header-title">
+      <span>📈 Crypto Strategy Lab</span>
+      <span class="header-badge">Software Architecture Presentation</span>
+    </div>
+    <div class="header-controls">
+      <select id="section-select" class="nav-select" onchange="jumpToSlide(parseInt(this.value))">
+        <!-- Injected via JS -->
+      </select>
+      <button class="btn-ctrl" onclick="toggleHelp()">⌨️ Phím tắt (?)</button>
+      <button class="btn-ctrl" onclick="toggleFullscreen()">⛶ Toàn màn hình (F)</button>
+    </div>
+  </header>
+
+  <!-- Slide Canvas -->
+  <main id="stage">
+    <div id="slide-viewport">
+      <div id="slide-body" class="slide-body">
+        <!-- Rendered markdown content -->
+      </div>
+      <div class="slide-footer">
+        <span>Crypto Strategy Lab — Architecture Presentation</span>
+        <span id="slide-counter">Slide 1 / 39</span>
+        <span>Trường ĐH Khoa học Tự nhiên - ĐHQG-HCM</span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Bottom Navigation Bar -->
+  <footer class="bottom-bar">
+    <button class="btn-ctrl" onclick="prevSlide()">◀ Trang trước (←)</button>
+    <div class="progress-track" onclick="seekSlide(event)">
+      <div id="progress-fill" class="progress-bar"></div>
+    </div>
+    <span id="slide-indicator" style="font-family: monospace; font-weight: 600;">1 / 39</span>
+    <button class="btn-ctrl" onclick="nextSlide()">Trang sau (→) ▶</button>
+  </footer>
+
+  <!-- Image Zoom Modal -->
+  <div id="zoom-modal" onclick="this.style.display='none'">
+    <img id="zoomed-img" src="" alt="Zoomed diagram">
+  </div>
+
+  <!-- Keyboard Help Modal -->
+  <div id="help-overlay" onclick="this.style.display='none'">
+    <h3>⌨️ Phím tắt điều khiển trình chiếu</h3>
+    <table>
+      <tr><td><kbd>→</kbd> hoặc <kbd>Space</kbd> hoặc <kbd>PageDown</kbd></td><td>Chuyển slide kế tiếp</td></tr>
+      <tr><td><kbd>←</kbd> hoặc <kbd>Backspace</kbd> hoặc <kbd>PageUp</kbd></td><td>Quay lại slide trước</td></tr>
+      <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Về slide đầu / slide cuối</td></tr>
+      <tr><td><kbd>F</kbd></td><td>Bật / tắt chế độ toàn màn hình</td></tr>
+      <tr><td><kbd>?</kbd> hoặc <kbd>H</kbd></td><td>Bật / tắt bảng hướng dẫn phím tắt</td></tr>
+      <tr><td><kbd>Click ảnh sơ đồ</kbd></td><td>Phóng to sơ đồ kiến trúc HD</td></tr>
+    </table>
+  </div>
+
+  <script>
+    const rawSlides = ["<!-- _class: lead -->\n# CRYPTO STRATEGY LAB (CryptoBot)\n## Báo Cáo Thiết Kế Kiến Trúc Phần Mềm (Software Architecture)\n**Đề tài:** Nền tảng Nghiên cứu, Khám phá & Đánh giá Chiến lược Giao dịch Tiền mã hóa Tự động", "## 1. Bối cảnh & 4 Nhóm Architectural Drivers\n\n<div class=\"columns\">\n<div>\n\n### Động lực Nghiệp vụ (ASRs Drivers)\n* **Realtime Market Ingestion:** Dữ liệu biến động mili-giây, stream liên tục và tự bù khoảng trống nến (gap backfill).\n* **High Modifiability:** Thêm/bớt chiến lược đơn và composite (Handcraft/LLM Agent) không sửa Core.\n* **Massive Search Scalability:** Khám phá hàng ngàn tham số (Loop Discovery) không nghẽn UI.\n* **Unstructured News Intelligence:** Crawl tin đa nguồn, tự phục hồi khi đổi DOM và định lượng sentiment.\n\n</div>\n<div>\n\n### Quyết định Kiến trúc Tương ứng\n* **Driver 1 → Streaming & Kappa Architecture:** Tách biệt luồng WSS trực tiếp và Historical Backfill.\n* **Driver 2 → Plugin Architecture & AST Sandbox:** Chuẩn hóa IStrategy contract, nạp plugin động.\n* **Driver 3 → Event-Driven Job Queue & Worker:** Phân tán tải Backtest qua PostgreSQL Outbox & Worker pool.\n* **Driver 4 → Multi-Agent & LLM Fallback:** Tự phát hiện cấu trúc HTML và chấm điểm sentiment.\n\n</div>\n</div>", "## 2. Hệ Thống Quality Attributes (ASRs Taxonomy)\n\n| Thuộc tính (QA) | Trọng tâm Thiết kế | Tactic / Kỹ thuật Kiến trúc Áp dụng |\n| :--- | :--- | :--- |\n| **Modifiability** | Thêm mới Strategy, Search, Data Provider không sửa Core | Plugin Architecture, Open-Closed Principle, Dynamic Registry |\n| **Scalability** | Xử lý tải >100,000 backtests và stream nến realtime | Scale-out Python Worker pool, Job Queue, Redis Caching |\n| **Realtime / Perf** | Độ trễ cập nhật nến < 200ms, thông lượng Backtest cao | Go Edge Gateway, WebSocket Streaming, Vectorized Engine |\n| **Reliability** | Lỗi crawl/search không sập API; tự reconnect sàn | Failure Isolation, Transactional Outbox, Lease Takeover |\n| **Observability** | Theo dõi trạng thái Worker, tiến độ Search Loop | Structured Logging, State Machine tracking, Run Metrics |\n| **Reproducibility** | Kết quả Backtest và Leaderboard phải có nguồn gốc bất biến | Immutable Dataset snapshots, Run Config Hash, Seed Lock |", "## 3. Kịch Bản ASR Chi Tiết (Modifiability & Scalability)\n\n<div class=\"columns\">\n<div>\n\n### ASR-1: Modifiability (Thêm Strategy mới)\n* **Source:** Quant Researcher / AI Agent.\n* **Stimulus:** Thêm class chiến lược mới (`MACDStrategy`).\n* **Artifact:** Strategy Subsystem & UI Registry.\n* **Environment:** Hệ thống đang chạy (Runtime).\n* **Response:** Tự phát hiện, nạp metadata lên UI không cần compile lại Go Gateway hay sửa Core.\n* **Measure:** Thao tác trên 1 file Python độc lập, 0 downtime.\n\n</div>\n<div>\n\n### ASR-2: Scalability (Tải Backtest lớn)\n* **Source:** Người dùng kích hoạt Auto Search Loop.\n* **Stimulus:** 10,000 công việc backtest vào hàng đợi cùng lúc.\n* **Artifact:** Job Queue & Python Worker Pool.\n* **Environment:** Tải hệ thống cao điểm.\n* **Response:** Phân phối đều qua Lease Heartbeat, worker scale-out, không tràn RAM.\n* **Measure:** Tỷ lệ hoàn thành 100%, 0 dropped job, CPU ổn định.\n\n</div>\n</div>", "## 4. Kịch Bản ASR Chi Tiết (Realtime & Reliability)\n\n<div class=\"columns\">\n<div>\n\n### ASR-3: Realtime & Data Parity\n* **Source:** Sàn Binance (WSS drop / network jitter).\n* **Stimulus:** Mất kết nối mạng trong 30 giây.\n* **Artifact:** Go Market Gateway & Postgres Candle Storage.\n* **Environment:** Production Trading Hours.\n* **Response:** Tự Reconnect, kích hoạt REST Backfill bù nến thiếu, deduplicate bằng Open Time.\n* **Measure:** Chuỗi nến liên tục, không trùng lặp, độ trễ bắt kịp < 2s.\n\n</div>\n<div>\n\n### ASR-4: Fault Tolerance (Worker Crash)\n* **Source:** Python Worker tiến trình backtest bị kill đột ngột (OOM).\n* **Stimulus:** Job đang xử lý dở dang (RUNNING).\n* **Artifact:** Job Queue & Outbox Manager.\n* **Environment:** Đang chạy tác vụ tính toán nặng.\n* **Response:** Hết hạn Lease Heartbeat (30s), Worker khác tự động chiếm quyền (Takeover) và chạy lại.\n* **Measure:** Job hoàn thành thành công, 0 stuck job.\n\n</div>\n</div>", "## 5. Tổng Quan Use Case Hệ Thống\n\n<div class=\"columns\">\n<div>\n\n### Tác tử (Actors) & Nhóm Chức năng\n* **Quant Researcher / Trader:**\n  * Xem biểu đồ nến realtime đa khung thời gian (1m, 5m, 1h, 1d).\n  * Thử nghiệm chiến lược đơn và composite.\n  * Chạy Backtest, xem equity curve, drawdown.\n  * Nhập prompt tự nhiên để sinh & sửa mã chiến lược.\n* **Autonomous AI Agent:**\n  * Crawl tin tức, trích xuất text & chấm điểm sentiment.\n  * Tự động chạy vòng lặp tìm kiếm (Loop Discovery).\n* **System Worker:**\n  * Nạp nến định kỳ, xử lý hàng đợi Backtest ngầm.\n\n</div>\n<div>\n\n![Use Case Overview](../blueprint/assets/diagrams-png/34-use-case-overview.png)\n\n</div>\n</div>", "## 6. C4 Model (Level 1) - System Context Diagram\n\n<div class=\"columns\">\n<div>\n\n### Ranh Giới & Hệ Thống Bên Ngoài\n* **CryptoBot Core Platform:** Hệ thống trung tâm thu nạp nến, nghiên cứu chiến lược và chấm điểm danh mục.\n* **External Systems:**\n  * **Binance Exchange:** Dữ liệu nến lịch sử (REST) và giá biến động trực tiếp (WebSocket).\n  * **News Sources / RSS Feeds:** Cung cấp thông tin thị trường crypto đa nguồn.\n  * **LLM Providers (OpenAI / Groq):** Suy luận ngôn ngữ, phân tích sentiment & tự sửa mã (Self-repair).\n\n</div>\n<div>\n\n![C4 Context Diagram](../blueprint/assets/diagrams-png/01-c4-l1-system-context.png)\n\n</div>\n</div>", "## 7. C4 Model (Level 2) - Container Diagram\n\n<div class=\"columns\">\n<div>\n\n### Phân Rã Các Container Chính\n* **Next.js Web App (SPA):** Giao diện tương tác, biểu đồ nến realtime, cấu hình chiến lược & xem Leaderboard.\n* **Go Edge Gateway:** Xác thực RBAC, định tuyến CQRS, duy trì WebSocket Binance và stream nến qua SSE/WS.\n* **Python Research Engine:** Xử lý tính toán nặng (Backtest Worker, Loop Discovery, Metric Evaluation).\n* **PostgreSQL (Storage):** Lưu trữ nến, chiến lược, thí nghiệm và Outbox table.\n* **Redis (Cache & Bus):** In-memory Pub/Sub và caching realtime indicators.\n\n</div>\n<div>\n\n![C4 Container Diagram](../blueprint/assets/diagrams-png/02-c4-l2-container.png)\n\n</div>\n</div>", "## 8. C4 Model (Level 3) - Python Research Platform\n\n<div class=\"columns\">\n<div>\n\n### Cấu Trúc Nội Bộ Python Platform\n* **Strategy Registry:** Quản lý lifecycle và metadata của các plugin chiến lược.\n* **Deterministic Backtest Engine:** Mô phỏng khớp lệnh chính xác (BBO, Slippage, Fee).\n* **Search & Loop Manager:** Điều phối thuật toán tìm kiếm (Random, Genetic, Bayesian, LLM).\n* **Worker Lease Manager:** Phân phối công việc không khóa (Optimistic Lock) và tự phục hồi.\n* **AST Sandbox:** Kiểm tra an toàn cú pháp mã nguồn do AI tạo ra trước khi thực thi.\n\n</div>\n<div>\n\n![C4 Component Python Platform](../blueprint/assets/diagrams-png/03-c4-l3-python-strategy-platform.png)\n\n</div>\n</div>", "## 9. C4 Model (Level 3) - Go Edge & Market Gateway\n\n<div class=\"columns\">\n<div>\n\n### Cấu Trúc Nội Bộ Go Gateway\n* **Binance Adapter:** Duy trì kết nối WSS liên tục, tự động reconnect và gọi REST Backfill khi rớt mạng.\n* **Candle Aggregator & BBO Streamer:** Tổng hợp nến tạm thời (provisional candle) và đóng nến vào CSDL.\n* **CQRS Request Handler:** Phân tách rõ ràng luồng Command (tạo thí nghiệm) và Query (đọc nến, leaderboard).\n* **Security & Auth Middleware:** Kiểm tra JWT token, phân quyền RBAC và giới hạn tần suất gọi API.\n\n</div>\n<div>\n\n![C4 Component Go Gateway](../blueprint/assets/diagrams-png/35-c4-l3-go-edge-market-gateway.png)\n\n</div>\n</div>", "## 10. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)\n\n<div class=\"columns\">\n<div>\n\n### 5 Miền Nghiệp Vụ Chuyên Biệt (High Cohesion)\n1. **Market Realtime (Go):** Thu nạp nến Binance WSS, BBO, tự bù nến (Backfill).\n2. **Strategy Engine (Python):** Thực thi chiến lược đơn / composite (v1 IDs).\n3. **Backtest & Discovery (Python):** Kiểm thử test set, Job Queue & Worker.\n4. **News Crawler (Python):** Thu thập tin RSS/HTML, kiểm soát an toàn SSRF.\n5. **News Intelligence (AI):** LLM trích xuất & chấm điểm sentiment độc lập.\n\n* **Loose Coupling:** Giao tiếp qua DTO chuẩn hóa, PostgreSQL Outbox và Redis Event Bus.\n\n</div>\n<div>\n\n### Phân Định Trách Nhiệm Ngôn Ngữ\n\n| Tiêu chí | Go Edge Gateway | Python Research Engine |\n| :--- | :--- | :--- |\n| **Miền sở hữu** | Market Ingestion & API Edge | Backtest, Strategy, Search, AI |\n| **Thế mạnh** | Goroutines non-blocking, Low RAM | Toán học, Vectorization, AST parsing |\n| **Giao thức** | REST CQRS, WSS, SSE | Worker Queue Leases, Internal DTOs |\n| **Rủi ro cô lập** | Lỗi mạng sàn không làm chết Worker | Crash thuật toán không làm sập API |\n\n</div>\n</div>", "## 11. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)\n\n<div class=\"columns\">\n<div>\n\n### 1. Market Realtime & 2. Strategy Engine\n* **Market Realtime:**\n  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; đóng nến vào Postgres, bắn `CandleClosed` qua Redis.\n  * **Invariant:** Chuỗi thời gian liên tục, không duplicate.\n* **Strategy Engine:**\n  * **Thêm/Bớt:** Chiến lược đơn (Handcraft/AI) qua `IStrategy`.\n  * **Discovery:** UI chạy trên data quá khứ + Auto Search.\n  * **Invariant:** Logic chạy đồng nhất trên Live và Backtest.\n\n</div>\n<div>\n\n### 3. Backtest, 4. Crawler & 5. Intelligence\n* **Backtest Subsystem (Event-Driven):**\n  * Chạy strategy trên test set (dữ liệu đầu tư), tìm kiếm chiến lược kết hợp AI sentiment qua Job Queue & Worker.\n* **News Crawler Subsystem:**\n  * Thu thập tin từ `ApprovedSource` (RSS/HTML), kiểm soát SSRF, chốt chặn Quality Gate.\n* **News Intelligence & Agent:**\n  * LLMs/Agents trích xuất khi DOM đổi và chấm điểm sentiment [-1.0, 1.0] bất đồng bộ không nghẽn crawl.\n\n</div>\n</div>", "## 12. UML Class Diagram: Strategy Plugin Model\n\n<div class=\"columns\">\n<div>\n\n### Thiết Kế Plugin Architecture (IStrategy)\n* **Contract `IStrategy` Protocol:** Phương thức `evaluate(context) -> Signal` chuẩn (`BUY`, `SELL`, `HOLD`).\n* **5 Single Strategies (v1 IDs):** `ma_crossover`, `bollinger_bands`, `rsi_threshold`, `smc_structure`, `news_sentiment`.\n* **Composite Strategy:** Tổ hợp 2-5 chiến lược con theo `CombinationPolicy` (`majority` hoặc `weighted`).\n* **Strategy Registry:** Thêm file Python mới tự động nạp; triệt tiêu God Service và giảm coupling tuyệt đối.\n\n</div>\n<div>\n\n![UML Strategy Plugin Model](../blueprint/assets/diagrams-png/36-uml-strategy-plugin-model.png)\n\n</div>\n</div>", "## 13. UML Class Diagram: Search Algorithm & Discovery Loop\n\n<div class=\"columns\">\n<div>\n\n### Thiết Kế Search Algorithm & 3 Phân Vùng\n* **Contract `ISearchAlgorithm`:** Phương thức `sample(space, rng)` triển khai qua `RandomSearch`, `GeneticAlgorithm`, `BayesianOptimization`.\n* **Vòng Lặp Discovery Chống Overfitting:**\n  * **Train (30d):** Tìm kiếm và huấn luyện biến thể.\n  * **Validation (15d):** Đánh giá tính tổng quát (Gate check).\n  * **Sealed Test (15d):** Chấm điểm độc lập cho Leaderboard.\n* **Chống Nghẽn Job:** `DiscoveryTrialReservation` (reserved_jobs=4).\n\n</div>\n<div>\n\n![UML Search Algorithm Model](../blueprint/assets/diagrams-png/37-uml-search-algorithm-model.png)\n\n</div>\n</div>", "## 14. UML Class Diagram: Resilient News Crawler Model\n\n<div class=\"columns\">\n<div>\n\n### Thiết Kế Bộ Thu Thập & Phân Tích Tin Tức\n* **Contract `NewsProvider` Protocol:** Kế thừa qua `RssNewsProvider` và `HtmlNewsProvider` (`ApprovedSource`).\n* **Chốt Chặn An Toàn SSRF & Quality Gate:**\n  * `Resolver` & `Fetcher` kiểm tra DNS, IP nội bộ, redirect.\n  * `HtmlQualityGateFailed`: Kích hoạt `NewsExtractionHTTPAdapter` (LLM) khi web đổi DOM.\n* **Tách Biệt Sentiment:** Chấm điểm batch độc lập, lỗi AI không làm sập luồng crawl.\n\n</div>\n<div>\n\n![UML News Crawler Model](../blueprint/assets/diagrams-png/38-uml-news-crawler-model.png)\n\n</div>\n</div>", "## 15. High-Level Architecture: Modular Monolith\n\n<div class=\"columns\">\n<div>\n\n### Kết Nối Kiến Trúc Toàn Cục & Kỹ Thuật\n* **Frontend (Next.js):** SPA / JAMstack, Event Streaming (SSE/WS) cho biểu đồ realtime.\n* **Middleware (Go API Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Adapter.\n* **Backend Research (Python):** Plugin Architecture, Event-Driven Job Queue, Backtest Worker pool.\n* **Database (Tách nhóm data):** PostgreSQL (ACID Outbox, Candles, Experiments) & Redis (Pub/Sub, Indicator cache).\n* **Agent & External:** Strategy AI Agent, Crawling Agent, Binance API, OpenAI/Groq.\n\n</div>\n<div>\n\n![High-Level Architecture](../blueprint/assets/diagrams-png/04-high-level-architecture.png)\n\n</div>\n</div>", "## 16. Các Design & Architectural Patterns Trọng Yếu\n\n<div class=\"columns\">\n<div>\n\n### Các Pattern Cốt Lõi Áp Dụng\n* **CQRS (Go API):**\n  * Tách biệt lệnh Command (tạo thí nghiệm) và Query (đọc nến, leaderboard) tối ưu hiệu năng.\n* **Event Streaming & Kappa Architecture:**\n  * Đồng nhất mô hình dữ liệu nến cho cả luồng Realtime (WSS) và Historical (Backtest dataset).\n* **Transactional Outbox Pattern:**\n  * Đảm bảo tính nguyên tử (Atomic) khi tạo Experiment và đẩy Job, loại bỏ rủi ro Dual-write.\n* **Plugin Architecture:**\n  * Tách rời hoàn toàn Core Engine khỏi logic chiến lược và thuật toán tìm kiếm.\n\n</div>\n<div>\n\n![Outbox & Retry Flow](../blueprint/assets/diagrams-png/07-outbox-retry-order.png)\n\n</div>\n</div>", "## 17. Nền Tảng Multi-Agent & Vòng Lặp AI Tự Chủ\n\n<div class=\"columns\">\n<div>\n\n### Hệ Thống Multi-Agent & Vòng Lặp Tự Sửa Lỗi\n* **Strategy Designer Agent:** Nhận prompt tự nhiên hoặc URL → sinh đặc tả Draft dạng JSON.\n* **Implementation Agent:** Chuyển đổi JSON Draft thành mã Python tuân thủ `IStrategy`.\n* **Self-Repair Loop (AST + Sandbox):**\n  * Kiểm tra cú pháp và chạy thử trong sandbox.\n  * Phản hồi lỗi runtime về LLM để tự sửa mã (tối đa 3 lần).\n* **Candidate Discovery & Crawling Agent:**\n  * Tự động kết hợp tham số và crawl tin tức đa nguồn.\n\n</div>\n<div>\n\n![Agent Platform Components](../blueprint/assets/diagrams-png/25-agent-platform-components.png)\n\n</div>\n</div>", "## 18. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill\n\n<div class=\"columns\">\n<div>\n\n### Xử Lý Nến & Khôi Phục Khoảng Trống (Gap Backfill)\n1. **Khởi Tạo Biểu Đồ:** Tải 1,000 nến lịch sử từ Postgres/Binance REST cho đa khung thời gian (1m, 5m, 1h, 1d).\n2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật nến tạm thời (provisional candle).\n3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán sự kiện `CandleClosed` qua Redis.\n4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các nến bị khuyết, đảm bảo chuỗi thời gian liên tục.\n\n</div>\n<div>\n\n![Realtime Reconnect & Backfill Flow](../blueprint/assets/diagrams-png/09-realtime-reconnect-backfill-flow.png)\n\n</div>\n</div>", "## 19. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược\n\n<div class=\"columns\">\n<div>\n\n### Run Strategy (Handcraft & Auto) & Add Strategy\n* **Run Strategy Flow:**\n  * Nạp `Datafeed` & `Sentiment Window` vào `StrategyContext`.\n  * `IStrategy.evaluate()` sinh tín hiệu `BUY` / `SELL` / `HOLD`.\n  * `CompositeStrategy` tổng hợp theo trọng số hoặc đa số.\n* **Add Strategy Flow (Handcraft & AI):**\n  * Handcraft: Thêm file Python vào Registry tự động load.\n  * AI: LLM Agent sinh code qua AST Sandbox xác thực.\n* **Runtime Parity:** Logic chạy đồng nhất 100% trên cả Live và Backtest.\n\n</div>\n<div>\n\n![Strategy Flow](../blueprint/assets/diagrams-png/10-strategy-flow.png)\n\n</div>\n</div>", "## 20. Runtime Flow: Pipeline Backtest Bất Đồng Bộ\n\n<div class=\"columns\">\n<div>\n\n### Quy Trình Thực Thi Thí Nghiệm & Khám Phá\n1. **Tạo Thí Nghiệm:** Ghi thông tin thí nghiệm và sự kiện vào Outbox cùng một ACID transaction.\n2. **Chiếm Quyền (Worker Lease Acquire):** Worker nhận job qua khóa lạc quan (Optimistic Lock) và gửi heartbeat.\n3. **Thực Thi Đa Phân Vùng:** Chạy kiểm thử trên `Train` (30d) → `Validation` (15d) → `Sealed Test` (15d).\n4. **Ghi Nhận Kết Quả:** Tính Sharpe, Drawdown, lưu Trade list và cập nhật Top-K Leaderboard.\n\n</div>\n<div>\n\n![Search Backtest Pipeline](../blueprint/assets/diagrams-png/11-search-backtest-pipeline.png)\n\n</div>\n</div>", "## 21. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback\n\n<div class=\"columns\">\n<div>\n\n### Thu Thập & Phân Tích Tin Tức Tự Phục Hồi\n1. **Kiểm Tra An Toàn SSRF:** Duyệt nguồn từ `ApprovedSource`, thẩm tra DNS và IP đích.\n2. **Thu Thập Chuẩn:** Trích xuất văn bản qua RSS/HTML Parser.\n3. **Cổng Kiểm Tra Chất Lượng (Quality Gate):** Nếu độ dài bài viết quá ngắn hoặc web đổi DOM → Kích hoạt fallback.\n4. **LLM Fallback Extraction:** Chuyển HTML sang LLM Extractor để tự động nhận diện nội dung.\n5. **Chấm Điểm Sentiment:** Chạy ngầm phân tích ngữ nghĩa và cập nhật điểm [-1.0, 1.0] vào cơ sở dữ liệu.\n\n</div>\n<div>\n\n![News HTML LLM Pipeline](../blueprint/assets/diagrams-png/13-news-html-llm-pipeline.png)\n\n</div>\n</div>", "## 22. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng\n\n<div class=\"columns\">\n<div>\n\n### Các Lớp Bảo Vệ Hệ Thống (Defense-in-Depth)\n* **Authentication & RBAC:** Xác thực JWT, phân quyền tài nguyên theo người dùng (cô lập dữ liệu thí nghiệm).\n* **Crawler SSRF Prevention:** Chặn IP nội bộ (`127.0.0.1`, `10.0.0.0/8`, cloud metadata), chỉ duyệt domain trong `ApprovedSource`.\n* **AST Sandbox & Safe Execution:** Phân tích AST mã AI sinh ra; nghiêm cấm lệnh nguy hiểm (`eval`, `subprocess`, socket).\n* **Tool Invocation Boundary:** Giới hạn quyền hạn AI Agent qua DTO chặt chẽ.\n\n</div>\n<div>\n\n![Defense in Depth](../blueprint/assets/diagrams-png/14-defense-in-depth.png)\n\n</div>\n</div>", "## 23. Khả Năng Mở Rộng (Scalability) & Benchmark\n\n<div class=\"columns\">\n<div>\n\n### Scale-Out & Chiến Lược Chịu Tải 100,000 Backtests\n* **Mở Rộng Ngang Không Trạng Thái (Scale-Out):**\n  * Nhân bản số lượng Python Worker độc lập tùy theo tải CPU.\n  * Phân phối công việc qua hàng đợi PostgreSQL có chỉ mục B-Tree.\n* **Kịch Bản Kiểm Thử Tải (k6 / Locust Benchmark):**\n  * Mô phỏng 10,000 user gửi lệnh Backtest và truy vấn nến đồng thời.\n  * Tốc độ xử lý hàng đợi đạt > 1,500 backtests/phút trên 4 worker.\n  * Độ trễ API nến và leaderboard luôn duy trì ≤ 120ms (p95).\n\n</div>\n<div>\n\n![Job Queue Scale](../blueprint/assets/diagrams-png/15-job-queue-scale.png)\n\n</div>\n</div>", "## 24. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục\n\n<div class=\"columns\">\n<div>\n\n### Cơ Chế Phục Hồi & Mô Phỏng Sự Cố\n* **Chiếm Quyền Xử Lý (Worker Lease Takeover):**\n  * Worker gửi heartbeat 10s/lần. Nếu worker crash, sau 30s hết hạn lease, worker khác tự động tiếp quản job.\n* **Idempotency & Retry:**\n  * Khóa duy nhất `idempotency_key`, loại bỏ rủi ro chạy trùng lặp.\n* **Failure Isolation & Reconnect:**\n  * Lỗi 1 plugin không làm sập Worker; WSS tự reconnect sàn.\n* **Kịch Bản Test Mô Phỏng:** Chủ động tắt module worker/database để kiểm chứng khả năng tự phục hồi.\n\n</div>\n<div>\n\n![Worker Lease Takeover](../blueprint/assets/diagrams-png/18-worker-lease-takeover.png)\n\n</div>\n</div>", "## 25. Triển Khai Thực Tế & MLOps\n\n<div class=\"columns\">\n<div>\n\n### Mô Hình Triển Khai Docker & Kubernetes Readiness\n* **Container Hóa Toàn Diện (Docker Compose):**\n  * Đóng gói độc lập: Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.\n* **Health Checks Khi Triển Khai:**\n  * `/healthz` và `/readyz` tự động khởi động lại container khi lỗi.\n* **MLOps & Prompt Management:**\n  * System prompt và API key LLM tách biệt qua biến môi trường `.env`.\n* **Kubernetes Note:** Hỗ trợ replicas, scheduling, rolling update và HPA khi mở rộng quy mô lớn (MVP dùng Docker Compose).\n\n</div>\n<div>\n\n![Deployment Topology](../blueprint/assets/diagrams-png/39-deployment-topology.png)\n\n</div>\n</div>", "## 26. Ma Trận Đánh Đổi Kiến Trúc (Tradeoffs Matrix)\n\n| Lựa Chọn Thiết Kế | Phương Án Được Chọn | Phương Án Thay Thế | Lý Do & Đánh Đổi Kiến Trúc (Rationale) |\n| :--- | :--- | :--- | :--- |\n| **Kiến trúc Tổng thể** | **Modular Monolith** | Microservices | **Chọn:** Giảm độ phức tạp vận hành mạng, đảm bảo ranh giới module rõ ràng qua contracts. |\n| **Lưu trữ Nến & Job** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Thí nghiệm & Outbox; B-Tree index đủ đáp ứng hàng triệu nến. |\n| **Hàng Đợi Sự Kiện** | **Postgres Outbox + Redis** | Apache Kafka / RabbitMQ | **Chọn:** Loại bỏ sự cố Dual-write, đảm bảo Outbox nguyên tử và deploy gọn trong Docker Compose. |\n| **Thực Thi Mã AI Sinh** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Khởi tạo sandbox tức thì (<10ms), kiểm soát an toàn cú pháp không tốn tài nguyên. |\n| **Phân Tích Sentiment** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Tiết kiệm chi phí token API, tránh nghẽn luồng crawl; chỉ gọi LLM khi cần phân tích sâu. |", "## 27. Khả Năng Thay Thế & Mở Rộng (Replaceability)\n\n<div class=\"columns\">\n<div>\n\n### Dễ Dàng Thay Thế Provider & Thuật Toán\n* **Thay Thế Nguồn Dữ Liệu Thị Trường (Market Provider):**\n  * Thiết kế `MarketProviderAdapter` cho phép đổi từ Binance sang OKX, Bybit, Coinbase mà **không thay đổi** Frontend hay Strategy Engine.\n* **Mở Rộng Thuật Toán Tìm Kiếm Nâng Cao:**\n  * Sẵn sàng tích hợp mô hình Reinforcement Learning (PPO) thông qua giao diện `ISearchAlgorithm`.\n* **Mở Rộng Nguồn Thu Thập Tin Tức:**\n  * Dễ dàng bổ sung CryptoPanic, CoinDesk API qua cấu hình.\n\n</div>\n<div>\n\n![Market Provider Replaceability](../blueprint/assets/diagrams-png/20-market-provider-replaceability.png)\n\n</div>\n</div>", "## 28. Tổng Kết Đồ Án & Giá Trị Kiến Trúc\n\n<div class=\"columns\">\n<div>\n\n### Thành Quả Đạt Được\n* **Chuỗi Quyết Định Rõ Ràng:** Bám sát theo ASRs và Quality Attributes.\n* **Kiến Trúc Rành Mạch, Chống Coupling:** Phân rã 5 module độc lập, triệt tiêu hoàn toàn God Service.\n* **AI Agent & Tự Động Hóa:** Multi-Agent với vòng lặp tự sửa lỗi (Self-repair) và chống Overfitting (Train/Val/Test).\n* **Chịu Tải & Phục Hồi Cao:** Kiểm thử 100,000 backtests, cơ chế Lease Takeover và Idempotency.\n\n### Phần Hỏi - Đáp (Q & A)\n* *Cảm ơn Thầy và các bạn đã lắng nghe!*\n\n</div>\n<div>\n\n### Minh Chứng Đầy Đủ\n* **39 Sơ Đồ Blueprint & Specs:** Đầy đủ C4 (L1-L3), UML Class, State Machine, Deployment Topology.\n* **5 Màn Hình Tương Tác Sẵn Sàng:**\n  1. Realtime Market Chart & Indicators\n  2. Strategy Authoring & Plugin Registry\n  3. Async Backtest & Trade Visualization\n  4. Search Loop & Top-K Leaderboard\n  5. News Crawler & Sentiment Intelligence\n* **Kịch Bản Test Tự Động & Benchmark Đầy Đủ.**\n\n</div>\n</div>"];
+    let currentSlide = 0;
+    const totalSlides = rawSlides.length;
+
+    // Custom marked renderer for images and lead class
+    const renderer = new marked.Renderer();
+    renderer.image = function(tokenOrHref, title, text) {
+      let href = tokenOrHref;
+      let alt = text;
+      let t = title;
+      if (typeof tokenOrHref === 'object' && tokenOrHref !== null) {
+        href = tokenOrHref.href;
+        alt = tokenOrHref.text;
+        t = tokenOrHref.title;
+      }
+      return `<img src="${href}" alt="${alt || ''}" title="${t || ''}" onclick="zoomImage(this.src)" />`;
+    };
+
+    marked.setOptions({
+      renderer: renderer,
+      gfm: true,
+      breaks: true
+    });
+
+    function resizeViewport() {
+      const stage = document.getElementById('stage');
+      const viewport = document.getElementById('slide-viewport');
+      const targetW = 1280;
+      const targetH = 720;
+      
+      const availableW = stage.clientWidth - 32;
+      const availableH = stage.clientHeight - 32;
+      
+      const scale = Math.min(availableW / targetW, availableH / targetH, 1.4);
+      viewport.style.transform = `scale(${scale})`;
+    }
+
+    window.addEventListener('resize', resizeViewport);
+
+    function initSectionDropdown() {
+      const select = document.getElementById('section-select');
+      select.innerHTML = '';
+      rawSlides.forEach((slide, idx) => {
+        let title = `Slide ${idx + 1}`;
+        const lines = slide.split('\n');
+        for (const line of lines) {
+          const clean = line.trim();
+          if (clean.startsWith('# ') || clean.startsWith('## ')) {
+            title = clean.replace(/^#+\s*/, '').replace(/<[^>]+>/g, '').trim();
+            break;
+          }
+        }
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `${idx + 1}. ${title.substring(0, 45)}`;
+        select.appendChild(opt);
+      });
+    }
+
+    function renderSlide(index) {
+      if (index < 0) index = 0;
+      if (index >= totalSlides) index = totalSlides - 1;
+      currentSlide = index;
+
+      const slideMd = rawSlides[currentSlide];
+      const isLead = slideMd.includes('class: lead') || currentSlide === 0;
+
+      const slideBody = document.getElementById('slide-body');
+      slideBody.className = 'slide-body' + (isLead ? ' lead' : '');
+      slideBody.innerHTML = marked.parse(slideMd);
+
+      if (window.renderMathInElement) {
+        try {
+          renderMathInElement(slideBody, {
+            delimiters: [
+              {left: '$$', right: '$$', display: true},
+              {left: '$', right: '$', display: false}
+            ],
+            throwOnError: false
+          });
+        } catch(e) {
+          console.warn('Math render error:', e);
+        }
+      }
+
+      document.getElementById('slide-counter').textContent = `Slide ${currentSlide + 1} / ${totalSlides}`;
+      document.getElementById('slide-indicator').textContent = `${currentSlide + 1} / ${totalSlides}`;
+      document.getElementById('progress-fill').style.width = `${((currentSlide + 1) / totalSlides) * 100}%`;
+      document.getElementById('section-select').value = currentSlide;
+    }
+
+    function nextSlide() {
+      if (currentSlide < totalSlides - 1) {
+        renderSlide(currentSlide + 1);
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        renderSlide(currentSlide - 1);
+      }
+    }
+
+    function jumpToSlide(idx) {
+      renderSlide(idx);
+    }
+
+    function seekSlide(e) {
+      const track = e.currentTarget;
+      const rect = track.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const pct = clickX / rect.width;
+      const targetIdx = Math.floor(pct * totalSlides);
+      renderSlide(targetIdx);
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => alert('Fullscreen error: ' + err.message));
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    function zoomImage(src) {
+      const modal = document.getElementById('zoom-modal');
+      const img = document.getElementById('zoomed-img');
+      img.src = src;
+      modal.style.display = 'flex';
+    }
+
+    function toggleHelp() {
+      const help = document.getElementById('help-overlay');
+      help.style.display = help.style.display === 'block' ? 'none' : 'block';
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === 'ArrowLeft' || e.key === 'Backspace' || e.key === 'PageUp') {
+        e.preventDefault();
+        prevSlide();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        renderSlide(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        renderSlide(totalSlides - 1);
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      } else if (e.key === '?' || e.key === 'h' || e.key === 'H') {
+        toggleHelp();
+      } else if (e.key === 'Escape') {
+        document.getElementById('zoom-modal').style.display = 'none';
+        document.getElementById('help-overlay').style.display = 'none';
+      }
+    });
+
+    // Initialize
+    initSectionDropdown();
+    renderSlide(0);
+    resizeViewport();
+  </script>
+</body>
+</html>

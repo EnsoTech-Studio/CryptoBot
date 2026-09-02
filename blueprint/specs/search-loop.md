@@ -1,6 +1,6 @@
 # Đặc tả: Discovery Search Loop
 
-Trạng thái: Blueprint target — chưa phải runtime claim
+Trạng thái: Canonical target; discovery core path implemented, target gaps listed below
 Owner: Python `research`  
 Runtime seam hiện có: `app/services/search.py`
 
@@ -23,7 +23,30 @@ Pareto optimization.
 Ordinary `grid`, `random_search`, `domain_guided` giữ one-candidate/one-
 experiment behavior. Discovery archive chỉ reuse trong cùng `search_run_id`.
 
-## Immutable candidate contract
+## Current implementation alignment
+
+Current runtime does not contain `DiscoveryController`, `StrategyCandidate`,
+`MutationGenerator`, `CrossoverGenerator`, `EnsembleGenerator` or `LLMGenerator`
+classes. `app/services/search.py` emits dictionary `CandidateEnvelope` values;
+mutation/crossover/ensemble are branches in `discovery_propose()`. Durable
+sequencing lives in `Store._create_discovery_run()`,
+`Store._continue_discovery()` and `advance_discovery_for_experiment()`.
+`EventWorker` advances the candidate after `BacktestCompleted` evaluation.
+
+Runtime candidate hash covers `candidate_definition` only. `risk_policy` is not
+yet part of `SearchSpaceInput`, the envelope, or experiment materialization.
+The reservation row records four planned jobs, but runtime enqueues train first
+and creates three validation jobs only after the train gate passes. Duplicate and
+provider-failure bookkeeping is currently partial (`generation_meta` and
+`discovery_state`), so the full immutable archive contract below remains target
+until its persistence is implemented and tested.
+
+Runtime stop evaluation currently checks `max_candidates` and
+`max_duration_sec` with a two-hour cap and uses a hardcoded 100-trial
+non-improvement guard. Schema fields `max_non_improving` and
+`max_failure_rate` are not yet consulted by discovery continuation.
+
+## Target immutable candidate contract
 
 ```python
 @dataclass(frozen=True)

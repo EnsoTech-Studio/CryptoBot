@@ -1,104 +1,201 @@
 classDiagram
     direction LR
 
+    class Definition {
+        +strategy_id: str
+        +version: str
+        +family: str | None
+        +parameters_schema: Any | None
+        +input_requirements: list~str~
+        +overlay_types: list~str~
+        +warm_up_candles: callable | int | None
+        +is_composite: bool
+        +display_name: str
+        +description: str
+        +code_fingerprint: str | None
+    }
+
+    class AnalysisContext {
+        +provider: str
+        +symbol: str
+        +timeframe: Timeframe
+        +candles: CausalCandles
+        +index: int
+        +indicators: IndicatorView
+        +news_sentiment: NewsSentimentWindow | None
+        +params: dict
+    }
+
+    class Signal {
+        +action: Action
+        +confidence: float | None
+        +price: float | None
+        +signed_size: float | None
+        +evidence: Any | None
+    }
+
     class Strategy {
         <<interface>>
-        +id() String
-        +version() String
-        +inputRequirements() Requirements
-        +validate(params) ValidationResult
-        +analyze(ctx) Signal
+        +definition() Definition
+        +analyze(context) Signal
     }
 
-    class BaseStrategy {
-        <<abstract>>
-        +validate(params) ValidationResult
-        #requireIndicator(name, params)
-    }
-
-    class MAStrategy {
-        +fastPeriod int
-        +slowPeriod int
-        +analyze(ctx) Signal
+    class MovingAverageCross {
+        -kind: str
+        -strategy_id: str
+        -display_name: str
+        +requirements(params) list~str~
+        +analyze(context) Signal
     }
 
     class RSIStrategy {
-        +period int
-        +buyThreshold Decimal
-        +sellThreshold Decimal
-        +analyze(ctx) Signal
+        +definition() Definition
+        +requirements(params) list~str~
+        +analyze(context) Signal
     }
 
-    class BollingerBandsStrategy {
-        +period int
-        +deviation Decimal
-        +analyze(ctx) Signal
+    class BollingerStrategy {
+        +definition() Definition
+        +requirements(params) list~str~
+        +analyze(context) Signal
     }
 
     class SupportResistanceStrategy {
-        +lookback int
-        +tolerance Decimal
-        +analyze(ctx) Signal
+        +definition() Definition
+        +requirements(params) list~str~
+        +analyze(context) Signal
     }
 
-    class SMCStrategy {
-        <<target extension>>
-        +structureWindow int
-        +analyze(ctx) Signal
+    class SMCMarketStructureStrategy {
+        +definition() Definition
+        +requirements(params) list~str~
+        +analyze(context) Signal
     }
 
-    class CompositeStrategy {
-        +children StrategyRef[]
-        +combinationPolicy PolicyRef
-        +analyze(ctx) Signal
+    class NewsSentimentStrategy {
+        +definition() Definition
+        +requirements(params) list~str~
+        +analyze(context) Signal
+    }
+
+    class MACDStrategy {
+        +definition() Definition
+        +requirements(params) list~str~
+        +analyze(context) Signal
+    }
+
+    class CompositeRoot {
+        +definition() Definition
+        +analyze(context) Signal
+    }
+
+    class Registry {
+        -_factories: dict
+        -_definitions: dict
+        +register(factory) None
+        +resolve(strategy_id, version) Strategy
+        +list() list~Definition~
+    }
+
+    class Library {
+        <<abstract>>
+        +precompute(closes, requirements) dict
+    }
+
+    class DeterministicLibrary {
+        +precompute(closes, requirements) dict
+    }
+
+    class IndicatorView {
+        +at(name, index) float | None
+        +current(name) float | None
+    }
+
+    class CausalCandles {
+        +at(index) Candle
+        +index: int
+        +len() int
+    }
+
+    class ChildDefinition {
+        +strategy_id: str
+        +version: str
+        +parameters: dict
+        +weight: float
+    }
+
+    class CombinationPolicy {
+        +policy: str
+        +threshold: float
+        +encoding: dict~str, int~
+    }
+
+    class CompositeDefinition {
+        +strategy_id: str
+        +version: str
+        +children: list~ChildDefinition~
+        +combination: CombinationPolicy
+    }
+
+    class Reference {
+        +strategy_id: str
+        +version: str
+    }
+
+    class ResolvedSignal {
+        +strategy_id: str
+        +version: str
+        +signal: Signal
+        +weight: float
     }
 
     class SignalCombiner {
         <<interface>>
-        +combine(signals, policy) Signal
+        +combine(children, policy) Signal
     }
 
     class WeightedVoteCombiner {
-        +combine(signals, policy) Signal
+        +combine(children, policy) Signal
     }
 
-    class StrategyRegistry {
-        +register(descriptor)
-        +resolve(id, version) Strategy
-        +listAvailable() Descriptor[]
+    class MajorityVoteCombiner {
+        +combine(children, policy) Signal
     }
 
-    class StrategyRuntime {
-        +analyze(spec, ctx) SignalRecord
+    class DeterministicEngine {
+        +run(snapshot, candles, bbo, sentiment_windows) Result
+        -_resolve_plan(snapshot) Plan
+        -_analyze(plan, series, candles, sentiment, index) Signal
     }
 
-    class IndicatorLibrary {
-        +precompute(candles, requirements) IndicatorView
-    }
-
-    class AnalysisContext {
-        +candles CausalView
-        +index int
-        +indicators IndicatorView
-        +sentiment SentimentWindow
-    }
-
-    Strategy <|.. BaseStrategy
-    BaseStrategy <|-- MAStrategy
-    BaseStrategy <|-- RSIStrategy
-    BaseStrategy <|-- BollingerBandsStrategy
-    BaseStrategy <|-- SupportResistanceStrategy
-    BaseStrategy <|-- SMCStrategy
-    Strategy <|.. CompositeStrategy
+    Strategy <|.. MovingAverageCross
+    Strategy <|.. RSIStrategy
+    Strategy <|.. BollingerStrategy
+    Strategy <|.. SupportResistanceStrategy
+    Strategy <|.. SMCMarketStructureStrategy
+    Strategy <|.. NewsSentimentStrategy
+    Strategy <|.. MACDStrategy
+    Strategy <|.. CompositeRoot
+    Library <|-- DeterministicLibrary
     SignalCombiner <|.. WeightedVoteCombiner
+    SignalCombiner <|.. MajorityVoteCombiner
 
-    CompositeStrategy o-- Strategy : child references
-    CompositeStrategy --> SignalCombiner
-    StrategyRegistry o-- Strategy : versioned plugins
-    StrategyRuntime --> StrategyRegistry
-    StrategyRuntime --> IndicatorLibrary
-    StrategyRuntime --> AnalysisContext
+    Registry o-- Definition : catalogs
+    Registry ..> Strategy : resolves fresh instance
+    CompositeDefinition *-- ChildDefinition
+    ChildDefinition --> Reference
+    ResolvedSignal *-- Signal
+    DeterministicEngine --> Registry
+    DeterministicEngine --> Library
+    DeterministicEngine --> Strategy : analyzes leaf
+    DeterministicEngine --> SignalCombiner : combines composite
+    DeterministicEngine --> CompositeDefinition
+    DeterministicEngine --> AnalysisContext
+    AnalysisContext --> CausalCandles
+    AnalysisContext --> IndicatorView
 
-    note for Strategy "No database, HTTP, queue or UI access.<br/>Returns BUY, SELL or HOLD with evidence."
-    note for StrategyRegistry "Add strategy through registration,<br/>not if/else by strategy ID."
-    note for StrategyRuntime "Same package and semantics<br/>for realtime and backtest."
+    note for Strategy "Current Python protocol: only definition() and analyze().<br/>Plugins are stateless; parameters travel in AnalysisContext.params."
+    note for MovingAverageCross "Catalog registers ma_cross@v1 and ema_cross@v1.<br/>No BaseStrategy or MAStrategy class exists."
+    note for CompositeRoot "Registry marker composite@v1; analyze() returns HOLD.<br/>Child resolution and combination live in DeterministicEngine."
+    note for Registry "catalog.py register_all(): ma/ema, RSI, Bollinger,<br/>support_resistance, smc BOS, news_sentiment, MACD, composite."
+    note for DeterministicEngine "Precompute once, then causal CausalCandles + IndicatorView per index.<br/>Optional requirements(params) overrides static metadata."

@@ -27,21 +27,21 @@ Canonical Python protocol:
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-
-@dataclass(frozen=True)
+@dataclass
 class Definition:
     strategy_id: str
     version: str
-    family: str | None
-    parameters_schema: dict[str, Any]
+    family: str | None = None
+    parameters_schema: Any | None = None
     input_requirements: list[str] = field(default_factory=list)
     overlay_types: list[str] = field(default_factory=list)
+    warm_up_candles: Any | None = None
+    is_composite: bool = False
     display_name: str = ""
     description: str = ""
     code_fingerprint: str | None = None
 
-
-@dataclass(frozen=True)
+@dataclass
 class AnalysisContext:
     provider: str
     symbol: str
@@ -49,18 +49,16 @@ class AnalysisContext:
     candles: "CausalCandles"
     index: int
     indicators: "IndicatorView"
-    news_sentiment: "NewsSentimentWindow | None"
-    params: dict[str, Any]
+    news_sentiment: "NewsSentimentWindow | None" = None
+    params: dict[str, Any] = field(default_factory=dict)
 
-
-@dataclass(frozen=True)
+@dataclass
 class Signal:
     action: str
     confidence: float | None = None
     price: float | None = None
     signed_size: float | None = None
-    evidence: dict[str, Any] | None = None
-
+    evidence: Any | None = None
 
 class Strategy(Protocol):
     def definition(self) -> Definition: ...
@@ -91,6 +89,11 @@ Invariants:
 - Parameter/input/overlay metadata do plugin khai báo; UI/search không hard-code ID.
 - Strategy chỉ thấy causal `AnalysisContext`, không DB/network/filesystem/service locator.
 
+`Strategy` protocol không bắt buộc `requirements(params)`, nhưng các plugin có tham số
+động đều cung cấp method này. `DeterministicEngine` gọi method nếu có; nếu không thì
+dùng `Definition.input_requirements`. `warm_up_candles` cũng là callable theo params,
+không phải field số cố định.
+
 ## Ba admission mode
 
 ### A. Built-in trusted Python plugin
@@ -119,17 +122,19 @@ Generated/repaired source chỉ là draft cho PR/build/deploy. Sau review và CI
 ## Plugin catalog
 
 `app/domain/strategy/plugins/catalog.py::register_all()` là bootstrap seam. Registry hiện
-admit các family:
+đăng ký các implementation:
 
-- Trend: MA/EMA cross, MACD.
-- Momentum: RSI.
-- Volatility: Bollinger Bands.
-- Structure: Support/Resistance.
-- Information: News Sentiment.
-- Composite root: majority/weighted policies.
+- `ma_cross@v1`, `ema_cross@v1`: `MovingAverageCross`.
+- `macd@v1`: `MACDStrategy`.
+- `rsi@v1`: `RSIStrategy`.
+- `bollinger@v1`: `BollingerStrategy`.
+- `support_resistance@v1`: `SupportResistanceStrategy`.
+- `smc@v1`: `SMCMarketStructureStrategy`, BOS-only causal implementation.
+- `news_sentiment@v1`: `NewsSentimentStrategy`.
+- `composite@v1`: `CompositeRoot` registry marker; engine owns child combination.
 
-SMC đầy đủ là extension/default-off; blueprint chỉ claim architecture admission cho tới khi
-có code, fixture và acceptance evidence riêng.
+SMC đầy đủ (order block/liquidity modules) vẫn là target gap; `smc@v1` hiện có code
+nhưng chỉ biểu diễn causal break-of-structure, không phải full SMC.
 
 ## Thêm MACD
 
@@ -137,7 +142,7 @@ Scenario modifiability canonical:
 
 ```text
 app/domain/strategy/plugins/macd.py
-app/domain/strategy/plugins/test_macd.py
+tests/test_indicators_plugins.py
 ```
 
 Plugin implement `definition()` + `analyze()`, sau đó được package catalog đăng ký. Không sửa
@@ -149,14 +154,15 @@ chi phí vận hành hợp lý.
 ## Luồng chính
 
 1. Python API/worker startup xây `default_registry()`.
-2. Catalog register từng factory và fail-fast nếu duplicate/invalid metadata.
+2. Catalog register từng factory; duplicate key fail-fast. Metadata validation của request/run nằm ở các boundary khác.
 3. Public catalog request đi Browser -> Go -> signed Python query.
 4. Python trả normalized metadata; Go chỉ map envelope/error.
 5. Experiment snapshot lưu exact strategy ID/version/params/spec/artifact fingerprint.
 6. Worker resolve exact version thành fresh instance.
 7. Indicator service precompute declared requirements bằng causal views.
 8. Runtime gọi `analyze(context)` theo chronological event loop.
-9. Signal validator kiểm action, finite numbers, price/size bounds và evidence shape.
+9. Backtest engine giữ BUY/SELL có price dương; HOLD không tạo signal/order. Confidence/evidence
+được lưu nếu plugin trả về, chưa có một validator class riêng.
 10. Realtime overlay và backtest dùng cùng steps 6-9.
 
 ## Parameter và compatibility rules

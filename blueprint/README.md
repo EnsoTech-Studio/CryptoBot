@@ -52,10 +52,12 @@ blueprint/
     └── observability.md           # Metrics, correlation ID, structured log, progress panel, scale gate
 ```
 
-`discovery-mvp-plan.md` là handoff target cho Discovery MVP. Canonical contract
-ở `specs/search-loop.md`: archive per-run, controller one-active-candidate,
-five generator, frozen 60/20/20 split, ba validation window và one sealed final
-test. Tài liệu này không claim runtime/database/API/UI đã tồn tại.
+`discovery-mvp-plan.md` là handoff và implementation-alignment record cho Discovery MVP.
+Canonical target contract ở `specs/search-loop.md` vẫn yêu cầu archive per-run,
+controller one-active-candidate, five generator modes, frozen 60/20/20 split, ba
+validation window và one sealed final test. Current code implements core sequencing
+through `Store` + pure discovery functions; target-only fields/classes are called out
+explicitly and are not treated as runtime evidence.
 
 **Canonical implementation handoff**: `specs/*.md` giữ contract; `server/` chỉ là Go
 API/Market implementation; `app/` là Python Research domain/runtime; `ai/` chỉ là inference

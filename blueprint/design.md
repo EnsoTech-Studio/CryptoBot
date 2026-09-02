@@ -1187,6 +1187,8 @@ CREATE INDEX idx_dataset_candles_range
 -- =============================================================
 -- 3. Strategy — định nghĩa & VERSION BẤT BIẾN  (đề bài §36)
 -- =============================================================
+-- Target DDL below uses the blueprint's versioned-contract shape. The current
+-- Python catalog identifiers are documented as `v1` in specs/strategy-registry.md.
 CREATE TABLE strategy_definitions (
     strategy_id  VARCHAR(48) PRIMARY KEY,       -- plugin ids + virtual root 'composite'
     display_name VARCHAR(120) NOT NULL,
@@ -2600,35 +2602,46 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant EXS as ExperimentService
-    participant REG as StrategyRegistry
-    participant IND as IndicatorLibrary
-    participant MA as MAStrategy
+    participant W as BacktestWorker
+    participant ENG as DeterministicEngine
+    participant REG as Registry
+    participant IND as DeterministicLibrary
+    participant MA as MovingAverageCross
     participant RSI as RSIStrategy
     participant SR as SupportResistanceStrategy
     participant CMB as WeightedVoteCombiner
+    participant DB as PostgreSQL
 
-    EXS->>REG: resolve(candidate.children)
-    REG-->>EXS: [MAStrategy@1.0.0, RSIStrategy@1.0.0, SupportResistanceStrategy@1.0.0]
-    Note over REG: Lookup trong dict, KHÔNG có if/elif theo tên.<br/>Nếu strategy_id không tồn tại → lỗi ở tầng validate,<br/>không phải nhánh else âm thầm.
+    W->>ENG: run(snapshot, candles, bbo, sentiment_windows)
+    ENG->>REG: resolve(exact child strategy_id, version)
+    REG-->>ENG: fresh plugin instances
+    Note over REG: Current catalog uses ma_cross@v1, ema_cross@v1,<br/>rsi@v1, bollinger@v1, support_resistance@v1,<br/>smc@v1, news_sentiment@v1, macd@v1, composite@v1.
 
-    EXS->>EXS: union input_requirements của tất cả children
-    EXS->>IND: precompute(candles, {sma:[20,50], rsi:[14], sr:[80]})
-    IND-->>EXS: indicators aligned với candles (None ở vùng warm-up)
+    ENG->>ENG: collect dynamic requirements(params)<br/>and max child warm-up
+    ENG->>IND: precompute(all closes, sorted unique requirements)
+    IND-->>ENG: raw indicator series with None during warm-up
 
-    loop mỗi nến t từ warm_up_end tới cuối
-        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, IndicatorView(raw, t), params)
-        EXS->>MA: analyze(ctx)
-        MA-->>EXS: Signal(BUY, evidence={ma20:118050, ma50:117800})
-        EXS->>RSI: analyze(ctx)
-        RSI-->>EXS: Signal(SELL, evidence={rsi:72.4})
-        EXS->>SR: analyze(ctx)
-        SR-->>EXS: Signal(BUY, evidence={nearest_support:117500})
-        EXS->>CMB: combine([(spec,sig)...], policy=weighted_vote@0.3)
-        CMB->>CMB: score = 1×0.2 + (−1)×0.3 + 1×0.5 = 0.4
-        CMB-->>EXS: Signal(BUY, confidence=0.4)
+    loop each merged BBO or CandleClosed event
+        ENG->>ENG: apply BBO, or build CausalCandles + IndicatorView(cursor)
+        ENG->>MA: analyze(context with child params)
+        MA-->>ENG: Signal(BUY/SELL/HOLD, price=closed candle close)
+        ENG->>RSI: analyze(context with child params)
+        RSI-->>ENG: Signal(BUY/SELL/HOLD)
+        ENG->>SR: analyze(context with child params)
+        SR-->>ENG: Signal(BUY/SELL/HOLD)
+        ENG->>CMB: combine(ResolvedSignal[], CombinationPolicy)
+        CMB->>CMB: weighted score, strict threshold
+        CMB-->>ENG: combined Signal + score evidence
+        ENG->>DB: persist non-HOLD signal, orders, trades and equity
     end
 ```
+
+`MovingAverageCross` là implementation dùng chung cho `ma_cross` và `ema_cross`;
+không có class `MAStrategy` hoặc `BaseStrategy`. Composite không chạy qua một
+`CompositeStrategy` riêng: `DeterministicEngine._resolve_plan()` resolve child
+plugins, còn `WeightedVoteCombiner`/`MajorityVoteCombiner` kết hợp `ResolvedSignal`.
+`CausalCandles` và `IndicatorView` chặn đọc sau cursor; `requirements(params)` động
+được ưu tiên hơn `Definition.input_requirements` mặc định.
 
 **Bốn quyết định đáng giải thích trong luồng này**
 
@@ -2643,6 +2656,12 @@ sequenceDiagram
 ### 6.3 Search/Backtest Flow — vòng lặp có kiểm soát
 
 Đây là luồng trung tâm của đồ án (§23, §24) và là luồng phức tạp nhất.
+
+Sơ đồ dưới là contract target cho SearchRunService đầy đủ (batch candidate,
+ranking và WS progress). Discovery MVP đang chạy có flow riêng, code-grounded
+ở §6.3.1 và `assets/diagrams/11-search-backtest-pipeline.mmd`: `Store` tạo
+từng candidate, enqueue train trước, rồi EventWorker mở validation/test theo
+trạng thái. Không đọc sơ đồ target này như danh sách class/runtime đã tồn tại.
 
 ```mermaid
 sequenceDiagram
@@ -2785,14 +2804,16 @@ Cộng thêm `lease_expires_at`: worker chết giữa job (OOM, container killed
 
 #### 6.3.1 Discovery MVP — archive-driven one-candidate controller
 
-`generator_id: "discovery"` là target mode của SearchRun, không phải claim
-runtime hiện có. Python thêm `DiscoveryController` bên trong research boundary;
-nó chạy đúng một active candidate để lineage, generator adaptation và stopping
-deterministic. Go chỉ proxy command/query, auth/quota và persisted progress.
+`generator_id: "discovery"` hiện đã có runtime path trong `app/`, nhưng chưa có
+class `DiscoveryController`. `Store._create_discovery_run()` và
+`Store._continue_discovery()` giữ orchestration durable; pure proposal/selection/
+assessment functions nằm trong `app/services/search.py` và
+`app/services/discovery/`. `EventWorker` gọi advance sau khi evaluation commit.
+Go chỉ proxy command/query, auth/quota và persisted progress.
 
 ```text
 select runnable generator
-  -> propose CandidateSpec
+  -> propose candidate_definition dict
   -> archive duplicate + atomic cost admission
   -> immutable train experiment
   -> cheap filter
@@ -2801,12 +2822,18 @@ select runnable generator
   -> accept/reject, update generator stats, select parents
 ```
 
-Candidate hash là canonical JSON của catalog strategy/flat composite **và**
-risk policy. Train must terminal trước V1/V2/V3 admission; admission reserve
-cost cho đủ bốn experiment. Dataset snapshot freeze 60% train, 20% ba validation
-window contiguous bằng nhau, 20% sealed test; warmup chỉ được load preceding
-candles causally. Test không thể đi vào prompt, parent selection, acceptance,
-score hay generator probability.
+Runtime hiện hash canonical JSON của `candidate_definition`; `risk_policy` chưa
+có trong `SearchSpaceInput`/generator envelope. Đây là target gap, không được
+vẽ như đã snapshot. Train phải terminal trước V1/V2/V3 admission. Runtime tạo
+một reservation row `reserved_jobs=4`, nhưng chỉ enqueue train trước; ba
+validation jobs được tạo sau cheap gate. Dataset freeze 60% train, 20% ba
+validation windows, 20% sealed test; warmup vẫn do backtest engine xử lý causal.
+Test metrics không vào proposal context hay assessment.
+
+Runtime stop evaluation currently checks `max_candidates` and
+`max_duration_sec` (with a two-hour cap) and uses a hardcoded 100-trial
+non-improvement guard. Schema fields `max_non_improving` and
+`max_failure_rate` are not yet consulted by discovery continuation.
 
 Cheap gate: successful terminal run, finite Sharpe, >=10 settled trades.
 Validation reject nếu bất kỳ window không finite/<10 trades hoặc train-to-median
@@ -2819,6 +2846,8 @@ median_validation_sharpe
 - .1 * complexity
 - .2 * similarity
 ```
+
+#### Target completion contract (not current runtime evidence)
 
 Archive owns duplicate detection, lineage, parent selection, correlation
 diversity, generator stats and all terminal failures. Add immutable candidate
@@ -2849,59 +2878,83 @@ candidate-partition experiment links, so it cannot duplicate work.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant SCH as Scheduler (cron 15m)
-    participant NC as NewsCollector
-    participant SRC as news_sources (config)
-    participant PRV as RssNewsAdapter
-    participant EXT as External RSS
-    participant DB as PostgreSQL
-    participant SA as SentimentAnalyzer
-    participant STR as NewsSentimentStrategy
+    participant SCH as NewsWorker
+    participant NC as NewsService
+    participant DB as Store / PostgreSQL
+    participant PRV as Provider map
+    participant RSS as RssNewsProvider
+    participant HTML as HtmlNewsProvider
+    participant HTTP as Pinned HTTPS fetch
+    participant AI as NewsExtractionHTTPAdapter
+    participant SENT as SentimentHTTPAdapter
 
     SCH->>NC: collect_all()
-    NC->>DB: INSERT news_collection_jobs (status=running)
-    NC->>SRC: đọc source đang active
-    SRC-->>NC: [{source_key, allowed_origin, url_template}]
-    Note over NC,SRC: URL đến từ CẤU HÌNH SERVER.<br/>Không bao giờ từ query param của browser (chống SSRF)
-
-    NC->>PRV: collect(source, since=last_crawl)
-    PRV->>PRV: validate: HTTPS? origin ∈ allowlist? port chuẩn?
-    PRV->>PRV: resolve DNS → IP không thuộc private/loopback/link-local?
-    PRV->>EXT: GET (timeout 10s, max_redirects 3, max_size 2MB)
-
-    alt provider lỗi / timeout / trả HTML rác
-        EXT--xPRV: 500 hoặc timeout
-        PRV-->>NC: ProviderError
-        NC->>DB: UPDATE job status=failed, failure_reason=...
-        Note over NC: DỪNG Ở ĐÂY. Chart, backtest, leaderboard<br/>KHÔNG bị ảnh hưởng gì (đề bài §40.5)
-    else thành công
-        EXT-->>PRV: RSS XML
-        PRV->>PRV: parse trong worker isolated + sanitize
-        PRV-->>NC: [Item chuẩn hoá]
-        NC->>DB: INSERT news_items ... ON CONFLICT (url_hash) DO NOTHING
-        NC->>DB: UPDATE job (items_found, items_new, status=completed)
-        NC->>SA: NewsCollected × N
+    NC->>DB: list_approved_sources()
+    loop each ApprovedSource
+        NC->>DB: begin_news_collection(source_id)
+        DB-->>NC: job_id (already_running returns immediately)
+        NC->>DB: latest_news_collection(source_id)
+        NC->>PRV: get(source.kind)
+        alt kind = rss
+            PRV->>RSS: collect(source, since)
+            RSS->>RSS: HTTPS/origin/DNS/redirect/size/type guards
+            RSS->>HTTP: bounded GET source.url_template
+            HTTP-->>RSS: RSS/Atom bytes
+            RSS-->>NC: CollectedItem[] with hashes and alias tags
+        else kind = url
+            PRV->>HTML: collect(source, since)
+            HTML->>HTML: HTTPS/origin/DNS/redirect/size/type guards
+            HTML->>HTTP: bounded GET source.url_template
+            HTTP-->>HTML: HTML bytes
+            HTML->>HTML: _ArticleParser + sanitize + title/body quality check
+            alt quality pass
+                HTML-->>NC: CollectedItem(extraction_version=html-v1)
+            else quality failure
+                HTML-->>NC: HtmlQualityGateFailed(sanitized document, diagnostics)
+                NC->>DB: persist_news_document(source, failure)
+                NC->>DB: find_news_extraction(document_id, cache_key)
+                alt no cached extraction and extractor configured
+                    NC->>AI: extract(sanitized document_text)
+                    AI-->>NC: title, body, model, model_version
+                    NC->>DB: persist_news_extraction(completed or failed)
+                end
+                NC-->>NC: build evidence-checked CollectedItem or fail without placeholder
+            end
+        else provider/network/SSRF error
+            PRV-->>NC: NewsProviderError or SsrfBlocked
+            NC->>DB: fail_news_collection(job_id, error_code)
+        end
+        opt collection succeeded
+            NC->>DB: complete_news_collection(job_id, items)
+            DB->>DB: UPSERT news_items + NewsCollected outbox
+        end
     end
 
-    SA->>SA: model_version()
-    alt model khả dụng
-        SA->>DB: INSERT sentiment_results (label, score, model, model_version)
-    else model down
-        Note over SA,DB: KHÔNG insert gì cả.<br/>News tồn tại không có sentiment → API trả null → UI "unavailable".<br/>KHÔNG fake NEUTRAL (R11)
+    SCH->>NC: analyze_pending(model, model_version)
+    NC->>DB: pending_sentiment_items(model, model_version, limit)
+    loop each pending item
+        NC->>SENT: analyze(title + bounded content)
+        SENT->>SENT: POST /predict
+        alt valid result and matching model identity
+            SENT-->>SENT: label, score, model, model_version
+            SENT-->>NC: Result
+            NC->>DB: persist_sentiment()
+        else unavailable or contract violation
+            SENT-->>SENT: failure or invalid payload
+            SENT-->>NC: unavailable, no placeholder row
+        end
     end
 
-    STR->>DB: SELECT avg sentiment WHERE published_at > now()-1h AND 'BTC' = ANY(related_coins)
-    DB-->>STR: NewsSentimentWindow(avg_score, item_count, model_version)
-    Note over STR: Đọc qua repository PORT trong AnalysisContext,<br/>KHÔNG query SQL trực tiếp từ strategy
+    Note over NC,AI: Current runtime has direct typed extraction fallback.<br/>NewsExtractionAgent/tool loop remains P1 target.
 ```
 
 **Ba ranh giới được thực thi trong luồng này**
 
-1. **Crawler không biết ML tồn tại.** `RssNewsAdapter` không import gì liên quan tới model. Nó publish `NewsCollected` và xong việc. Đây là anti-pattern §44 ("Crawler phụ thuộc chặt vào ML") bị chặn ở tầng import graph — kiểm chứng được bằng một test static: `assert "predictor" not in imports_of("news/adapters/rss.py")`.
+1. **Provider không biết ML tồn tại.** `RssNewsProvider` và `HtmlNewsProvider` chỉ fetch/parse/normalize; `NewsService` mới điều phối fallback và sentiment. `NewsCollected` được `Store.complete_news_collection()` ghi cùng transaction. Đây là anti-pattern §44 ("Crawler phụ thuộc chặt vào ML") bị chặn ở tầng import graph.
 
-2. **Sentiment không biết strategy tồn tại.** Nó ghi `sentiment_results` và xong. `NewsSentimentStrategy` là consumer sau này, qua DB, qua port. Vì vậy đổi model (§40.6) **không** ảnh hưởng Strategy Engine — miễn là `Sentiment` value object giữ nguyên 4 field (`label`, `score`, `model`, `model_version`).
+2. **Sentiment không biết strategy tồn tại.** `NewsService.analyze_pending()` chỉ đọc item chưa có kết quả, gọi `SentimentHTTPAdapter`, rồi ghi `sentiment_results`. `sentiment_window()` tạo `NewsSentimentWindow` cho runtime. Đổi model không đổi provider/strategy contract.
 
-3. **Strategy không query SQL.** Aggregate được `NewsService` tính và đưa vào `AnalysisContext` (§5.2). Strategy chỉ đọc `ctx.news_sentiment`.
+3. **Strategy không query SQL.** `Store.sentiment_window()` tạo aggregate, dispatcher đưa các window vào `AnalysisContext` (§5.2). Strategy chỉ đọc `ctx.news_sentiment`.
 
 **SSRF — tại sao đây là rủi ro thật, không phải lý thuyết**
 

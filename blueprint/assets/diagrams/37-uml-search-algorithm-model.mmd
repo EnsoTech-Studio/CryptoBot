@@ -1,83 +1,157 @@
 classDiagram
     direction LR
 
-    class DiscoveryController {
-        +runNextTrial(runId)
-        +reconcile(runId)
-        +selectGenerator()
-        +admitTrainThenValidation()
-        +assess()
-        +scheduleFinalTest()
-    }
-    class StrategyCandidate {
-        +UUID id
-        +CandidateSpec strategySpec
-        +String generator
-        +UUID[] parentIds
-        +int generation
-        +String hypothesis
-        +String operation
-    }
-    class CandidateSpec {
-        +CatalogDefinition strategy
-        +RiskPolicy riskPolicy
-        +canonicalHash()
-    }
-    class DiscoveryGenerator {
-        <<interface>>
-        +propose(context) StrategyCandidate
-    }
-    class RandomGenerator
-    class MutationGenerator
-    class CrossoverGenerator
-    class EnsembleGenerator
-    class LLMGenerator {
-        +newHypothesis()
-        +improveFailed()
-        +combine()
-    }
-    class DiscoveryArchive {
-        +duplicate(hash)
-        +parents()
-        +survivorReturns()
-        +recordOutcome()
-        +generatorStats()
-    }
-    class ValidationPolicy {
-        +split 60/20/20
-        +threeValidationWindows
-        +score()
-        +similarity()
-    }
-    class PartitionExperiment {
-        +train|validation|test
-        +validationOrdinal
-        +experimentId
-        +segmentRange
-    }
-    class Assessment {
-        +trainMetrics
-        +validationMetrics
-        +gap
-        +complexity
-        +correlation
-        +score
-        +accepted
-        +rejectionReason
+    class SearchSpace {
+        +strategy_ids: list~str~
+        +parameter_grid: dict
+        +cardinality: tuple
+        +policies: list~str~
+        +weight_options: list~float~
     }
 
-    DiscoveryGenerator <|.. RandomGenerator
-    DiscoveryGenerator <|.. MutationGenerator
-    DiscoveryGenerator <|.. CrossoverGenerator
-    DiscoveryGenerator <|.. EnsembleGenerator
-    DiscoveryGenerator <|.. LLMGenerator
-    DiscoveryController --> DiscoveryGenerator : selects one
-    DiscoveryController --> DiscoveryArchive
-    DiscoveryController --> ValidationPolicy
-    DiscoveryController --> PartitionExperiment
-    DiscoveryArchive --> StrategyCandidate
-    StrategyCandidate *-- CandidateSpec
-    StrategyCandidate --> Assessment
+    class StopConditions {
+        +max_candidates: int | None
+        +max_duration_sec: int | None
+        +max_non_improving: int | None
+        +max_failure_rate: float | None
+    }
 
-    note for LLMGenerator "Strict JSON only; provider fail recorded.\nNo Python, queue, result-table or stop control."
-    note for PartitionExperiment "Unique candidate + partition + ordinal.\nNormal completion admits one sealed final test."
+    class SearchRun {
+        +generator_id: str
+        +generator_version: str
+        +stop_conditions: StopConditions
+        +seed: int | None
+        +execution_config: Any | None
+    }
+
+    class CandidateEnvelope {
+        <<current dict shape>>
+        +strategy_id: str
+        +strategy_version: str
+        +candidate_definition: dict
+        +candidate_hash: str
+        +generation_meta: dict
+    }
+
+    class CandidateGenerator {
+        <<current duck-typed seam>>
+        +generator_id: str
+        +generator_version: str
+        +generate(search_space: dict, limit: int, seed: int) list~dict~
+    }
+
+    class GridGenerator {
+        +generate(search_space, limit, seed) list~dict~
+    }
+
+    class RandomGenerator {
+        +generate(search_space, limit, seed) list~dict~
+    }
+
+    class DomainGuidedGenerator {
+        +generate(search_space, limit, seed) list~dict~
+        +_rules(candidate) bool, rule_ids
+    }
+
+    class GeneticGenerator {
+        +generate(search_space, limit, seed) list~dict~
+        -_crossover(left, right, rng) dict
+        -_mutate(definition, search_space, rng) dict
+    }
+
+    class DiscoveryFunctions {
+        <<module app.services.search>>
+        +discovery_propose(space, seed, archive, llm, research) dict | None
+        +generate_candidates(space, generator, limit, seed) list~dict~
+    }
+
+    class DiscoveryValidationFunctions {
+        <<module app.services.discovery.validation>>
+        +discovery_split(candle_count) dict
+        +discovery_assessment(train, validations, complexity) dict
+        +discovery_complexity(definition) float
+    }
+
+    class SelectionFunctions {
+        <<module app.services.discovery.selection>>
+        +generator_probabilities(terminal, eligible, stats) dict
+        +select_parents(accepted, randomizer) list
+    }
+
+    class DiscoveryProposalValidator {
+        <<module app.services.discovery.llm>>
+        +validate_llm_proposal(proposal, space, archive) CandidateEnvelope
+    }
+
+    class DiscoveryLLMHTTPAdapter {
+        +propose(search_space, archive, research, request_id) dict
+    }
+
+    class Store {
+        <<infrastructure.postgres>>
+        +create_search_run(request, correlation_id) SearchRunOut
+        -_create_discovery_run(...)
+        -_admit_discovery_candidate(...)
+        +advance_discovery_for_experiment(experiment_id) None
+        +reconcile_discovery() int
+    }
+
+    class EventWorker {
+        +handle(BacktestCompleted) None
+    }
+
+    class DiscoveryCandidateExperiments {
+        <<table>>
+        +search_candidate_id
+        +partition: train | validation | test
+        +validation_ordinal: int | None
+        +experiment_id
+        +range_from
+        +range_to
+    }
+
+    class DiscoveryAssessment {
+        <<table>>
+        +search_candidate_id
+        +train_evaluation_id
+        +validation_evaluation_ids: list
+        +score: float | None
+        +accepted: bool
+        +rejection_reason: str | None
+        +facts: dict
+    }
+
+    class DiscoveryTrialReservation {
+        <<table>>
+        +search_candidate_id
+        +reserved_jobs: int = 4
+        +consumed_jobs: int
+        +released_jobs: int
+        +status: reserved | consumed | released
+    }
+
+    CandidateGenerator <|.. GridGenerator
+    CandidateGenerator <|.. RandomGenerator
+    CandidateGenerator <|.. DomainGuidedGenerator
+    CandidateGenerator <|.. GeneticGenerator
+    GridGenerator <.. RandomGenerator : builds bounded pool
+    GridGenerator <.. DomainGuidedGenerator : filters
+    GridGenerator <.. GeneticGenerator : seeds pool
+
+    Store --> DiscoveryFunctions : proposes one candidate
+    Store --> DiscoveryValidationFunctions : freezes split and assesses
+    DiscoveryFunctions --> SelectionFunctions : selects generator/parents
+    DiscoveryFunctions --> DiscoveryProposalValidator : validates LLM candidate
+    DiscoveryFunctions --> DiscoveryLLMHTTPAdapter : optional typed provider
+    Store --> DiscoveryCandidateExperiments : persists phase links
+    Store --> DiscoveryAssessment : archives terminal outcome
+    Store --> DiscoveryTrialReservation : tracks four-job budget
+    EventWorker --> Store : advances after evaluation commit
+    Store --> CandidateEnvelope
+
+    note for CandidateGenerator "services/search.py uses this duck-typed shape.<br/>domain/search/contract.py remains a separate richer Protocol and is not consumed by current generators."
+    note for CandidateEnvelope "Conceptual name for the persisted candidate dict.<br/>No CandidateEnvelope dataclass exists in the current runtime."
+    note for DiscoveryFunctions "No DiscoveryController class exists. Mutation, crossover and ensemble are function branches over archive parents; LLM is DiscoveryLLMHTTPAdapter callback."
+    note for Store "Current durable controller: Store methods own DB transaction and one active candidate.<br/>Admission creates train first; validation jobs follow a passing train."
+    note for DiscoveryTrialReservation "Reservation row records reserved_jobs=4; it does not enqueue four jobs upfront.<br/>Test partition is created only after an accepted survivor and normal stop."
+    note for DiscoveryCandidateExperiments "Unique candidate/partition/ordinal makes event redelivery and restart reconciliation idempotent."

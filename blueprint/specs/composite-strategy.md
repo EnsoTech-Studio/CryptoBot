@@ -10,46 +10,49 @@ một `Signal`. Nó không biết cách child tính indicator; child không bi�
 combiner. Snapshot lưu toàn bộ child definitions, parameters, weights và policy
 để candidate hash/provenance bất biến.
 
-MVP có `weighted_vote` và `majority_vote`. Root `composite@1.0.0` không vào search
+MVP có `weighted_vote` và `majority_vote`. Root `composite@v1` không vào search
 space và không được nested làm child của composite khác.
 
 Đặc biệt phải đảm bảo:
 
-- Weighted score deterministic, Decimal, threshold đối xứng.
+- Weighted score deterministic theo `float64` (Python alias `Decimal`), threshold đối xứng.
 - Child HOLD không tạo direction.
 - Child lỗi không bị biến thành HOLD âm thầm.
 - Composite không tự sizing/fill/position; Backtest Engine xử lý fixed notional.
 - Sizing phải được chọn bởi `SizePolicy` tường minh trước khi tạo
   `OrderIntent`; combiner không được suy diễn quantity từ weighted score hoặc
   weighted price.
-- Thêm combiner mới = file Go mới, không sửa Backtest/Evaluation/API/UI.
+- Thêm combiner mới = implementation Python mới và registry map tương ứng, không sửa
+  Backtest/Evaluation/API/UI.
 
 ## Contract
 
-```go
-type ChildDefinition struct {
-	StrategyID string
-	Version    string
-	Parameters Params
-	Weight     decimal.Decimal
-}
+```python
+from dataclasses import dataclass
+from typing import Any, Protocol
 
-type CombinationPolicy struct {
-	Policy    string // weighted_vote | majority_vote
-	Threshold decimal.Decimal
-	Encoding  string // versioned action encoding
-}
+@dataclass
+class ChildDefinition:
+    strategy_id: str
+    version: str
+    parameters: dict[str, Any]
+    weight: float
 
-type CompositeDefinition struct {
-	StrategyID  string
-	Version     string
-	Children    []ChildDefinition
-	Combination CombinationPolicy
-}
+@dataclass
+class CombinationPolicy:
+    policy: str
+    threshold: float
+    encoding: dict[str, int]
 
-type SignalCombiner interface {
-	Combine(children []ResolvedSignal, policy CombinationPolicy) (strategy.Signal, error)
-}
+@dataclass
+class CompositeDefinition:
+    strategy_id: str
+    version: str
+    children: list[ChildDefinition]
+    combination: CombinationPolicy
+
+class SignalCombiner(Protocol):
+    def combine(children: list[ResolvedSignal], policy: CombinationPolicy) -> Signal: ...
 ```
 
 `CombinationPolicy` chỉ quyết định direction/price/evidence. Nó không thay thế
@@ -58,35 +61,52 @@ fixture), còn policy khác phải được encode và validate trước khi Bac
 tạo order. Vì vậy cùng một composite signal không thể âm thầm tạo quantity khác
 giữa realtime paper và deterministic replay.
 
-The Go skeleton owns these types in
-`app/domain/strategy/composite/contract.py`; it uses the shared
-strategy value objects and keeps combination algorithms deferred.
+Python implementation owns these types in
+`app/domain/strategy/contract.py` and
+`app/domain/strategy/composite/contract.py`; `DeterministicEngine` hydrates
+persisted JSON and resolves children. Combination algorithms are Python classes.
 
 `ResolvedSignal` giữ child definition + signal để evidence tái tạo được:
 
-```go
-type ResolvedSignal struct {
-	StrategyID string
-	Version    string
-	Weight     decimal.Decimal
-	Signal     strategy.Signal
-}
+```python
+@dataclass
+class ResolvedSignal:
+    strategy_id: str
+    version: str
+    signal: Signal
+    weight: float
 ```
 
-## Snapshot schema
+## Current implementation alignment
+
+`DeterministicEngine._validate_composite()` currently enforces cardinality,
+non-negative/positive-total weights and threshold bounds. It also rejects nested
+composites and unknown combiner policies during plan resolution. It does not yet
+validate the encoding map, `signed_size`, or canonicalize child-array order.
+`WeightedVoteCombiner` uses the fixed `BUY/HOLD/SELL = 1/0/-1` map.
+The engine uses `fixed_notional` directly; `SizePolicy` and `OrderIntent` are
+target concepts, not current runtime classes.
+
+The runtime persists composite `child_signals` as a list of child records plus
+`score` and `action`, not as an object keyed by strategy ID. Canonical JSON
+normalizes object-key order, but the current candidate hash does not normalize
+child-array order. The stronger canonical-hash and encoding-validation rules
+below remain target acceptance criteria.
+
+## Target snapshot schema
 
 ```json
 {
   "strategy_id": "composite",
-  "version": "1.0.0",
+  "version": "v1",
   "children": [
-    {"strategy_id":"ma_cross","version":"1.0.0","parameters":{"fast":20,"slow":50},"weight":"0.2"},
-    {"strategy_id":"rsi","version":"1.0.0","parameters":{"period":14},"weight":"0.3"},
-    {"strategy_id":"support_resistance","version":"1.0.0","parameters":{"lookback":80},"weight":"0.5"}
+    {"strategy_id":"ma_cross","version":"v1","parameters":{"fast":20,"slow":50},"weight":0.2},
+    {"strategy_id":"rsi","version":"v1","parameters":{"period":14},"weight":0.3},
+    {"strategy_id":"support_resistance","version":"v1","parameters":{"period":80},"weight":0.5}
   ],
   "policy": {
     "name":"weighted_vote",
-    "threshold":"0.3",
+    "threshold":0.3,
     "encoding":{"BUY":1,"HOLD":0,"SELL":-1}
   }
 }
@@ -106,7 +126,8 @@ Validation:
 - threshold `[0,1]`;
 - encoding contains exactly BUY/HOLD/SELL with `+1/0/-1`;
 - duplicate exact child rejected; same strategy with different parameters valid;
-- child BUY/SELL signal price and signed size validated before combination.
+- child BUY/SELL signal price validated before combination; `signed_size` is carried
+  in `Signal` but is not consumed or validated by the current combiner.
 
 ## Luồng chính
 
@@ -114,8 +135,8 @@ Validation:
 sequenceDiagram
     autonumber
     participant ENG as BacktestEngine
-    participant REG as StrategyRegistry
-    participant MA as MA Strategy
+    participant REG as Registry
+    participant MA as MovingAverageCross
     participant RSI as RSI Strategy
     participant SR as Support/Resistance Strategy
     participant CMB as WeightedVoteCombiner
@@ -137,7 +158,8 @@ sequenceDiagram
 ```
 
 Warm-up bắt đầu tại `max(child warm_up_candles)`, không phải nến 0. Với
-MA(50), RSI(14), SR(80), engine bắt đầu index 80.
+MA(50), RSI(14), SR(80), code hiện tại bắt đầu index 81 vì
+`SupportResistanceStrategy.warm_up_candles` trả `period + 1`.
 
 ## Weighted vote
 
@@ -162,22 +184,11 @@ Child non-HOLD thiếu price là validation error, không silently drop. Composi
 không tự resolve quantity; Backtest dùng `fixed_notional / limit_price` theo
 execution snapshot.
 
-Go-shaped implementation:
-
-```go
-func (WeightedVoteCombiner) Combine(children []ResolvedSignal, p CombinationPolicy) (strategy.Signal, error) {
-	var totalWeight, score decimal.Decimal
-	for _, child := range children {
-		if child.Weight.IsNegative() { return strategy.Signal{}, ErrInvalidWeight }
-		value := decimal.NewFromInt(int64(p.Encoding[child.Signal.Action]))
-		totalWeight = totalWeight.Add(child.Weight)
-		score = score.Add(child.Weight.Mul(value))
-	}
-	if totalWeight.IsZero() { return strategy.Signal{}, ErrZeroTotalWeight }
-	score = score.Div(totalWeight)
-	return signalFromScore(score, p.Threshold), nil
-}
-```
+Runtime implementation is Python in
+`app/domain/strategy/composite/contract.py`: `WeightedVoteCombiner` and
+`MajorityVoteCombiner` are pure classes. The `Decimal` name imported by the
+Python domain is a `float64` alias; the combiner currently uses the fixed
+`BUY/HOLD/SELL = 1/0/-1` encoding rather than reading a custom policy encoding.
 
 ## Majority vote
 
@@ -193,11 +204,11 @@ sao không mua”; bulk insert theo batch.
 
 ```json
 {
-  "children": {
-    "ma_cross@1.0.0": {"action":"BUY","price":"118050"},
-    "rsi@1.0.0": {"action":"SELL","price":"118050"},
-    "support_resistance@1.0.0": {"action":"BUY","price":"118050"}
-  },
+  "children": [
+    {"strategy_id":"ma_cross","version":"v1","action":"BUY","price":118050,"weight":0.2},
+    {"strategy_id":"rsi","version":"v1","action":"SELL","price":118050,"weight":0.3},
+    {"strategy_id":"support_resistance","version":"v1","action":"BUY","price":118050,"weight":0.5}
+  ],
   "score":"0.4",
   "action":"BUY"
 }
@@ -225,7 +236,7 @@ sao không mua”; bulk insert theo batch.
 **Tính đúng đắn**
 
 - `Combine` pure, không I/O/network/clock/random.
-- Score/weight/threshold/price dùng Decimal.
+- Score/weight/threshold/price dùng Python `float64` (domain alias `Decimal`).
 - Strict threshold, đối xứng BUY/SELL.
 - `warm_up_candles(composite) = max(child warm-up)`.
 - Snapshot bất biến; đổi composite tạo experiment mới.
@@ -239,7 +250,7 @@ sao không mua”; bulk insert theo batch.
 
 **Khả năng mở rộng**
 
-- Combiner mới = một Go file đăng ký policy.
+- Combiner mới = một Python class + registry/engine mapping tương ứng.
 - Strategy mới = một plugin file theo `strategy-registry.md`.
 - Nested composite là extension validator, không đổi Backtest/Evaluation contract.
 
@@ -249,7 +260,7 @@ sao không mua”; bulk insert theo batch.
 - [ ] AC-02: Majority `{BUY, BUY, HOLD}` → BUY, confidence `2/3`.
 - [ ] AC-03: Threshold `0.5` với cùng signals → HOLD, hash khác.
 - [ ] AC-04: Canonical JSON key order khác nhau → cùng candidate hash.
-- [ ] AC-05: Combiner mới chỉ thêm một Go file + test.
+- [ ] AC-05: Combiner mới chỉ thêm một Python class + test.
 - [ ] AC-06: Threshold 0, score 0 → HOLD; score dương/âm khác 0 → direction tương ứng.
 - [ ] AC-07: Child lỗi không bị biến thành HOLD; worker/search tiếp tục candidate kế tiếp.
 - [ ] AC-08: Warm-up composite đúng max child requirement.

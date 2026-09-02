@@ -1,82 +1,155 @@
 classDiagram
     direction LR
 
-    class NewsSourceAdapter {
-        <<interface>>
-        +id() String
-        +supports(sourceConfig) bool
-        +collect(since, limit) SourceItem[]
+    class ApprovedSource {
+        +id: UUID
+        +source_key: str
+        +display_name: str
+        +kind: rss | url
+        +allowed_origin: str
+        +url_template: str
+        +is_active: bool
     }
 
-    class RSSSourceAdapter {
-        +collect(since, limit) SourceItem[]
+    class CollectedItem {
+        +source_id: UUID
+        +canonical_url: str
+        +url_hash: str
+        +title: str
+        +content: str
+        +content_hash: str
+        +published_at: datetime
+        +related_coins: tuple~str~
+        +extraction_version: str
+        +tagging_version: str
     }
 
-    class HTMLSourceAdapter {
-        +collect(since, limit) SourceItem[]
+    class NewsProvider {
+        <<protocol>>
+        +collect(source, since) CollectedItem[]
     }
 
-    class NewsSourceRegistry {
-        +register(adapter)
-        +resolve(sourceConfig) NewsSourceAdapter
+    class RssNewsProvider {
+        -resolver: Resolver
+        -fetcher: Fetcher
+        +collect(source, since) CollectedItem[]
+        -_parse(payload) CollectedItem[]
     }
 
-    class SafeFetcher {
-        +fetch(approvedUrl) SanitizedDocument
-        -validateSchemeHostIpRedirect()
-        -enforceSizeTypeTimeout()
+    class HtmlNewsProvider {
+        +collect(source, since) CollectedItem[]
+        -_parse(source, page_url, payload, since) CollectedItem[]
     }
 
-    class ContentExtractor {
-        <<interface>>
-        +extract(document) ExtractionResult
+    class HtmlQualityGateFailed {
+        <<exception>>
+        +page_url: str
+        +document_text: str
+        +title_hint: str
+        +published_at: datetime
+        +reason: str
     }
 
-    class ReadabilityExtractor {
-        +extract(document) ExtractionResult
+    class SsrfBlocked {
+        <<exception>>
+        +reason: str
     }
 
-    class AgentFallbackExtractor {
-        +extract(document, diagnostics) ExtractionResult
+    class NewsProviderError {
+        <<exception>>
+        +code: str
     }
 
-    class ContentQualityGate {
-        +validate(result) QualityResult
+    class NewsService {
+        -store: Store
+        -provider: NewsProvider | dict
+        -analyzer: SentimentAnalyzer
+        -extractor: NewsExtractionHTTPAdapter | None
+        +collect_all(source_id) CollectionResult[]
+        +collect_source(source, correlation_id) CollectionResult
+        -_fallback_item(source, quality_failure, correlation_id) CollectedItem
+        +analyze_pending(model, model_version, limit) SentimentBatchResult
     }
 
-    class NewsCollectionService {
-        +collectAll(since)
-        +persistNormalized(result)
+    class NewsExtractionHTTPAdapter {
+        +extract(document_text, request_id) NewsExtraction
+        +cache_key(document_text) str | None
     }
 
-    class NewsTagger {
-        +tag(document) NewsTags
+    class NewsExtraction {
+        +title: str
+        +body: str
+        +model: str
+        +model_version: str
     }
 
     class SentimentAnalyzer {
-        <<interface>>
-        +analyze(document) SentimentResult
+       <<protocol>>
+       +analyze(text, request_id) SentimentResult
     }
 
-    class ModelSentimentAdapter {
-        +analyze(document) SentimentResult
+    class SentimentResult {
+        +label: str
+        +score: float
+        +model: str
+        +model_version: str
+        +analyzed_at: datetime
     }
 
-    NewsSourceAdapter <|.. RSSSourceAdapter
-    NewsSourceAdapter <|.. HTMLSourceAdapter
-    NewsSourceRegistry o-- NewsSourceAdapter
-    ContentExtractor <|.. ReadabilityExtractor
-    ContentExtractor <|.. AgentFallbackExtractor
-    SentimentAnalyzer <|.. ModelSentimentAdapter
+    class SentimentHTTPAdapter {
+        +analyze(text, request_id) SentimentResult
+        +analyze_aggregate(text, request_id) SentimentResult
+    }
 
-    HTMLSourceAdapter --> SafeFetcher
-    HTMLSourceAdapter --> ReadabilityExtractor
-    NewsCollectionService --> NewsSourceRegistry
-    NewsCollectionService --> ContentQualityGate
-    NewsCollectionService --> AgentFallbackExtractor : only after deterministic failure
-    NewsCollectionService --> NewsTagger
-    NewsCollectionService --> SentimentAnalyzer
+    class Store {
+        <<infrastructure.postgres>>
+        +list_approved_sources(source_id) ApprovedSource[]
+        +begin_news_collection(source_id) UUID | None
+        +complete_news_collection(job_id, source, items, correlation_id)
+        +persist_news_document(source, failure) UUID
+        +find_news_extraction(document_id, cache_key) CollectedItem | None
+        +persist_news_extraction(...)
+        +pending_sentiment_items(model, model_version, limit) dict[]
+        +persist_sentiment(news_item_id, result) bool
+    }
 
-    note for SafeFetcher "HTTPS allowlist, SSRF and redirect guards.<br/>No arbitrary agent-controlled HTTP."
-    note for AgentFallbackExtractor "Reads already-fetched sanitized HTML.<br/>Must preserve source evidence and never fabricate."
-    note for NewsCollectionService "Crawler and sentiment remain separable.<br/>News collection still works when AI is unavailable."
+    class NewsWorker {
+        +collect_all() CollectionResult[]
+        +analyze_pending() SentimentBatchResult
+    }
+
+    class Resolver {
+        <<callable>>
+        +resolve(host, port) str[]
+    }
+
+    class Fetcher {
+        <<callable>>
+        +get(url, host, addresses) response
+    }
+
+    NewsProvider <|.. RssNewsProvider
+    NewsProvider <|.. HtmlNewsProvider
+    SentimentAnalyzer <|.. SentimentHTTPAdapter
+    RssNewsProvider --> Resolver
+    RssNewsProvider --> Fetcher
+    RssNewsProvider --> ApprovedSource
+    HtmlNewsProvider --> ApprovedSource
+    HtmlNewsProvider ..> HtmlQualityGateFailed : short/invalid article
+    RssNewsProvider ..> NewsProviderError
+    HtmlNewsProvider ..> NewsProviderError
+    NewsService --> NewsProvider : provider map by kind
+    NewsService --> Store : jobs/items/cache
+    NewsService --> NewsExtractionHTTPAdapter : only after HTML quality failure
+    NewsService --> SentimentAnalyzer : pending backfill
+    NewsService --> CollectedItem
+    NewsExtractionHTTPAdapter --> NewsExtraction
+    SentimentHTTPAdapter ..> SentimentResult
+    NewsWorker --> NewsService : periodic collection + sentiment loop
+    Store --> ApprovedSource
+    Store --> CollectedItem
+
+    note for NewsProvider "Port is app/ports/news.py. Runtime bootstrap passes {rss: RssNewsProvider(), url: HtmlNewsProvider()}; no NewsSourceRegistry class."
+    note for HtmlNewsProvider "Current HTML parser is _ArticleParser, not a ReadabilityExtractor class.<br/>Safe HTTPS/DNS/redirect/size/type checks are module functions."
+    note for NewsService "Deterministic alias tagging happens inside provider normalization.<br/>Sentiment runs separately after collection; AI failure leaves item without result."
+    note for NewsExtractionHTTPAdapter "Current fallback is direct typed HTTP inference on sanitized failure.document_text.<br/>NewsExtractionAgent + five-tool orchestration remains P1 target, not runtime code."

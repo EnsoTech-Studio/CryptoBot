@@ -1,23 +1,23 @@
 # Đặc tả: Python News Collection và Adaptive Extraction
 
-Trạng thái: Python canonical; adaptive LLM extraction là P1 target gap  
+Trạng thái: Python canonical; deterministic RSS/HTML + direct typed LLM fallback implemented; agent-tool fallback là P1 target gap
 Owner: Python `research`  
 Nguồn: `[SRC]` news Collect -> Store -> Analyze và `[SRC-ADD]` resilient HTML extraction
 
 ## Mô tả
 
-News Pipeline thu thập từ approved RSS/API/HTML sources, lưu document/item có provenance,
+News Pipeline thu thập từ approved RSS/HTML sources, lưu document/item có provenance,
 gắn coin tag và chuyển validated content sang Sentiment orchestration. Khi website đổi HTML,
-deterministic Readability Extractor chạy trước; chỉ khi Content Quality Gate fail mới gọi
-`NewsExtractionAgent` trên HTML đã safe-fetch/sanitize.
+current `HtmlNewsProvider` parser chạy trước; quality failure gọi trực tiếp typed
+`NewsExtractionHTTPAdapter` trên document đã sanitize. Agent/tool orchestration là P1 target.
 
 ```text
 Approved Source
-  -> Safe Fetcher
-  -> RSS/API normalize hoặc HTML Readability Extractor
+  -> provider HTTPS guards
+  -> RSS normalize hoặc HTML parser trong provider
   -> Content Quality Gate
        -> pass: normalize
-       -> fail: NewsExtractionAgent on sanitized HTML
+       -> fail: direct typed AI extraction on sanitized text (current)
   -> schema + quality validation
   -> content/model/prompt/schema hash cache
   -> deterministic coin tagging + optional structured model tagging
@@ -33,21 +33,35 @@ edge; Go proxy authorized query tới Python và không parse article.
 
 ```json
 {
-  "source_id": "coindesk",
-  "kind": "html",
-  "origin": "https://www.coindesk.com",
-  "entry_url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
-  "allowed_content_types": ["text/html", "application/rss+xml"],
-  "max_bytes": 2097152,
-  "timeout_ms": 10000,
-  "redirect_limit": 3,
-  "enabled": true
+  "id": "01J_SOURCE",
+  "source_key": "coindesk",
+  "kind": "rss",
+  "allowed_origin": "https://www.coindesk.com",
+  "url_template": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+  "is_active": true
 }
 ```
 
 Source update chỉ ADMIN/operator; config change audited và versioned.
 
-## Safe Fetcher
+## Current implementation alignment
+
+`app/news_worker.py` constructs `NewsService` with a provider map:
+`{"rss": RssNewsProvider(), "url": HtmlNewsProvider()}`. There is no
+`NewsSourceRegistry`, `SafeFetcher`, `ReadabilityExtractor`, `ContentQualityGate`,
+`NewsTagger` or `NewsExtractionAgent` class in the current runtime. HTTPS/origin/
+DNS/redirect/size/type guards are provider/module functions; HTML parsing is
+`HtmlNewsProvider._ArticleParser`; quality failure is `HtmlQualityGateFailed`.
+
+After that exception, `NewsService._fallback_item()` calls the typed
+`NewsExtractionHTTPAdapter` directly with sanitized document text, validates title/body
+evidence, and persists the extraction cache. The five-tool agent fallback described
+below remains a P1 target.
+
+The sections below describe the target P1 extension contract. They must not be read as
+the current class/module topology unless the current-alignment section says so.
+
+## Safe Fetcher target contract
 
 Network chỉ nằm trong deterministic infrastructure fetcher. Mỗi request/redirect:
 
@@ -184,15 +198,15 @@ không fake `NEUTRAL`. Chi tiết ở `sentiment.md`.
 ## Luồng chính
 
 1. Python scheduler claim source job với bounded concurrency/rate policy.
-2. Safe Fetcher tải và persist sanitized document hoặc structured fetch failure.
-3. RSS/API/Readability extractor chạy deterministic.
-4. Quality Gate pass -> normalize; fail -> create NewsExtractionAgent run.
-5. Agent dùng 5 allowed tools, output được validate.
-6. Extraction result cache/persist idempotently.
-7. Coin tagger chạy deterministic/optional model adapter.
-8. Persist item/tags + `news.collected` outbox atomically.
-9. Sentiment worker xử lý asynchronously.
-10. Go query/fan-out persisted summary; chart/backtest technical không phụ thuộc news success.
+2. Provider thực hiện HTTPS/origin/DNS/redirect/size/type guards và chuẩn hóa payload.
+3. `RssNewsProvider` hoặc `HtmlNewsProvider` parse deterministic.
+4. HTML quality failure -> direct typed `NewsExtractionHTTPAdapter` trên text đã sanitize.
+5. Extraction result cache/persist idempotently.
+6. Coin tagger chạy deterministic; sentiment worker xử lý asynchronously.
+7. Persist item + `news.collected` outbox atomically.
+8. Go query/fan-out persisted summary; chart/backtest technical không phụ thuộc news success.
+
+Agent/tool fallback năm tool vẫn là target P1; không phải bước runtime hiện tại.
 
 ## Persistence
 

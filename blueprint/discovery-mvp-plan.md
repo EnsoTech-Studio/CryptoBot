@@ -1,11 +1,16 @@
 # Strategy Discovery MVP Plan
 
-Status: `IMPLEMENTED — runtime verified locally; Supabase live replay interrupted by provider restart`
+Status: `PARTIALLY IMPLEMENTED — core path verified by unit tests; target archive/risk/controller gaps remain`
 
-This document defines a one-day strategy-discovery demonstration and its
-implemented verification contract. Runtime, database, API, UI, and environment
-changes are tracked in repository code; live evidence remains data/provider
-dependent.
+Implementation alignment: current code uses `Store` methods plus pure functions in
+`app/services/search.py`; it has no `DiscoveryController` class. Candidate envelopes
+currently hash `candidate_definition` only, without the planned `risk_policy`. The
+four-job reservation is recorded, while train is queued first and validation jobs
+are created only after the train gate. Do not treat target-only fields as runtime evidence.
+
+This document defines a one-day strategy-discovery demonstration and its target
+verification contract. Runtime, database, API, UI, and environment changes are
+tracked in repository code; live evidence remains data/provider dependent.
 
 ## Goal
 

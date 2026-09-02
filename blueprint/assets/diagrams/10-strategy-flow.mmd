@@ -1,30 +1,34 @@
 sequenceDiagram
     autonumber
-    participant EXS as ExperimentService
-    participant REG as StrategyRegistry
-    participant IND as IndicatorLibrary
-    participant MA as MAStrategy
+    participant W as BacktestWorker
+    participant ENG as DeterministicEngine
+    participant REG as Registry
+    participant IND as DeterministicLibrary
+    participant MA as MovingAverageCross
     participant RSI as RSIStrategy
     participant SR as SupportResistanceStrategy
     participant CMB as WeightedVoteCombiner
+    participant DB as PostgreSQL
 
-    EXS->>REG: resolve(candidate.children)
-    REG-->>EXS: [MAStrategy@1.0.0, RSIStrategy@1.0.0, SupportResistanceStrategy@1.0.0]
-    Note over REG: Lookup trong dict, KHÔNG có if/elif theo tên.<br/>Nếu strategy_id không tồn tại → lỗi ở tầng validate,<br/>không phải nhánh else âm thầm.
+    W->>ENG: run(snapshot, candles, bbo, sentiment_windows)
+    ENG->>REG: resolve(exact child strategy_id, version)
+    REG-->>ENG: fresh plugin instances
+    Note over REG: Current catalog uses ma_cross@v1, ema_cross@v1,<br/>rsi@v1, bollinger@v1, support_resistance@v1,<br/>smc@v1, news_sentiment@v1, macd@v1, composite@v1.
 
-    EXS->>EXS: union input_requirements của tất cả children
-    EXS->>IND: precompute(candles, {sma:[20,50], rsi:[14], sr:[80]})
-    IND-->>EXS: indicators aligned với candles (None ở vùng warm-up)
+    ENG->>ENG: collect dynamic requirements(params)<br/>and max child warm-up
+    ENG->>IND: precompute(all closes, sorted unique requirements)
+    IND-->>ENG: raw indicator series with None during warm-up
 
-    loop mỗi nến t từ warm_up_end tới cuối
-        EXS->>EXS: ctx = AnalysisContext(candles[:t+1], index=t, IndicatorView(raw, t), params)
-        EXS->>MA: analyze(ctx)
-        MA-->>EXS: Signal(BUY, evidence={ma20:118050, ma50:117800})
-        EXS->>RSI: analyze(ctx)
-        RSI-->>EXS: Signal(SELL, evidence={rsi:72.4})
-        EXS->>SR: analyze(ctx)
-        SR-->>EXS: Signal(BUY, evidence={nearest_support:117500})
-        EXS->>CMB: combine([(spec,sig)...], policy=weighted_vote@0.3)
-        CMB->>CMB: score = 1×0.2 + (−1)×0.3 + 1×0.5 = 0.4
-        CMB-->>EXS: Signal(BUY, confidence=0.4)
+    loop each merged BBO or CandleClosed event
+        ENG->>ENG: apply BBO, or build CausalCandles + IndicatorView(cursor)
+        ENG->>MA: analyze(context with child params)
+        MA-->>ENG: Signal(BUY/SELL/HOLD, price=closed candle close)
+        ENG->>RSI: analyze(context with child params)
+        RSI-->>ENG: Signal(BUY/SELL/HOLD)
+        ENG->>SR: analyze(context with child params)
+        SR-->>ENG: Signal(BUY/SELL/HOLD)
+        ENG->>CMB: combine(ResolvedSignal[], CombinationPolicy)
+        CMB->>CMB: weighted score, strict threshold
+        CMB-->>ENG: combined Signal + score evidence
+        ENG->>DB: persist non-HOLD signal, orders, trades and equity
     end

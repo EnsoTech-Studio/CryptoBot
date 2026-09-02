@@ -1,64 +1,69 @@
 sequenceDiagram
     autonumber
-    participant SCH as Python Scheduler
-    participant NC as Python News Service
-    participant CFG as Approved Source Registry
-    participant RSS as RSS Adapter
-    participant FETCH as Safe Fetcher
-    participant EXT as External Source
-    participant READ as Readability Extractor
-    participant GATE as Content Quality Gate
-    participant AGT as NewsExtractionAgent
-    participant AI as Internal AI Adapter
-    participant TAG as News Tagger
-    participant SENT as Sentiment Orchestrator
-    participant DB as Python-owned PostgreSQL/Object Storage
+    participant SCH as NewsWorker
+    participant NC as NewsService
+    participant DB as Store / PostgreSQL
+    participant MAP as Provider map
+    participant RSS as RssNewsProvider
+    participant HTML as HtmlNewsProvider
+    participant EXT as Approved source config
+    participant HTTP as Pinned HTTPS fetch
+    participant XAI as NewsExtractionHTTPAdapter
+    participant SENT as SentimentHTTPAdapter
 
-    SCH->>NC: collect_all(since checkpoint)
-    NC->>CFG: active allowlisted sources
-    CFG-->>NC: RSS feeds and article-origin rules
-
-    alt RSS source
-        NC->>RSS: collect metadata with bounded request
-        RSS->>EXT: GET RSS
-        EXT-->>RSS: RSS XML
-        RSS-->>NC: title, URL, summary, published_at
-    else approved article URL
-        NC->>FETCH: fetch URL
-        FETCH->>FETCH: HTTPS, DNS/IP, redirect, size and type guards
-        FETCH->>EXT: GET article
-        EXT-->>FETCH: HTML
-        FETCH->>READ: sanitize then deterministic extraction
-        READ-->>NC: document_id, canonical text, content_hash, diagnostics
-    end
-
-    NC->>GATE: validate text/content/provenance quality
-    alt quality passes
-        GATE-->>NC: normalized document
-    else quality fails
-        GATE-->>NC: persisted extraction failure reference
-        NC->>AGT: run with document_id and failure reference
-        AGT->>AGT: typed tools read sanitized HTML, diagnostics and schema
-        AGT->>AI: structured extraction request only
-        AI-->>AGT: proposed structured document
-        AGT->>GATE: schema + quality + provenance validation
-        alt fallback valid
-            GATE-->>NC: recovered normalized document
-        else fallback invalid
-            GATE-->>NC: terminal extraction failure, do not fabricate content
+    SCH->>NC: collect_all()
+    NC->>DB: list_approved_sources()
+    DB-->>NC: ApprovedSource[]
+    loop each source
+        NC->>DB: begin_news_collection(source_id)
+        DB-->>NC: job_id (already_running returns immediately)
+        NC->>DB: latest_news_collection(source_id)
+        NC->>MAP: get(source.kind)
+        alt kind = rss
+            MAP->>RSS: collect(source, since)
+            RSS->>RSS: HTTPS/origin/DNS/redirect/size/type guards
+            RSS->>HTTP: bounded GET url_template
+            HTTP-->>RSS: RSS/Atom bytes
+            RSS-->>NC: CollectedItem[] with hashes and alias tags
+        else kind = url
+            MAP->>HTML: collect(source, since)
+            HTML->>HTML: HTTPS/origin/DNS/redirect/size/type guards
+            HTML->>HTTP: bounded GET url_template
+            HTTP-->>HTML: HTML bytes
+            HTML->>HTML: _ArticleParser + sanitize + title/body quality check
+            alt quality pass
+                HTML-->>NC: CollectedItem(extraction_version=html-v1)
+            else quality failure
+                HTML-->>NC: HtmlQualityGateFailed(sanitized text, diagnostics)
+                NC->>DB: persist_news_document(source, failure)
+                NC->>DB: find_news_extraction(document_id, cache_key)
+                alt cache miss and extractor configured
+                    NC->>XAI: extract(document_text)
+                    XAI-->>NC: title, body, model, model_version
+                    NC->>DB: persist_news_extraction(completed or failed)
+                end
+                NC-->>NC: build evidence-checked CollectedItem<br/>or fail without placeholder
+            end
+        end
+        opt collection succeeded
+            NC->>DB: complete_news_collection(job_id, items)
+            DB->>DB: UPSERT news_items + NewsCollected outbox atomically
         end
     end
 
-    NC->>DB: UPSERT NewsDocument by url_hash/content_hash
-    NC->>TAG: structured tags with model/prompt version
-    TAG-->>NC: validated tags and evidence spans
-    NC->>DB: UPSERT NewsTags by content/model/prompt hash
-    NC->>SENT: classify canonical text
-    alt model output valid
-        SENT-->>NC: label, score, model_version
-        NC->>DB: UPSERT SentimentResult
-    else model unavailable or invalid
-        NC->>DB: persist failed analysis, sentiment remains null/unavailable
+    SCH->>NC: analyze_pending(model, model_version, limit)
+    NC->>DB: pending_sentiment_items()
+    loop each pending item
+        NC->>SENT: analyze(title + content[:2000])
+        SENT->>SENT: POST /predict
+        alt valid result and matching model identity
+            SENT-->>SENT: label, score, model, model_version
+            SENT-->>NC: Result
+            NC->>DB: persist_sentiment() ON CONFLICT DO NOTHING
+        else unavailable or contract violation
+            SENT-->>SENT: failure/invalid payload
+            SENT-->>NC: unavailable, no fake NEUTRAL and no row
+        end
     end
 
-    Note over AGT,AI: Agent has no fetch, arbitrary HTTP, SQL or direct DB-write tool.
+    Note over NC,XAI: Current fallback is direct typed inference.<br/>NewsExtractionAgent/readability/quality-gate classes are P1 target-only.
