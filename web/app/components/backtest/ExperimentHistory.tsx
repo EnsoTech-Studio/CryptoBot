@@ -97,8 +97,10 @@ export function ExperimentHistory({
                       {record.metrics ? `${record.metrics.total_return_pct >= 0 ? "+" : ""}${record.metrics.total_return_pct.toFixed(2)}%` : "—"}
                     </td>
                     <td className={styles.historyActions}>
-                      <Button variant="ghost" onClick={() => setDetailId(record.id)}>Chi tiết</Button>
-                      {canCancelBacktest(record.status) ? <Button variant="danger" onClick={() => onCancel(record.id)}>Hủy</Button> : null}
+                      <div className={styles.historyActionButtons}>
+                        <Button variant="ghost" onClick={() => setDetailId(record.id)}>Chi tiết</Button>
+                        {canCancelBacktest(record.status) ? <Button variant="danger" onClick={() => onCancel(record.id)}>Hủy</Button> : null}
+                      </div>
                     </td>
                   </tr>
                 ))}

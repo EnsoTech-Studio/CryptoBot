@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, apiUrl, type MarketDataset } from "../../../lib/api";
 import { MOCK_DATASETS, MOCK_TRADES } from "../../../lib/backtest-mock";
@@ -67,6 +67,9 @@ function BacktestContent() {
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [uiCancelled, setUiCancelled] = useState(false);
   const [mockRunState, setMockRunState] = useState<"idle" | "running" | "completed">("idle");
+  const [submitPending, setSubmitPending] = useState(false);
+  const submitLock = useRef(false);
+  const submitOriginExperimentId = useRef<string | null>(null);
   const [datasetAction, setDatasetAction] = useState<"idle" | "creating">("idle");
   const [datasetActionError, setDatasetActionError] = useState("");
   const backtestStrategies = useMemo(
@@ -142,7 +145,7 @@ function BacktestContent() {
   }, [dataMode, effectiveTimeframe, market]);
 
   const issues = backtestIssues(effectiveDraft);
-  const running = !uiCancelled && (experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
+  const running = !uiCancelled && (submitPending || experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
   const completed = !uiCancelled && experiment?.status === "completed" && result !== null;
   const visibleExperimentStatus = uiCancelled ? "cancelled" : experiment?.status;
   const isMock = dataMode === "mock" && !completed;
@@ -160,13 +163,24 @@ function BacktestContent() {
   const kpis = useMemo(() => deriveKpis(trades), [trades]);
   const shownDraft = submitted ?? effectiveDraft;
 
+  /* Lock synchronously on the first click. React state alone is not enough:
+     two clicks in the same event loop can both observe the old false value
+     before the disabled prop re-renders. Release once the newly accepted run
+     replaces the previous experiment, or immediately when submission fails. */
+  useEffect(() => {
+    if (!submitPending || !experiment || experiment.id === submitOriginExperimentId.current) return;
+    submitLock.current = false;
+    submitOriginExperimentId.current = null;
+    setSubmitPending(false);
+  }, [experiment, submitPending]);
+
   /* The API exposes individual experiments but no owner-scoped collection.
      Keep the rendered experiment ledger per signed-in user so it survives
      sign-out, reload, and a later login on this browser. */
   useEffect(() => {
     if (!user) return;
     try {
-      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history.slice(0, 20)));
+      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history));
     } catch {
       // Private-mode storage failures must not block a backtest.
     }
@@ -191,7 +205,7 @@ function BacktestContent() {
     const frame = window.requestAnimationFrame(() => {
       setHistory((current) => {
         const next = { ...summaryToHistory(experiment), ...(uiCancelled ? { status: "cancelled" } : {}) };
-        return [next, ...current.filter((record) => record.id !== experiment.id && !record.id.startsWith("draft-"))].slice(0, 20);
+        return [next, ...current.filter((record) => record.id !== experiment.id && !record.id.startsWith("draft-"))];
       });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -228,7 +242,10 @@ function BacktestContent() {
   }
 
   function submit() {
-    if (noStrategies) return;
+    if (submitLock.current || noStrategies) return;
+    submitLock.current = true;
+    submitOriginExperimentId.current = experiment?.id ?? null;
+    setSubmitPending(true);
     setUiCancelled(false);
     setSubmitted(effectiveDraft);
     const selectedNames = selectedChildren.map((child) => backtestStrategies.find((strategy) => strategy.strategy_id === child.strategy_id)?.display_name ?? child.strategy_id);
@@ -251,7 +268,10 @@ function BacktestContent() {
           parameters: Object.assign({}, ...selectedChildren.map((child) => child.parameters ?? {})),
           execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
           metrics: null,
-        }, ...current].slice(0, 20));
+        }, ...current]);
+        submitLock.current = false;
+        submitOriginExperimentId.current = null;
+        setSubmitPending(false);
       }, 700);
       return;
     }
@@ -270,7 +290,7 @@ function BacktestContent() {
       parameters: Object.assign({}, ...selectedChildren.map((child) => child.parameters ?? {})),
       execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
       metrics: null,
-    }, ...current].slice(0, 20));
+    }, ...current]);
     void runBacktest(
       selectedChildren,
       draftToExecution(effectiveDraft),
@@ -280,6 +300,9 @@ function BacktestContent() {
       effectiveDraft.datasetVersion,
     ).then((accepted) => {
       if (accepted) return;
+      submitLock.current = false;
+      submitOriginExperimentId.current = null;
+      setSubmitPending(false);
       setHistory((current) => current.map((record) => record.id === draftId ? { ...record, status: "failed" } : record));
     });
   }
@@ -411,7 +434,7 @@ function readExperimentHistory(ownerId: string): ExperimentHistoryRecord[] {
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(experimentHistoryStorageKey(ownerId)) ?? "[]");
     if (!Array.isArray(value)) return [];
-    return value.filter(isExperimentHistoryRecord).slice(0, 20);
+    return value.filter(isExperimentHistoryRecord);
   } catch {
     return [];
   }

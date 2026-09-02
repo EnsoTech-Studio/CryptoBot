@@ -363,9 +363,9 @@ def build_latex():
   \item \textbf{Contract \texttt{ISearchAlgorithm}:} Method \texttt{sample(space, rng)} implement qua RandomSearch, GeneticAlgorithm, BayesianOptimization.
   \item \textbf{3-Split Dataset Partitioning (Chống Overfitting):}
   \begin{itemize}
-    \item \textbf{Train (30d):} Search \& optimize strategy variants.
-    \item \textbf{Validation (15d):} Generalization evaluation (Gate check).
-    \item \textbf{Sealed Test (15d):} Out-of-sample benchmark cho Leaderboard.
+    \item \textbf{Train:} Search \& optimize strategy variants.
+    \item \textbf{Validation:} Generalization evaluation (Gate check).
+    \item \textbf{Sealed Test:} Out-of-sample benchmark cho Leaderboard.
   \end{itemize}
   \item \textbf{Job Throttling:} \texttt{DiscoveryTrialReservation} (reserved\_jobs=4).
 \end{itemize}
