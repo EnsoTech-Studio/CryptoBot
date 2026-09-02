@@ -21,6 +21,7 @@ export function DiscoveryLeaderboard({
   referenceMode,
   onRefresh,
   onTrace,
+  onOpenExperiment,
 }: {
   entries: LeaderboardEntry[];
   archive: DiscoveryArchive | null;
@@ -29,6 +30,7 @@ export function DiscoveryLeaderboard({
   referenceMode: boolean;
   onRefresh: () => void;
   onTrace: (id: string) => void;
+  onOpenExperiment: (id: string) => void;
 }) {
   const archiveRows = archive
     ? [...archive.candidates]
@@ -85,7 +87,7 @@ export function DiscoveryLeaderboard({
                   <tr key={entry.id}>
                     <RankCell rank={entry.rank} />
                     <td>
-                      <PartList parts={[shortLabel(entry.strategy_id)]} />
+                      <StrategyLink entry={entry} onOpenExperiment={onOpenExperiment} />
                     </td>
                     <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
                       {entry.total_return_pct >= 0 ? "+" : ""}
@@ -122,7 +124,7 @@ export function DiscoveryLeaderboard({
             {entries.slice(0, 5).map((entry) => (
               <tr key={entry.id}>
                 <RankCell rank={entry.rank} />
-                <td><PartList parts={[shortLabel(entry.strategy_id)]} /></td>
+                <td><StrategyLink entry={entry} onOpenExperiment={onOpenExperiment} /></td>
                 <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
                   {entry.total_return_pct >= 0 ? "+" : ""}
                   {entry.total_return_pct.toFixed(2)}%
@@ -140,6 +142,14 @@ export function DiscoveryLeaderboard({
         </Panel>
       ) : null}
     </>
+  );
+}
+
+function StrategyLink({ entry, onOpenExperiment }: { entry: LeaderboardEntry; onOpenExperiment: (id: string) => void }) {
+  return (
+    <button type="button" className={styles.leaderStrategyButton} onClick={() => onOpenExperiment(entry.experiment_id)} aria-label={`Xem biểu đồ ${entry.strategy_id}`}>
+      <PartList parts={[shortLabel(entry.strategy_id)]} />
+    </button>
   );
 }
 

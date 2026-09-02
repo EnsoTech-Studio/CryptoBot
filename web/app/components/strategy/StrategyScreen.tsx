@@ -94,6 +94,17 @@ export function StrategyScreen() {
     }
   }
 
+  async function openReview(draftId: string) {
+    setError(null);
+    try {
+      const next = await api.strategyDraft(draftId);
+      setDraft(next);
+      if (next.strategy_spec) setName(next.strategy_spec.display_name);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Không thể mở strategy review.");
+    }
+  }
+
   return (
     <section className={styles.screen} aria-label="Không gian tạo strategy từ prompt hoặc URL">
       <div className={styles.stack}>
@@ -139,6 +150,7 @@ export function StrategyScreen() {
           drafts={strategyDrafts}
           referenceMode={dataMode === "mock"}
           onRun={(strategyId) => void runBacktest([{ strategy_id: strategyId, weight: 1 }])}
+          onReview={(draftId) => void openReview(draftId)}
         />
         {error ? <p className={styles.authoringError} role="alert">{error}</p> : null}
       </div>

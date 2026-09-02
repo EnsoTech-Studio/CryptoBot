@@ -70,6 +70,22 @@ test("strategy draft lookup requests the exact durable draft", async () => {
   }
 });
 
+test("strategy draft history requests all drafts when no page limit is supplied", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({ drafts: [] }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.strategyDrafts();
+    assert.match(requestedURL, /\/api\/v1\/strategy-drafts$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("trade result requests use the stable sequence cursor", async () => {
   const originalFetch = globalThis.fetch;
   let requestedURL = "";
@@ -84,6 +100,22 @@ test("trade result requests use the stable sequence cursor", async () => {
     await api.experimentTrades("experiment-1", 47, 20);
     assert.match(requestedURL, /after_sequence=47/);
     assert.match(requestedURL, /limit=20/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("experiment history requests the owner-scoped collection", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({ experiments: [] }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.experiments();
+    assert.match(requestedURL, /\/api\/v1\/experiments$/);
   } finally {
     globalThis.fetch = originalFetch;
   }

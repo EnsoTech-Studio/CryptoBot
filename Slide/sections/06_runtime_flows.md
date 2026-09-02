@@ -1,4 +1,4 @@
-## 18. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill
+## 20. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill
 
 <div class="columns">
 <div>
@@ -6,7 +6,7 @@
 ### Xử Lý Nến & Khôi Phục Khoảng Trống (Gap Backfill)
 1. **Khởi Tạo Biểu Đồ:** Tải 1,000 nến lịch sử từ Postgres/Binance REST cho đa khung thời gian (1m, 5m, 1h, 1d).
 2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật nến tạm thời (provisional candle).
-3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán sự kiện `CandleClosed` qua Redis.
+3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán trực tiếp sự kiện `CandleClosed` qua SSE/WebSocket broadcaster.
 4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các nến bị khuyết, đảm bảo chuỗi thời gian liên tục.
 
 </div>
@@ -19,7 +19,7 @@
 
 ---
 
-## 19. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
+## 21. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
 
 <div class="columns">
 <div>
@@ -44,7 +44,7 @@
 
 ---
 
-## 20. Runtime Flow: Pipeline Backtest Bất Đồng Bộ
+## 22. Runtime Flow: Pipeline Backtest Bất Đồng Bộ
 
 <div class="columns">
 <div>
@@ -65,7 +65,7 @@
 
 ---
 
-## 21. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback
+## 23. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback
 
 <div class="columns">
 <div>

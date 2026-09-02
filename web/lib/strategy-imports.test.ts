@@ -33,3 +33,18 @@ test("reference fixtures stay opt-in instead of leaking into live data", () => {
   assert.equal(recentImportRows([]).length, 0);
   assert.equal(recentImportRows([], true).length, 2);
 });
+
+
+test("queued drafts are not shown as waiting for human approval", () => {
+  const rows = recentImportRows([{
+    draft_id: "draft-queued",
+    source_type: "text",
+    status: "SPEC_GENERATING",
+    name_hint: "Queued strategy",
+    current_revision: 0,
+    created_at: "2026-08-31T10:30:00.000Z",
+    strategy_spec: null,
+  }]);
+
+  assert.equal(rows[0].status, "processing");
+});

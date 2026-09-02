@@ -34,6 +34,7 @@ from ...services.search import (
     discovery_split,
     generate_candidates,
 )
+from ...services.discovery.generators import flat_leaves
 from ...infrastructure.ai import DiscoveryLLMUnavailable
 from ...services.discovery.llm import DiscoveryProposalError
 
@@ -913,17 +914,18 @@ class Store:
             "updated_at": row["updated_at"],
         }
 
-    def list_strategy_drafts(self, owner_id: UUID, limit: int) -> list[dict[str, Any]]:
+    def list_strategy_drafts(self, owner_id: UUID, limit: int | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT id FROM strategy_drafts
+            WHERE owner_id=%s
+            ORDER BY updated_at DESC, id DESC
+        """
+        parameters: tuple[UUID, int] | tuple[UUID] = (owner_id,)
+        if limit is not None:
+            query += " LIMIT %s"
+            parameters = (owner_id, limit)
         with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT id FROM strategy_drafts
-                WHERE owner_id=%s
-                ORDER BY updated_at DESC, id DESC
-                LIMIT %s
-                """,
-                (owner_id, limit),
-            ).fetchall()
+            rows = connection.execute(query, parameters).fetchall()
         return [self.get_strategy_draft(row["id"], owner_id) for row in rows]
 
     def approve_strategy_draft(self, draft_id: UUID, request: StrategyApprovalIn) -> dict[str, Any]:
@@ -1349,6 +1351,20 @@ class Store:
         ):
             row.pop(key, None)
         return row
+
+    def list_experiments(self, owner_id: UUID, limit: int | None = None) -> list[dict[str, Any]]:
+        query = """
+            SELECT id FROM experiments
+            WHERE owner_id=%s
+            ORDER BY created_at DESC, id DESC
+        """
+        parameters: tuple[UUID, int] | tuple[UUID] = (owner_id,)
+        if limit is not None:
+            query += " LIMIT %s"
+            parameters = (owner_id, limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [self.get_experiment(row["id"], owner_id) for row in rows]
 
     def list_experiment_candles(self, experiment_id: UUID) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -1824,6 +1840,13 @@ class Store:
             )
         if candidate is None:
             return False
+        for leaf in flat_leaves(candidate["candidate_definition"]):
+            child = connection.execute(
+                "SELECT id FROM strategy_versions WHERE strategy_id=%s AND version=%s",
+                (leaf["strategy_id"], leaf.get("version", "v1")),
+            ).fetchone()
+            if child is None:
+                return False
         strategy = connection.execute(
             "SELECT id FROM strategy_versions WHERE strategy_id=%s AND version=%s",
             (candidate["strategy_id"], candidate["strategy_version"]),
@@ -1951,11 +1974,15 @@ class Store:
             row = connection.execute(
                 """SELECT p.search_candidate_id,p.partition,p.validation_ordinal,c.search_run_id,
                           c.candidate_definition,c.candidate_hash,c.generation_meta,s.*,d.id AS dataset_id,
-                          d.bbo_content_hash,d.content_hash
+                          d.bbo_content_hash,d.content_hash,r.status AS run_status,
+                          r.error_code AS run_error_code,r.error_detail AS run_error_detail,
+                          j.status AS job_status,j.last_error AS job_last_error
                    FROM discovery_candidate_experiments p
                    JOIN search_candidates c ON c.id=p.search_candidate_id
                    JOIN search_runs s ON s.id=c.search_run_id
                    JOIN market_datasets d ON d.id=s.market_dataset_id
+                   JOIN backtest_runs r ON r.experiment_id=p.experiment_id
+                   JOIN backtest_jobs j ON j.experiment_id=p.experiment_id
                    WHERE p.experiment_id=%s FOR UPDATE OF c,s""",
                 (experiment_id,),
             ).fetchone()
@@ -1975,6 +2002,37 @@ class Store:
                 (experiment_id,),
             ).fetchone()
             if evaluation is None:
+                if row["run_status"] != "failed":
+                    return
+                failure_code = str(
+                    row.get("run_error_code")
+                    or row.get("job_last_error")
+                    or "backtest_failed"
+                ).split(":", 1)[0]
+                ranges = row["discovery_state"]["split"]
+                dataset = {"id": row["dataset_id"], "bbo_content_hash": row["bbo_content_hash"]}
+                if row["partition"] == "test":
+                    connection.execute(
+                        "UPDATE search_runs SET status='completed',stop_reason='final_test_failed',updated_at=now() WHERE id=%s",
+                        (row["search_run_id"],),
+                    )
+                    return
+                self._finish_discovery_candidate(
+                    connection,
+                    row,
+                    None,
+                    [],
+                    {
+                        "accepted": False,
+                        "rejection_reason": f"backtest_failed:{failure_code}"[:80],
+                        "backtest_failed": True,
+                        "failure": {
+                            "error_code": failure_code,
+                            "error_detail": row.get("run_error_detail"),
+                        },
+                    },
+                )
+                self._continue_discovery(connection, row, dataset, ranges)
                 return
             ranges = row["discovery_state"]["split"]
             dataset = {"id": row["dataset_id"], "bbo_content_hash": row["bbo_content_hash"]}
@@ -2089,10 +2147,20 @@ class Store:
         self,
         connection: Any,
         row: dict[str, Any],
-        train_id: UUID,
+        train_id: UUID | None,
         validation_ids: list[UUID],
         assessment: dict[str, Any],
     ) -> None:
+        if assessment.get("backtest_failed"):
+            connection.execute(
+                """UPDATE backtest_jobs j
+                   SET status='cancelled',completed_at=now(),last_error='discovery_candidate_failed'
+                   FROM discovery_candidate_experiments p
+                   WHERE p.experiment_id=j.experiment_id
+                     AND p.search_candidate_id=%s
+                     AND j.status='queued'""",
+                (row["search_candidate_id"],),
+            )
         connection.execute(
             """INSERT INTO discovery_assessments(search_candidate_id,train_evaluation_id,validation_evaluation_ids,score,accepted,rejection_reason,facts)
                VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (search_candidate_id) DO NOTHING""",
@@ -2125,6 +2193,7 @@ class Store:
         )
         connection.execute(
             """UPDATE search_runs SET tested=tested+1,
+               failed=failed+CASE WHEN %s::boolean THEN 1 ELSE 0 END,
                non_improving=CASE
                    WHEN %s::numeric IS NOT NULL AND (best_score IS NULL OR %s::numeric >= best_score+.02)
                        THEN 0
@@ -2137,6 +2206,7 @@ class Store:
                END,
                updated_at=now() WHERE id=%s""",
             (
+                bool(assessment.get("backtest_failed")),
                 assessment.get("score"),
                 assessment.get("score"),
                 assessment.get("score"),
@@ -2153,13 +2223,21 @@ class Store:
             "SELECT * FROM search_runs WHERE id=%s FOR UPDATE", (row["search_run_id"],)
         ).fetchone()
         limit = int(run["stop_conditions"].get("max_candidates", 500))
+        max_non_improving = int(run["stop_conditions"].get("max_non_improving", 100))
+        max_failure_rate = run["stop_conditions"].get("max_failure_rate")
+        failure_rate_reached = (
+            max_failure_rate is not None
+            and run["tested"] >= 20
+            and run["failed"] / max(run["tested"], 1) >= float(max_failure_rate)
+        )
         elapsed = connection.execute(
             "SELECT extract(epoch FROM now()-created_at) AS seconds FROM search_runs WHERE id=%s",
             (run["id"],),
         ).fetchone()["seconds"]
         if (
             run["generated"] < limit
-            and run["non_improving"] < 100
+            and run["non_improving"] < max_non_improving
+            and not failure_rate_reached
             and elapsed < min(7200, int(run["stop_conditions"].get("max_duration_sec", 7200)))
         ):
             if self._admit_discovery_candidate(
@@ -2212,10 +2290,11 @@ class Store:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT p.experiment_id FROM discovery_candidate_experiments p
-                   JOIN backtest_runs r ON r.experiment_id=p.experiment_id AND r.status='completed'
-                   JOIN evaluations e ON e.backtest_run_id=r.id
+                   JOIN backtest_runs r ON r.experiment_id=p.experiment_id
+                   LEFT JOIN evaluations e ON e.backtest_run_id=r.id
                    JOIN search_candidates c ON c.id=p.search_candidate_id
                    JOIN search_runs s ON s.id=c.search_run_id AND s.status='running'
+                   WHERE r.status='failed' OR e.id IS NOT NULL
                    ORDER BY p.created_at"""
             ).fetchall()
         for item in rows:
@@ -2418,7 +2497,7 @@ class Store:
                 policy = active["version"]
             rows = connection.execute(
                 f"""
-                SELECT entry_id,evaluation_id,score,
+                SELECT entry_id,evaluation_id,experiment_id,score,
                        row_number() OVER (
                            ORDER BY {sort_columns[sort_by]},observed_at,evaluation_id
                        ) AS rank,

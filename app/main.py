@@ -437,7 +437,7 @@ def list_strategy_drafts(
     _auth: Internal,
     owner_id: OwnerID,
     request: Request,
-    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+    limit: Annotated[int | None, Query(ge=1, le=1_000)] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     return {"drafts": _store(request).list_strategy_drafts(owner_id, limit)}
 
@@ -475,6 +475,16 @@ def create_experiment(body: ExperimentCreateIn, _auth: Internal, request: Reques
         status_code=status.HTTP_200_OK if result["reused"] else status.HTTP_202_ACCEPTED,
         content=jsonable_encoder(result),
     )
+
+
+@app.get("/api/v1/experiments", response_model=dict[str, list[ExperimentSummaryOut]])
+def list_experiments(
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
+    limit: Annotated[int | None, Query(ge=1, le=1_000)] = None,
+) -> dict[str, list[dict[str, Any]]]:
+    return {"experiments": _store(request).list_experiments(owner_id, limit)}
 
 
 @app.get("/api/v1/experiments/{experiment_id}", response_model=ExperimentSummaryOut)

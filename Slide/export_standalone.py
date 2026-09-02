@@ -1,10 +1,105 @@
+#!/usr/bin/env python3
+"""
+export_standalone.py — Export CryptoBot architecture slides to a 100% standalone HTML file.
+
+Features:
+- Single self-contained HTML file (zero external dependencies, zero web server needed).
+- Embeds all architecture diagram images as Base64 data URIs.
+- Inlines marked.min.js and all styles/scripts.
+- Keyboard navigation (Arrows, Space, PageUp/Down, Home, End).
+- Fullscreen mode (F key), Blackout/Blank mode (B key for speaker pauses).
+- Interactive HD Image Zoom Modal for diagrams.
+- Live Presentation Stopwatch Timer (with Play/Pause/Reset).
+- Jump-to-slide Dropdown Menu with slide titles.
+- Auto-scaling 16:9 canvas (1280x720) fitting any display (1080p, 4K, 720p, projectors).
+- Print / Save as PDF mode with @media print stylesheet.
+"""
+
 import os
 import re
 import json
+import base64
+import argparse
 
-def build_slides():
+def get_slide_markdowns(slide_dir, sec_dir, section_files, inline_images=True):
+    slides_raw = []
+    image_cache = {}
+    total_img_bytes = 0
+
+    combined_sections = []
+    for sec in section_files:
+        path = os.path.join(sec_dir, sec)
+        if not os.path.exists(path):
+            print(f"[Warning] Section file not found: {path}")
+            continue
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            combined_sections.append(content)
+
+    full_markdown = '\n\n---\n\n'.join(combined_sections)
+    parts = re.split(r'\n+---+\s*\n+', full_markdown)
+
+    for p in parts:
+        p_str = p.strip()
+        if not p_str or p_str.startswith('marp: true') or p_str.startswith('style:') or 'paginate: true' in p_str:
+            continue
+
+        if inline_images:
+            # Replace all markdown image links with Base64 data URIs
+            def replace_img(match):
+                nonlocal total_img_bytes
+                alt_text = match.group(1)
+                img_rel = match.group(2)
+
+                if img_rel.startswith('data:'):
+                    return match.group(0)
+
+                # Resolve relative path from sections/ or Slide/
+                if img_rel.startswith('../../'):
+                    disk_path = os.path.normpath(os.path.join(sec_dir, img_rel))
+                elif img_rel.startswith('../'):
+                    disk_path = os.path.normpath(os.path.join(slide_dir, img_rel))
+                else:
+                    disk_path = os.path.normpath(os.path.join(slide_dir, img_rel))
+
+                if not os.path.exists(disk_path):
+                    # Try looking directly in blueprint/assets/diagrams-png/
+                    base_name = os.path.basename(img_rel)
+                    alt_path = os.path.normpath(os.path.join(slide_dir, '..', 'blueprint', 'assets', 'diagrams-png', base_name))
+                    if os.path.exists(alt_path):
+                        disk_path = alt_path
+
+                if os.path.exists(disk_path):
+                    if disk_path not in image_cache:
+                        with open(disk_path, 'rb') as ifp:
+                            raw = ifp.read()
+                            total_img_bytes += len(raw)
+                            ext = os.path.splitext(disk_path)[1].lower().replace('.', '')
+                            mime = 'image/png' if ext == 'png' else f'image/{ext}'
+                            b64 = base64.b64encode(raw).decode('utf-8')
+                            image_cache[disk_path] = f'data:{mime};base64,{b64}'
+                    return f'![{alt_text}]({image_cache[disk_path]})'
+                else:
+                    print(f"[Warning] Image file not found: {img_rel} (resolved: {disk_path})")
+                    return match.group(0)
+
+            p_str = re.sub(r'!\[(.*?)\]\((.*?)\)', replace_img, p_str)
+
+        slides_raw.append(p_str)
+
+    print(f"[Export] Processed {len(slides_raw)} slides, encoded {len(image_cache)} images ({total_img_bytes / (1024*1024):.2f} MB raw binary).")
+    return slides_raw
+
+def read_vendor_file(slide_dir, filename):
+    vendor_path = os.path.join(slide_dir, 'vendor', filename)
+    if os.path.exists(vendor_path):
+        with open(vendor_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    return ""
+
+def build_standalone_html(output_file='standalone.html'):
     slide_dir = os.path.dirname(os.path.abspath(__file__))
-    sections_dir = os.path.join(slide_dir, 'sections')
+    sec_dir = os.path.join(slide_dir, 'sections')
     
     section_files = [
         '01_drivers_asrs.md',
@@ -17,156 +112,27 @@ def build_slides():
         '08_tradeoffs_summary.md'
     ]
 
-    header = '''---
-marp: true
-theme: default
-paginate: true
-size: 16:9
-header: 'CryptoBot — Software Architecture Presentation'
-footer: 'Trường ĐH Khoa học Tự nhiên - ĐHQG-HCM | Bộ môn KTPM'
-style: |
-  section {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    font-size: 24px;
-    padding: 32px 48px;
-    background-color: #ffffff;
-    color: #1e293b;
-  }
-  h1 {
-    color: #0f172a;
-    font-size: 36px;
-    margin-bottom: 12px;
-    font-weight: 700;
-  }
-  h2 {
-    color: #1e3a8a;
-    font-size: 28px;
-    border-bottom: 2px solid #e2e8f0;
-    padding-bottom: 8px;
-    margin-top: 0;
-    margin-bottom: 14px;
-  }
-  h3 {
-    color: #2563eb;
-    font-size: 23px;
-    margin-top: 4px;
-    margin-bottom: 8px;
-  }
-  p, li {
-    font-size: 22px;
-    line-height: 1.45;
-  }
-  ul {
-    margin-top: 4px;
-    margin-bottom: 8px;
-    padding-left: 24px;
-  }
-  li {
-    margin-bottom: 5px;
-  }
-  table {
-    font-size: 17.5px;
-    border-collapse: collapse;
-    width: 100%;
-    margin-top: 8px;
-  }
-  th {
-    background-color: #f1f5f9;
-    color: #0f172a;
-    border: 1px solid #cbd5e1;
-    padding: 8px 12px;
-    font-weight: 600;
-    font-size: 18.5px;
-  }
-  td {
-    border: 1px solid #e2e8f0;
-    padding: 8px 12px;
-    font-size: 17px;
-    line-height: 1.4;
-  }
-  tr:nth-child(even) {
-    background-color: #f8fafc;
-  }
-  .columns {
-    display: grid;
-    grid-template-columns: 1fr 1.15fr;
-    gap: 28px;
-    align-items: center;
-  }
-  .columns-equal {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    align-items: start;
-  }
-  img {
-    max-height: 480px;
-    max-width: 100%;
-    object-fit: contain;
-    border-radius: 8px;
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    background-color: #ffffff;
-    display: block;
-    margin: 0 auto;
-  }
-  section.lead {
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-  }
-  section.lead h1 {
-    font-size: 42px;
-    color: #1e3a8a;
-  }
-  section.lead h2 {
-    border-bottom: none;
-    font-size: 24px;
-    color: #475569;
-  }
----'''
-
-    section_texts = []
-    for sec in section_files:
-        path = os.path.join(sections_dir, sec)
-        with open(path, 'r', encoding='utf-8') as f:
-            text = f.read().strip()
-            # In main.md (sitting in Slide/), diagrams are at ../blueprint/...
-            text_for_main = text.replace('../../blueprint/', '../blueprint/')
-            section_texts.append(text_for_main)
-
-    combined = header + '\n\n' + '\n\n---\n\n'.join(section_texts)
-    main_md_path = os.path.join(slide_dir, 'main.md')
-    with open(main_md_path, 'w', encoding='utf-8') as f:
-        f.write(combined)
-
-    # Now parse slides for HTML runner (split strictly on standalone '---' slide boundary)
-    parts = re.split(r'\n+---+\s*\n+', combined)
-    slides_raw = []
-    for p in parts:
-        p_str = p.strip()
-        if not p_str or p_str.startswith('marp: true') or p_str.startswith('style:') or 'paginate: true' in p_str:
-            continue
-        slides_raw.append(p_str)
-
+    slides_raw = get_slide_markdowns(slide_dir, sec_dir, section_files, inline_images=True)
     slides_json = json.dumps(slides_raw, ensure_ascii=False)
 
-    html_content = f'''<!DOCTYPE html>
+    # Inlined Marked JS
+    marked_js = read_vendor_file(slide_dir, 'marked.min.js')
+    if not marked_js:
+        print("[Warning] marked.min.js not found in vendor/. Downloading...")
+        try:
+            import urllib.request
+            resp = urllib.request.urlopen('https://cdn.jsdelivr.net/npm/marked/marked.min.js', timeout=8)
+            marked_js = resp.read().decode('utf-8')
+        except Exception as e:
+            print(f"[Error] Failed to fetch marked.min.js: {e}")
+
+    # Standalone HTML Template
+    html = f'''<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CryptoBot — Software Architecture Presentation</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <title>CryptoBot — Software Architecture Presentation (Standalone)</title>
   <style>
     :root {{
       --primary: #1e3a8a;
@@ -180,6 +146,7 @@ style: |
       --border-color: #e2e8f0;
       --accent: #f59e0b;
       --card-bg: #f8fafc;
+      --success: #10b981;
     }}
     * {{
       box-sizing: border-box;
@@ -187,7 +154,7 @@ style: |
       padding: 0;
     }}
     body {{
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       background-color: var(--bg-canvas);
       color: var(--text-main);
       display: flex;
@@ -196,46 +163,72 @@ style: |
       overflow: hidden;
       user-select: none;
     }}
+
     /* Top Header Bar */
     header {{
       background: #111827;
       color: #f8fafc;
-      padding: 10px 24px;
+      padding: 8px 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       border-bottom: 1px solid #1f2937;
-      font-size: 14px;
+      font-size: 13.5px;
       z-index: 100;
+    }}
+    .header-left {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }}
     .header-title {{
       font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       color: #93c5fd;
+      font-size: 14.5px;
     }}
     .header-badge {{
       background: #2563eb;
       color: #ffffff;
       padding: 2px 8px;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 600;
+      letter-spacing: 0.3px;
     }}
+    .header-timer {{
+      background: #1e293b;
+      border: 1px solid #334155;
+      padding: 3px 10px;
+      border-radius: 6px;
+      color: #38bdf8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }}
+    .header-timer:hover {{
+      background: #334155;
+    }}
+
     .header-controls {{
       display: flex;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
     }}
     button.btn-ctrl {{
       background: #1f2937;
       border: 1px solid #374151;
       color: #f8fafc;
-      padding: 6px 12px;
+      padding: 5px 11px;
       border-radius: 6px;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 500;
       display: flex;
       align-items: center;
@@ -246,15 +239,21 @@ style: |
       background: #374151;
       border-color: #4b5563;
     }}
+    button.btn-ctrl:active {{
+      transform: scale(0.97);
+    }}
     select.nav-select {{
       background: #1f2937;
       color: #f8fafc;
       border: 1px solid #374151;
-      padding: 6px 12px;
+      padding: 5px 10px;
       border-radius: 6px;
-      font-size: 13px;
-      max-width: 360px;
+      font-size: 12.5px;
+      max-width: 320px;
       cursor: pointer;
+    }}
+    select.nav-select:focus {{
+      outline: 2px solid #2563eb;
     }}
 
     /* Main Presentation Stage */
@@ -264,7 +263,7 @@ style: |
       justify-content: center;
       align-items: center;
       position: relative;
-      background: #0b1120;
+      background: #080d1a;
       padding: 16px;
       overflow: hidden;
     }}
@@ -281,7 +280,7 @@ style: |
       display: flex;
       flex-direction: column;
       transform-origin: center center;
-      transition: transform 0.1s ease;
+      transition: transform 0.08s ease-out;
     }}
 
     .slide-body {{
@@ -290,6 +289,15 @@ style: |
       overflow-y: auto;
       display: flex;
       flex-direction: column;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }}
+    .slide-body::-webkit-scrollbar {{
+      width: 6px;
+    }}
+    .slide-body::-webkit-scrollbar-thumb {{
+      background: #cbd5e1;
+      border-radius: 3px;
     }}
 
     /* Slide Typography & Layouts */
@@ -342,8 +350,17 @@ style: |
       color: #0f172a;
       font-weight: 600;
     }}
+    .slide-body code {{
+      background: #f1f5f9;
+      color: #0f172a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+      border: 1px solid #e2e8f0;
+    }}
 
-    /* Two Column Layout */
+    /* Layout Grids */
     .columns {{
       display: grid;
       grid-template-columns: 1fr 1.15fr;
@@ -403,8 +420,8 @@ style: |
       transition: transform 0.2s ease, box-shadow 0.2s ease;
     }}
     .slide-body img:hover {{
-      transform: scale(1.012);
-      box-shadow: 0 8px 20px rgba(30, 58, 138, 0.12);
+      transform: scale(1.015);
+      box-shadow: 0 8px 20px rgba(30, 58, 138, 0.15);
     }}
 
     /* Title / Lead Slide */
@@ -443,7 +460,7 @@ style: |
     /* Bottom Control Bar */
     footer.bottom-bar {{
       background: #111827;
-      padding: 8px 24px;
+      padding: 8px 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -467,6 +484,19 @@ style: |
       transition: width 0.2s ease;
     }}
 
+    /* Blackout Overlay */
+    #blackout-screen {{
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000000;
+      z-index: 9999;
+      cursor: pointer;
+    }}
+
     /* Modal for Image Zoom */
     #zoom-modal {{
       display: none;
@@ -475,19 +505,19 @@ style: |
       left: 0;
       width: 100vw;
       height: 100vh;
-      background: rgba(15, 23, 42, 0.88);
-      backdrop-filter: blur(4px);
+      background: rgba(15, 23, 42, 0.92);
+      backdrop-filter: blur(5px);
       z-index: 1000;
       justify-content: center;
       align-items: center;
       cursor: zoom-out;
     }}
     #zoom-modal img {{
-      max-width: 92vw;
-      max-height: 92vh;
+      max-width: 94vw;
+      max-height: 94vh;
       object-fit: contain;
       border-radius: 8px;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      box-shadow: 0 25px 60px rgba(0,0,0,0.6);
       background: #ffffff;
     }}
 
@@ -503,45 +533,99 @@ style: |
       padding: 24px 32px;
       border-radius: 12px;
       border: 1px solid #374151;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
-      z-index: 500;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.7);
+      z-index: 1500;
       font-size: 14px;
+      min-width: 420px;
     }}
     #help-overlay h3 {{
       color: #93c5fd;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
       font-size: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }}
     #help-overlay table {{
       border-collapse: collapse;
       width: 100%;
     }}
     #help-overlay td {{
-      padding: 6px 12px;
+      padding: 7px 12px;
       border-bottom: 1px solid #374151;
     }}
     #help-overlay kbd {{
       background: #111827;
       border: 1px solid #374151;
-      padding: 2px 6px;
+      padding: 2px 7px;
       border-radius: 4px;
       font-family: monospace;
       color: #60a5fa;
+      font-size: 12px;
+    }}
+
+    /* Standalone Badge Notification */
+    .offline-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }}
+
+    /* Print / PDF Styles */
+    @media print {{
+      header, footer.bottom-bar, #zoom-modal, #help-overlay, #blackout-screen {{
+        display: none !important;
+      }}
+      body {{
+        background: #ffffff !important;
+        height: auto !important;
+        overflow: visible !important;
+      }}
+      #stage {{
+        padding: 0 !important;
+        background: #ffffff !important;
+        display: block !important;
+      }}
+      #slide-viewport {{
+        width: 100% !important;
+        height: 100vh !important;
+        box-shadow: none !important;
+        transform: none !important;
+        page-break-after: always !important;
+        border-radius: 0 !important;
+      }}
     }}
   </style>
 </head>
 <body>
 
+  <!-- Blackout Screen for Speaker Pause -->
+  <div id="blackout-screen" onclick="toggleBlackout()"></div>
+
   <!-- Top Header -->
   <header>
-    <div class="header-title">
-      <span>📈 Crypto Strategy Lab</span>
-      <span class="header-badge">Software Architecture Presentation</span>
+    <div class="header-left">
+      <div class="header-title">
+        <span>📈 Crypto Strategy Lab</span>
+        <span class="header-badge">Software Architecture</span>
+        <span class="offline-badge">⚡ Standalone Ready</span>
+      </div>
+      <div class="header-timer" id="presentation-timer" onclick="toggleTimer()" title="Click để Tạm dừng / Tiếp tục đếm thời gian (Double-click để Reset)">
+        ⏱️ <span id="timer-display">00:00</span>
+      </div>
     </div>
     <div class="header-controls">
       <select id="section-select" class="nav-select" onchange="jumpToSlide(parseInt(this.value))">
         <!-- Injected via JS -->
       </select>
+      <button class="btn-ctrl" onclick="toggleBlackout()" title="Tắt màn hình để tập trung vào người nói (B)">🌑 Tối màn hình (B)</button>
       <button class="btn-ctrl" onclick="toggleHelp()">⌨️ Phím tắt (?)</button>
       <button class="btn-ctrl" onclick="toggleFullscreen()">⛶ Toàn màn hình (F)</button>
     </div>
@@ -551,11 +635,11 @@ style: |
   <main id="stage">
     <div id="slide-viewport">
       <div id="slide-body" class="slide-body">
-        <!-- Rendered markdown content -->
+        <!-- Rendered slide content -->
       </div>
       <div class="slide-footer">
         <span>Crypto Strategy Lab — Architecture Presentation</span>
-        <span id="slide-counter">Slide 1 / 39</span>
+        <span id="slide-counter">Slide 1 / {len(slides_raw)}</span>
         <span>Trường ĐH Khoa học Tự nhiên - ĐHQG-HCM</span>
       </div>
     </div>
@@ -564,10 +648,10 @@ style: |
   <!-- Bottom Navigation Bar -->
   <footer class="bottom-bar">
     <button class="btn-ctrl" onclick="prevSlide()">◀ Trang trước (←)</button>
-    <div class="progress-track" onclick="seekSlide(event)">
+    <div class="progress-track" onclick="seekSlide(event)" title="Nhấp vào thanh tiến trình để chuyển nhanh">
       <div id="progress-fill" class="progress-bar"></div>
     </div>
-    <span id="slide-indicator" style="font-family: monospace; font-weight: 600;">1 / 39</span>
+    <span id="slide-indicator" style="font-family: monospace; font-weight: 600;">1 / {len(slides_raw)}</span>
     <button class="btn-ctrl" onclick="nextSlide()">Trang sau (→) ▶</button>
   </footer>
 
@@ -577,24 +661,64 @@ style: |
   </div>
 
   <!-- Keyboard Help Modal -->
-  <div id="help-overlay" onclick="this.style.display='none'">
-    <h3>⌨️ Phím tắt điều khiển trình chiếu</h3>
+  <div id="help-overlay">
+    <h3>
+      <span>⌨️ Phím tắt điều khiển trình chiếu</span>
+      <span style="cursor:pointer; font-size:16px;" onclick="toggleHelp()">✕</span>
+    </h3>
     <table>
-      <tr><td><kbd>→</kbd> hoặc <kbd>Space</kbd> hoặc <kbd>PageDown</kbd></td><td>Chuyển slide kế tiếp</td></tr>
-      <tr><td><kbd>←</kbd> hoặc <kbd>Backspace</kbd> hoặc <kbd>PageUp</kbd></td><td>Quay lại slide trước</td></tr>
+      <tr><td><kbd>→</kbd> / <kbd>Space</kbd> / <kbd>PageDn</kbd></td><td>Chuyển slide kế tiếp</td></tr>
+      <tr><td><kbd>←</kbd> / <kbd>Backspace</kbd> / <kbd>PageUp</kbd></td><td>Quay lại slide trước</td></tr>
       <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Về slide đầu / slide cuối</td></tr>
       <tr><td><kbd>F</kbd></td><td>Bật / tắt chế độ toàn màn hình</td></tr>
+      <tr><td><kbd>B</kbd> hoặc <kbd>.</kbd></td><td>Bật / tắt màn hình đen (tập trung người nói)</td></tr>
+      <tr><td><kbd>T</kbd></td><td>Bắt đầu / Tạm dừng đồng hồ bấm giờ</td></tr>
       <tr><td><kbd>?</kbd> hoặc <kbd>H</kbd></td><td>Bật / tắt bảng hướng dẫn phím tắt</td></tr>
       <tr><td><kbd>Click ảnh sơ đồ</kbd></td><td>Phóng to sơ đồ kiến trúc HD</td></tr>
     </table>
   </div>
 
+  <!-- Inlined Marked.js for 100% Offline Standalone Support -->
+  <script>
+{marked_js}
+  </script>
+
+  <!-- Presentation Controller Engine -->
   <script>
     const rawSlides = {slides_json};
     let currentSlide = 0;
     const totalSlides = rawSlides.length;
 
-    // Custom marked renderer for images and lead class
+    // Timer State
+    let timerSeconds = 0;
+    let timerRunning = true;
+    let timerInterval = null;
+
+    function startTimer() {{
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {{
+        if (timerRunning) {{
+          timerSeconds++;
+          const mins = String(Math.floor(timerSeconds / 60)).padStart(2, '0');
+          const secs = String(timerSeconds % 60).padStart(2, '0');
+          document.getElementById('timer-display').textContent = `${{mins}}:${{secs}}`;
+        }}
+      }}, 1000);
+    }}
+
+    function toggleTimer() {{
+      timerRunning = !timerRunning;
+      const el = document.getElementById('presentation-timer');
+      el.style.opacity = timerRunning ? '1.0' : '0.6';
+    }}
+
+    document.getElementById('presentation-timer').addEventListener('dblclick', (e) => {{
+      e.stopPropagation();
+      timerSeconds = 0;
+      document.getElementById('timer-display').textContent = '00:00';
+    }});
+
+    // Custom marked renderer for diagram images
     const renderer = new marked.Renderer();
     renderer.image = function(tokenOrHref, title, text) {{
       let href = tokenOrHref;
@@ -605,7 +729,7 @@ style: |
         alt = tokenOrHref.text;
         t = tokenOrHref.title;
       }}
-      return `<img src="${{href}}" alt="${{alt || ''}}" title="${{t || ''}}" onclick="zoomImage(this.src)" />`;
+      return `<img src="${{href}}" alt="${{alt || ''}}" title="${{t || 'Click để phóng to HD'}}" onclick="zoomImage(this.src)" />`;
     }};
 
     marked.setOptions({{
@@ -617,11 +741,13 @@ style: |
     function resizeViewport() {{
       const stage = document.getElementById('stage');
       const viewport = document.getElementById('slide-viewport');
+      if (!stage || !viewport) return;
+
       const targetW = 1280;
       const targetH = 720;
       
-      const availableW = stage.clientWidth - 32;
-      const availableH = stage.clientHeight - 32;
+      const availableW = stage.clientWidth - 24;
+      const availableH = stage.clientHeight - 24;
       
       const scale = Math.min(availableW / targetW, availableH / targetH, 1.4);
       viewport.style.transform = `scale(${{scale}})`;
@@ -644,7 +770,7 @@ style: |
         }}
         const opt = document.createElement('option');
         opt.value = idx;
-        opt.textContent = `${{idx + 1}}. ${{title.substring(0, 45)}}`;
+        opt.textContent = `${{idx + 1}}. ${{title.substring(0, 42)}}`;
         select.appendChild(opt);
       }});
     }}
@@ -661,24 +787,13 @@ style: |
       slideBody.className = 'slide-body' + (isLead ? ' lead' : '');
       slideBody.innerHTML = marked.parse(slideMd);
 
-      if (window.renderMathInElement) {{
-        try {{
-          renderMathInElement(slideBody, {{
-            delimiters: [
-              {{left: '$$', right: '$$', display: true}},
-              {{left: '$', right: '$', display: false}}
-            ],
-            throwOnError: false
-          }});
-        }} catch(e) {{
-          console.warn('Math render error:', e);
-        }}
-      }}
-
       document.getElementById('slide-counter').textContent = `Slide ${{currentSlide + 1}} / ${{totalSlides}}`;
       document.getElementById('slide-indicator').textContent = `${{currentSlide + 1}} / ${{totalSlides}}`;
       document.getElementById('progress-fill').style.width = `${{((currentSlide + 1) / totalSlides) * 100}}%`;
       document.getElementById('section-select').value = currentSlide;
+
+      // Reset scroll position on new slide
+      slideBody.scrollTop = 0;
     }}
 
     function nextSlide() {{
@@ -701,7 +816,7 @@ style: |
       const track = e.currentTarget;
       const rect = track.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
-      const pct = clickX / rect.width;
+      const pct = Math.max(0, Math.min(1, clickX / rect.width));
       const targetIdx = Math.floor(pct * totalSlides);
       renderSlide(targetIdx);
     }}
@@ -714,6 +829,11 @@ style: |
       }}
     }}
 
+    function toggleBlackout() {{
+      const b = document.getElementById('blackout-screen');
+      b.style.display = (b.style.display === 'block') ? 'none' : 'block';
+    }}
+
     function zoomImage(src) {{
       const modal = document.getElementById('zoom-modal');
       const img = document.getElementById('zoomed-img');
@@ -723,10 +843,16 @@ style: |
 
     function toggleHelp() {{
       const help = document.getElementById('help-overlay');
-      help.style.display = help.style.display === 'block' ? 'none' : 'block';
+      help.style.display = (help.style.display === 'block') ? 'none' : 'block';
     }}
 
+    // Keyboard Shortcuts
     document.addEventListener('keydown', (e) => {{
+      // Ignore if user is typing in select or inputs
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {{
+        return;
+      }}
+
       if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {{
         e.preventDefault();
         nextSlide();
@@ -740,36 +866,51 @@ style: |
         e.preventDefault();
         renderSlide(totalSlides - 1);
       }} else if (e.key === 'f' || e.key === 'F') {{
+        e.preventDefault();
         toggleFullscreen();
+      }} else if (e.key === 'b' || e.key === 'B' || e.key === '.') {{
+        e.preventDefault();
+        toggleBlackout();
+      }} else if (e.key === 't' || e.key === 'T') {{
+        e.preventDefault();
+        toggleTimer();
       }} else if (e.key === '?' || e.key === 'h' || e.key === 'H') {{
+        e.preventDefault();
         toggleHelp();
       }} else if (e.key === 'Escape') {{
         document.getElementById('zoom-modal').style.display = 'none';
         document.getElementById('help-overlay').style.display = 'none';
+        document.getElementById('blackout-screen').style.display = 'none';
       }}
     }});
 
-    // Initialize
+    // Initialize on load
     initSectionDropdown();
     renderSlide(0);
     resizeViewport();
+    startTimer();
   </script>
 </body>
 </html>
 '''
 
-    out_path = os.path.join(slide_dir, 'index.html')
+    if os.path.isabs(output_file):
+        out_path = output_file
+    elif os.path.sep in output_file or '/' in output_file:
+        out_path = os.path.abspath(output_file)
+    else:
+        out_path = os.path.join(slide_dir, output_file)
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(html_content)
+        f.write(html)
 
-    print(f'Combined {len(section_files)} sections into main.md and built index.html ({len(slides_raw)} slides) successfully!')
-
-    # Also build standalone.html
-    try:
-        from export_standalone import build_standalone_html
-        build_standalone_html('standalone.html')
-    except Exception as e:
-        print(f'[Warning] Failed to generate standalone.html: {e}')
+    size_mb = os.path.getsize(out_path) / (1024 * 1024)
+    print(f"[Success] Generated standalone slide deck: {out_path} ({size_mb:.2f} MB)")
+    return out_path
 
 if __name__ == '__main__':
-    build_slides()
+    parser = argparse.ArgumentParser(description='Export standalone HTML presentation')
+    parser.add_argument('--output', '-o', default='standalone.html', help='Output filename (default: standalone.html)')
+    args = parser.parse_args()
+    build_standalone_html(args.output)

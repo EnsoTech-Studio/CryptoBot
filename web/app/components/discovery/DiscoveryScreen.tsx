@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   MAX_COMBINED,
@@ -30,6 +31,7 @@ export function DiscoveryScreen() {
     discoveryArchive,
     discoveryArchiveState,
     loadProvenance,
+    openExperiment,
     search,
     discoverySessions,
     discoverySessionsState,
@@ -41,6 +43,7 @@ export function DiscoveryScreen() {
     focusIndex,
     availableTimeframes,
   } = useWorkspace();
+  const router = useRouter();
 
   const timeframe = panels[0]?.timeframe ?? "5m";
   const [discoveryTimeframe, setDiscoveryTimeframe] = useState(timeframe);
@@ -127,6 +130,10 @@ export function DiscoveryScreen() {
     return activeDraft.selectedStrategyIds.map((id) => ({ strategy_id: id, weight: weights[id] }));
   }
 
+  async function viewLeaderboardExperiment(id: string) {
+    if (await openExperiment(id)) router.push("/backtests");
+  }
+
   return (
     <section className={styles.screen} aria-label="Không gian tạo và tìm kiếm strategy">
       {issues.length > 0 && draft.selectedStrategyIds.length > 0 ? (
@@ -187,6 +194,7 @@ export function DiscoveryScreen() {
             referenceMode={dataMode === "mock"}
             onRefresh={() => void refreshDiscoveryLeaderboard()}
             onTrace={(id) => void loadProvenance(id)}
+            onOpenExperiment={(id) => void viewLeaderboardExperiment(id)}
           />
           <Panel title="Discovery sessions" bodyClassName={styles.sessionHistory}>
             <Field label="Past sessions">

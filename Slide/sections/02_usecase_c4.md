@@ -1,4 +1,4 @@
-## 5. Tổng Quan Use Case Hệ Thống
+## 7. Tổng Quan Use Case Hệ Thống
 
 <div class="columns">
 <div>
@@ -25,7 +25,7 @@
 
 ---
 
-## 6. C4 Model (Level 1) - System Context Diagram
+## 8. C4 Model (Level 1) - System Context Diagram
 
 <div class="columns">
 <div>
@@ -47,17 +47,18 @@
 
 ---
 
-## 7. C4 Model (Level 2) - Container Diagram
+## 9. C4 Model (Level 2) - Container Diagram
 
 <div class="columns">
 <div>
 
 ### Phân Rã Các Container Chính
-* **Next.js Web App (SPA):** Giao diện tương tác, biểu đồ nến realtime, cấu hình chiến lược & xem Leaderboard.
-* **Go Edge Gateway:** Xác thực RBAC, định tuyến CQRS, duy trì WebSocket Binance và stream nến qua SSE/WS.
-* **Python Research Engine:** Xử lý tính toán nặng (Backtest Worker, Loop Discovery, Metric Evaluation).
-* **PostgreSQL (Storage):** Lưu trữ nến, chiến lược, thí nghiệm và Outbox table.
-* **Redis (Cache & Bus):** In-memory Pub/Sub và caching realtime indicators.
+* **Next.js Web (SPA):** UI biểu đồ realtime, cấu hình chiến lược & Leaderboard.
+* **Go Edge Gateway (`api`):** CQRS, RBAC, thu nạp Binance WSS & stream SSE/WS.
+* **Python Research (`research`):** Strategy Registry, Backtest Engine & Search Loop.
+* **Async Workers (`worker` pool):** Xử lý Job Queue, Outbox Events, Crawl & AI Agent.
+* **AI Service (`ai`):** Cổng LLM (Groq/OpenAI) phân tích sentiment & sinh mã.
+* **PostgreSQL (Storage & Outbox):** Lưu trữ ACID nến, thí nghiệm và hàng đợi Outbox.
 
 </div>
 <div>
@@ -69,7 +70,7 @@
 
 ---
 
-## 8. C4 Model (Level 3) - Python Research Platform
+## 10. C4 Model (Level 3) - Python Research Platform
 
 <div class="columns">
 <div>
@@ -91,7 +92,7 @@
 
 ---
 
-## 9. C4 Model (Level 3) - Go Edge & Market Gateway
+## 11. C4 Model (Level 3) - Go Edge & Market Gateway
 
 <div class="columns">
 <div>

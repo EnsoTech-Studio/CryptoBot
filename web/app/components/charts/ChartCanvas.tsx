@@ -33,9 +33,9 @@ const CHART_FRAMES: Record<ChartSize, {
     showAxis: true,
   },
   result: {
-    width: 900,
-    height: 560,
-    pad: { left: 58, right: 58, top: 20, bottom: 28 },
+    width: 720,
+    height: 540,
+    pad: { left: 48, right: 78, top: 20, bottom: 30 },
     gap: 10,
     volumeH: 72,
     subH: 70,
@@ -96,16 +96,20 @@ export function ChartCanvas({
   const subTop = volumeTop + volumeH + (subH > 0 ? gap : 0);
   const view = candles.slice(-(visibleLimit ?? frame.visible));
   const visibleTimes = new Set(view.map((candle) => candle.open_time));
+  const viewStart = view[0]?.open_time;
+  const viewEnd = view.at(-1)?.open_time;
 
   const priceValues = view.flatMap((candle) => [candle.high, candle.low]);
   series.filter((item) => item.pane === "main").forEach((item) => {
     item.points?.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
     item.band?.upper.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
     item.band?.lower.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
-    item.zones?.forEach((zone) => priceValues.push(zone.price_low, zone.price_high));
+    item.zones?.forEach((zone) => {
+      if (zoneIntersectsView(zone, viewStart, viewEnd)) priceValues.push(zone.price_low, zone.price_high);
+    });
   });
   executionMarkers.forEach((marker) => {
-    if (marker.price != null) priceValues.push(marker.price);
+    if (marker.price != null && visibleTimes.has(marker.t)) priceValues.push(marker.price);
   });
 
   const minPrice = Number.isFinite(Math.min(...priceValues)) ? Math.min(...priceValues) : 0;
@@ -121,7 +125,7 @@ export function ChartCanvas({
 
   return (
     <svg
-      className="chart-svg"
+      className={`chart-svg chart-svg--${size}`}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
@@ -229,7 +233,10 @@ function renderMainSeries(
       if (d) paths.push(<path key={`${keyPrefix}-${name}`} d={d} className={`overlay-line bollinger ${name}`} />);
     }
   }
+  const viewStart = candles[0]?.open_time;
+  const viewEnd = candles.at(-1)?.open_time;
   item.zones?.forEach((zone, index) => {
+    if (!zoneIntersectsView(zone, viewStart, viewEnd)) return;
     const startIndex = clampIndex(indexForTime(candles, zone.from), candles.length);
     const endIndex = clampIndex(indexForTime(candles, zone.to), candles.length, candles.length - 1);
     paths.push(
@@ -286,19 +293,13 @@ function renderSignalMarkers(
     const isBuy = marker.overlay_type.includes("buy");
     const cx = x(index);
     const cy = isBuy ? y(candle.low) + 18 * scale : y(candle.high) - 18 * scale;
-    const shape = (
-      <path
-        key={`${marker.t}-${marker.overlay_type}-shape`}
-        d={isBuy ? triangleUp(cx, cy, scale) : triangleDown(cx, cy, scale)}
-        className={isBuy ? "signal-marker buy" : "signal-marker sell"}
-      />
-    );
-    /* The B/S glyph is illegible on a context chart, so the shape carries the
+    const shape = <path key={`${marker.t}-${marker.overlay_type}-shape`} d={isBuy ? triangleUp(cx, cy, scale) : triangleDown(cx, cy, scale)} className={isBuy ? "signal-marker buy" : "signal-marker sell"} />;
+    /* Full labels do not survive a context chart, so its shape carries the
        meaning alone at small scale. */
     if (scale < 1) return [shape];
     return [
       shape,
-      <text key={`${marker.t}-${marker.overlay_type}-text`} x={cx} y={isBuy ? cy + 4 : cy + 3} textAnchor="middle" className="signal-text">{isBuy ? "B" : "S"}</text>,
+      <text key={`${marker.t}-${marker.overlay_type}-text`} x={cx} y={isBuy ? cy + 4 : cy + 3} textAnchor="middle" className="signal-text">{isBuy ? "BUY" : "SELL"}</text>,
     ];
   });
 }
@@ -380,6 +381,15 @@ function clampIndex(value: number, length: number, fallback = 0): number {
   if (length <= 0) return 0;
   if (value < 0) return Math.max(0, Math.min(length - 1, fallback));
   return Math.max(0, Math.min(length - 1, value));
+}
+
+function zoneIntersectsView(zone: { from: string; to: string }, viewStart?: string, viewEnd?: string) {
+  if (!viewStart || !viewEnd) return false;
+  const zoneStart = Date.parse(zone.from);
+  const zoneEnd = Date.parse(zone.to);
+  const start = Date.parse(viewStart);
+  const end = Date.parse(viewEnd);
+  return Number.isFinite(zoneStart) && Number.isFinite(zoneEnd) && zoneStart <= end && zoneEnd >= start;
 }
 
 function triangleUp(x: number, y: number, s = 1) {

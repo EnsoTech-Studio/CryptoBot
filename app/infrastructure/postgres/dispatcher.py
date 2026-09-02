@@ -58,9 +58,10 @@ from ...domain.strategy import (
     ChildDefinition,
     CombinationPolicy,
     CompositeDefinition,
+    DeclarativeStrategy,
     Reference,
 )
-from ...services.backtest_engine import canonical_result_hash
+from ...services.backtest_engine import DeterministicEngine, canonical_result_hash
 from ...services.ranking import ScoreRanker
 
 try:  # optional dependency — queue mode only
@@ -467,7 +468,7 @@ class PostgresJobDispatcher:
                             updated_at=now()
                         FROM search_candidates c
                         JOIN experiments e ON e.id=c.experiment_id
-                        WHERE c.search_run_id=s.id AND e.id=%s
+                        WHERE c.search_run_id=s.id AND e.id=%s AND s.generator_id <> 'discovery'
                         """,
                         (job_state[1],),
                     )
@@ -701,8 +702,78 @@ class PostgresJobDispatcher:
 
         return self._run(work)
 
+    def load_runtime_specs(self, snapshot: ExperimentSnapshot) -> list[dict[str, Any]]:
+        """Load every approved generated strategy referenced by a snapshot."""
+        references = [snapshot.strategy]
+        candidate = snapshot.candidate_definition
+        if isinstance(candidate, CompositeDefinition):
+            references = [
+                Reference(child.strategy_id, child.version)
+                for child in candidate.children
+            ]
+        unique = list(dict.fromkeys((item.strategy_id, item.version) for item in references))
+
+        def work() -> list[dict[str, Any]]:
+            with self._conn.cursor() as cur:
+                specs: list[dict[str, Any]] = []
+                for strategy_id, version in unique:
+                    cur.execute(
+                        "SELECT spec_json FROM strategy_runtime_specs WHERE strategy_id=%s AND version=%s",
+                        (strategy_id, version),
+                    )
+                    row = cur.fetchone()
+                    if row is not None:
+                        specs.append(row[0])
+                return specs
+
+        return self._run(work)
+
+    @staticmethod
+    def _warmup_references(snapshot: ExperimentSnapshot) -> list[tuple[Reference, dict[str, Any]]]:
+        candidate = snapshot.candidate_definition
+        if isinstance(candidate, CompositeDefinition):
+            return [
+                (Reference(child.strategy_id, child.version), dict(child.parameters or {}))
+                for child in candidate.children
+            ]
+        return [(snapshot.strategy, dict(candidate or {}))]
+
+    def _warmup_candles_locked(self, cur: Any, snapshot: ExperimentSnapshot) -> int:
+        """Find the exact causal history needed before the replay partition."""
+        from ...domain.strategy.plugins.catalog import default_registry
+
+        registry = default_registry()
+        warmup = 0
+        for reference, params in self._warmup_references(snapshot):
+            try:
+                strategy = registry.resolve(reference.strategy_id, reference.version)
+            except DomainError:
+                cur.execute(
+                    "SELECT spec_json FROM strategy_runtime_specs WHERE strategy_id=%s AND version=%s",
+                    (reference.strategy_id, reference.version),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    continue
+                strategy = DeclarativeStrategy(row[0])
+            warmup = max(warmup, DeterministicEngine._safe_warm_up(strategy, params))
+        return warmup
+
     def _load_dataset_locked(self, snapshot: ExperimentSnapshot) -> tuple[list[Candle], list[BBO]]:
         with self._conn.cursor() as cur:
+            warmup = self._warmup_candles_locked(cur, snapshot)
+            cur.execute(
+                """
+                SELECT c.open_time, c.close_time, c.open, c.high, c.low, c.close, c.volume, c.trade_count
+                FROM market_dataset_candles c
+                JOIN market_datasets d ON d.id = c.market_dataset_id
+                WHERE d.dataset_version = %s AND c.open_time < %s
+                ORDER BY c.open_time DESC
+                LIMIT %s
+                """,
+                (snapshot.market.dataset_version, snapshot.market.range_from, warmup),
+            )
+            history_rows = list(reversed(cur.fetchall()))
             cur.execute(
                 """
                 SELECT c.open_time, c.close_time, c.open, c.high, c.low, c.close, c.volume, c.trade_count
@@ -717,7 +788,20 @@ class PostgresJobDispatcher:
                     snapshot.market.range_to,
                 ),
             )
-            candle_rows = cur.fetchall()
+            candle_rows = history_rows + cur.fetchall()
+            first_open = candle_rows[0][0] if candle_rows else snapshot.market.range_from
+            cur.execute(
+                """
+                SELECT b.event_time, b.bid, b.bid_qty, b.ask, b.ask_qty, b.update_id
+                FROM market_dataset_bbo b
+                JOIN market_datasets d ON d.id = b.market_dataset_id
+                WHERE d.dataset_version = %s AND b.event_time < %s
+                ORDER BY b.event_time DESC, b.source_sequence DESC
+                LIMIT 1
+                """,
+                (snapshot.market.dataset_version, first_open),
+            )
+            prior_bbo_rows = cur.fetchall()
             cur.execute(
                 """
                 SELECT b.event_time, b.bid, b.bid_qty, b.ask, b.ask_qty, b.update_id
@@ -728,11 +812,11 @@ class PostgresJobDispatcher:
                 """,
                 (
                     snapshot.market.dataset_version,
-                    snapshot.market.range_from,
+                    first_open,
                     snapshot.market.range_to,
                 ),
             )
-            bbo_rows = cur.fetchall()
+            bbo_rows = prior_bbo_rows + cur.fetchall()
         candles = [
             Candle(
                 provider=snapshot.market.provider,

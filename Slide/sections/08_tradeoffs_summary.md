@@ -1,16 +1,16 @@
-## 26. Ma Trận Đánh Đổi Kiến Trúc (Tradeoffs Matrix)
+## 28. Ma Trận Đánh Đổi Kiến Trúc (Tradeoffs Matrix)
 
 | Lựa Chọn Thiết Kế | Phương Án Được Chọn | Phương Án Thay Thế | Lý Do & Đánh Đổi Kiến Trúc (Rationale) |
 | :--- | :--- | :--- | :--- |
 | **Kiến trúc Tổng thể** | **Modular Monolith** | Microservices | **Chọn:** Giảm độ phức tạp vận hành mạng, đảm bảo ranh giới module rõ ràng qua contracts. |
 | **Lưu trữ Nến & Job** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Thí nghiệm & Outbox; B-Tree index đủ đáp ứng hàng triệu nến. |
-| **Hàng Đợi Sự Kiện** | **Postgres Outbox + Redis** | Apache Kafka / RabbitMQ | **Chọn:** Loại bỏ sự cố Dual-write, đảm bảo Outbox nguyên tử và deploy gọn trong Docker Compose. |
+| **Hàng Đợi & Sự Kiện** | **PostgreSQL Outbox & Leases** | Apache Kafka / RabbitMQ / Redis | **Chọn:** Loại bỏ hoàn toàn Dual-write, đảm bảo Outbox nguyên tử ACID mà không cần duy trì thêm message broker ngoài. |
 | **Thực Thi Mã AI Sinh** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Khởi tạo sandbox tức thì (<10ms), kiểm soát an toàn cú pháp không tốn tài nguyên. |
 | **Phân Tích Sentiment** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Tiết kiệm chi phí token API, tránh nghẽn luồng crawl; chỉ gọi LLM khi cần phân tích sâu. |
 
 ---
 
-## 27. Khả Năng Thay Thế & Mở Rộng (Replaceability)
+## 29. Khả Năng Thay Thế & Mở Rộng (Replaceability)
 
 <div class="columns">
 <div>
@@ -33,7 +33,7 @@
 
 ---
 
-## 28. Tổng Kết Đồ Án & Giá Trị Kiến Trúc
+## 30. Tổng Kết Đồ Án & Giá Trị Kiến Trúc
 
 <div class="columns">
 <div>

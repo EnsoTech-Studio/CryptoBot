@@ -95,12 +95,17 @@ def discovery_propose(
             generator = name
             break
     parent_pool = _discovery_parents(accepted, randomizer)
+    catalog = {
+        str(item.get("strategy_id")): dict(item)
+        for item in (research or {}).get("catalog", [])
+        if item.get("strategy_id")
+    }
     if generator == "llm":
         proposal = llm_propose(search_space, archive, research or {}) if llm_propose else None
         if not isinstance(proposal, dict):
             return None
         try:
-            validated = validate_llm_proposal(proposal, search_space, archive)
+            validated = validate_llm_proposal(proposal, search_space, archive, catalog)
         except DiscoveryProposalError:
             raise
         except (TypeError, ValueError) as exc:
@@ -111,7 +116,7 @@ def discovery_propose(
             [],
             {key: proposal[key] for key in ("hypothesis", "operation", "provider", "model", "model_version", "prompt_version", "request_hash") if key in proposal},
         )
-        return _admit_discovery_proposal(candidate, archive)
+        return _admit_discovery_proposal(candidate, archive, set(catalog))
     if generator == "random":
         candidates = RandomGenerator().generate(search_space, 1, seed)
         candidate = (
@@ -119,12 +124,12 @@ def discovery_propose(
             if candidates
             else None
         )
-        return _admit_discovery_proposal(candidate, archive)
+        return _admit_discovery_proposal(candidate, archive, set(catalog))
     if generator == "mutation":
         parent = parent_pool[0]
         definition = mutate_definition(parent["candidate_definition"], search_space, randomizer)
         return _admit_discovery_proposal(
-            _discovery_candidate(definition, "mutation", [parent]), archive
+            _discovery_candidate(definition, "mutation", [parent]), archive, set(catalog)
         )
     if generator == "crossover":
         first, second = parent_pool[:2]
@@ -132,11 +137,13 @@ def discovery_propose(
             first["candidate_definition"], second["candidate_definition"], randomizer
         )
         return _admit_discovery_proposal(
-            _discovery_candidate(definition, "crossover", [first, second]), archive
+            _discovery_candidate(definition, "crossover", [first, second]), archive, set(catalog)
         )
     parents = parent_pool[: min(5, max(2, len(parent_pool)))]
     definition = ensemble_definition([parent["candidate_definition"] for parent in parents])
-    return _admit_discovery_proposal(_discovery_candidate(definition, "ensemble", parents), archive)
+    return _admit_discovery_proposal(
+        _discovery_candidate(definition, "ensemble", parents), archive, set(catalog)
+    )
 
 
 def _discovery_parents(
@@ -170,7 +177,9 @@ def _discovery_candidate(
 
 
 def _admit_discovery_proposal(
-    candidate: dict[str, Any] | None, archive: list[dict[str, Any]]
+    candidate: dict[str, Any] | None,
+    archive: list[dict[str, Any]],
+    catalog_ids: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Reject duplicate or invalid candidates before queue admission."""
     if candidate is None:
@@ -183,7 +192,9 @@ def _admit_discovery_proposal(
         for leaf in leaves:
             registry.resolve(leaf["strategy_id"], leaf.get("version", "v1"))
     except (DomainError, KeyError):
-        return None
+        catalog_ids = catalog_ids or set()
+        if any(leaf["strategy_id"] not in catalog_ids for leaf in leaves):
+            return None
     valid, _rules = DomainGuidedGenerator._rules(candidate)
     return candidate if valid else None
 

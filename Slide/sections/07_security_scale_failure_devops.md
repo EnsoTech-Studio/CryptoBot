@@ -1,4 +1,4 @@
-## 22. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng
+## 24. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng
 
 <div class="columns">
 <div>
@@ -19,7 +19,7 @@
 
 ---
 
-## 23. Khả Năng Mở Rộng (Scalability) & Benchmark
+## 25. Khả Năng Mở Rộng (Scalability) & Benchmark
 
 <div class="columns">
 <div>
@@ -43,7 +43,7 @@
 
 ---
 
-## 24. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục
+## 26. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục
 
 <div class="columns">
 <div>
@@ -67,14 +67,14 @@
 
 ---
 
-## 25. Triển Khai Thực Tế & MLOps
+## 27. Triển Khai Thực Tế & MLOps
 
 <div class="columns">
 <div>
 
 ### Mô Hình Triển Khai Docker & Kubernetes Readiness
 * **Container Hóa Toàn Diện (Docker Compose):**
-  * Đóng gói độc lập: Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.
+  * Đóng gói độc lập: Next.js Web, Go Edge Gateway, Python Research API, Python Background Worker Pool (Backtest, Event, News, Agent), AI Service, PostgreSQL.
 * **Health Checks Khi Triển Khai:**
   * `/healthz` và `/readyz` tự động khởi động lại container khi lỗi.
 * **MLOps & Prompt Management:**

@@ -108,6 +108,40 @@ def test_llm_comparison_aliases_and_value_wrappers_are_canonicalized() -> None:
     assert result["rules"]["short_entry"] == {"op": "above", "left": "rsi1", "right": 70}
 
 
+def test_llm_boolean_bollinger_rule_shape_is_canonicalized() -> None:
+    result = _canonicalize_strategy_spec(
+        {
+            "strategy_id": "generated_rsi_bollinger_long_001",
+            "parameters": {},
+            "indicators": [
+                {"id": "rsi_14", "kind": "rsi", "parameters": {"period": 14}},
+                {"id": "bb", "kind": "bollinger", "parameters": {"period": 20, "stddev": 2}},
+            ],
+            "rules": {
+                "long_entry": {
+                    "op": "and",
+                    "left": {"op": "cross_below", "left": {"indicator_id": "rsi_14"}, "right": {"value": 30}},
+                    "right": {"op": "below", "left": {"series": "close"}, "right": {"indicator_id": "bb", "component": "lower"}},
+                },
+                "short_entry": {"op": "always_false"},
+            },
+        }
+    )
+
+    assert result["indicators"] == [
+        {"id": "rsi_14", "kind": "rsi", "period": 14},
+        {"id": "bb", "kind": "bollinger", "period": 20, "deviation": 2},
+    ]
+    assert result["rules"]["long_entry"] == {
+        "op": "and",
+        "items": [
+            {"op": "crosses_below", "left": "rsi_14", "right": 30},
+            {"op": "below", "left": "close", "right": "bb.lower"},
+        ],
+    }
+    assert result["rules"]["short_entry"] == {"op": "equals", "left": 0, "right": 1}
+
+
 def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     observed = {}
@@ -132,7 +166,7 @@ def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
         return json.dumps({"choices": [{"message": {"content": json.dumps({"spec_json": json.dumps(response)})}}]}).encode()
 
     assert Predictor(requester).design("Use an SMA crossover.") == response
-    assert "Never use `name`, `alias`, `type`, `params`, `entry`, or `condition`" in observed["messages"][0]["content"]
+    assert "Entry comparison form" in observed["messages"][0]["content"]
     assert observed["response_format"]["json_schema"]["name"] == "strategy_spec"
 
 
@@ -154,6 +188,7 @@ def test_openai_configuration_is_preferred_and_uses_shared_model(monkeypatch) ->
     assert observed["url"] == "https://openai.example/v1/chat/completions"
     assert observed["authorization"] == "Bearer openai-test-key"
     assert observed["payload"]["model"] == "gpt-test-mini"
+    assert observed["payload"]["reasoning_effort"] == "low"
 
 
 def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) -> None:

@@ -28,11 +28,13 @@ export function ExperimentHistory({
   selectedIds,
   onToggle,
   onCancel,
+  onVisualize,
 }: {
   records: ExperimentHistoryRecord[];
   selectedIds: string[];
   onToggle: (id: string) => void;
   onCancel: (id: string) => void;
+  onVisualize: (id: string) => void;
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = records.find((record) => record.id === detailId) ?? null;
@@ -42,11 +44,11 @@ export function ExperimentHistory({
     <>
       <Panel
         title="Experiment history"
-        info="Các experiment đã tạo trong phiên làm việc này. Backend hiện chưa có endpoint list experiments."
+        info="Các experiment đã tạo trên thiết bị này khi đăng nhập tài khoản hiện tại."
         action={selected.length > 1 ? <span className={styles.compareHint}>{selected.length} đã chọn để so sánh</span> : null}
       >
         {records.length === 0 ? (
-          <p className={styles.emptyHistory}>Chưa có experiment trong phiên này. Hãy chạy backtest để tạo experiment.</p>
+          <p className={styles.emptyHistory}>Chưa có experiment đã lưu trên thiết bị này. Hãy chạy backtest để tạo experiment.</p>
         ) : (
           <div className={styles.historyWrap}>
             <table className={styles.historyTable}>
@@ -73,7 +75,11 @@ export function ExperimentHistory({
                         aria-label={`Chọn ${record.id} để so sánh`}
                       />
                     </td>
-                    <td className={styles.historyId}>{record.id.slice(0, 12)}</td>
+                    <td className={styles.historyId}>
+                      <button type="button" className={styles.historyOpen} onClick={() => onVisualize(record.id)} aria-label={`Xem biểu đồ experiment ${record.id}`}>
+                        {record.id.slice(0, 12)}
+                      </button>
+                    </td>
                     <td><Status status={record.status} /></td>
                     <td>{record.symbol} · {record.timeframe}</td>
                     <td>{record.strategy}<small>{record.strategyVersion}</small></td>
@@ -113,7 +119,7 @@ function Comparison({ records }: { records: ExperimentHistoryRecord[] }) {
     ["Sharpe Ratio", (value) => value.sharpe_ratio.toFixed(2)],
   ];
   return (
-    <Panel title="So sánh experiment" info="So sánh các experiment đã chọn trong phiên hiện tại.">
+    <Panel title="So sánh experiment" info="So sánh các experiment đã lưu trên thiết bị này.">
       <div className={styles.compareWrap}>
         <table className={styles.compareTable}>
           <thead><tr><th>Metric</th>{records.map((record) => <th key={record.id}>{record.id.slice(0, 12)}</th>)}</tr></thead>

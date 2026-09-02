@@ -187,6 +187,7 @@ export type EquityPoint = { t: string; equity: number; drawdown_pct: number };
 
 export type LeaderboardEntry = {
   id: string;
+  experiment_id: string;
   rank: number;
   score: number;
   strategy_id: string;
@@ -522,8 +523,9 @@ export const api = {
       }),
     });
   },
-  strategyDrafts(limit = 10) {
-    return request<{ drafts: StrategyDraft[] }>(`/api/v1/strategy-drafts?limit=${Math.min(20, Math.max(1, limit))}`);
+  strategyDrafts(limit?: number) {
+    const query = limit === undefined ? "" : `?limit=${Math.max(1, Math.floor(limit))}`;
+    return request<{ drafts: StrategyDraft[] }>(`/api/v1/strategy-drafts${query}`);
   },
   strategyDraft(draftId: string) {
     return request<StrategyDraft>(`/api/v1/strategy-drafts/${encodeURIComponent(draftId)}`);
@@ -655,6 +657,10 @@ export const api = {
   },
   experiment(id: string) {
     return request<ExperimentSummary>(`/api/v1/experiments/${id}`);
+  },
+  experiments(limit?: number) {
+    const query = limit === undefined ? "" : `?limit=${Math.max(1, Math.floor(limit))}`;
+    return request<{ experiments: ExperimentSummary[] }>(`/api/v1/experiments${query}`);
   },
   experimentCandles(id: string, market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<{ candles: Omit<Candle, "provider" | "symbol" | "timeframe">[] }>(

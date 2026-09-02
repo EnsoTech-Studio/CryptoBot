@@ -1,4 +1,4 @@
-## 10. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)
+## 12. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)
 
 <div class="columns">
 <div>
@@ -10,7 +10,7 @@
 4. **News Crawler (Python):** Thu thập tin RSS/HTML, kiểm soát an toàn SSRF.
 5. **News Intelligence (AI):** LLM trích xuất & chấm điểm sentiment độc lập.
 
-* **Loose Coupling:** Giao tiếp qua DTO chuẩn hóa, PostgreSQL Outbox và Redis Event Bus.
+* **Loose Coupling:** Giao tiếp qua DTO chuẩn hóa, PostgreSQL Outbox và Event Worker Dispatcher.
 
 </div>
 <div>
@@ -29,14 +29,14 @@
 
 ---
 
-## 11. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)
+## 13. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)
 
 <div class="columns">
 <div>
 
 ### 1. Market Realtime & 2. Strategy Engine
 * **Market Realtime:**
-  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; đóng nến vào Postgres, bắn `CandleClosed` qua Redis.
+  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; đóng nến vào Postgres, phát trực tiếp `CandleClosed` qua SSE/WebSocket.
   * **Invariant:** Chuỗi thời gian liên tục, không duplicate.
 * **Strategy Engine:**
   * **Thêm/Bớt:** Chiến lược đơn (Handcraft/AI) qua `IStrategy`.

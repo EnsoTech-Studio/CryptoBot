@@ -1,4 +1,4 @@
-## 12. UML Class Diagram: Strategy Plugin Model
+## 14. UML Class Diagram: Strategy Plugin Model
 
 <div class="columns">
 <div>
@@ -19,7 +19,7 @@
 
 ---
 
-## 13. UML Class Diagram: Search Algorithm & Discovery Loop
+## 15. UML Class Diagram: Search Algorithm & Discovery Loop
 
 <div class="columns">
 <div>
@@ -42,7 +42,7 @@
 
 ---
 
-## 14. UML Class Diagram: Resilient News Crawler Model
+## 16. UML Class Diagram: Resilient News Crawler Model
 
 <div class="columns">
 <div>

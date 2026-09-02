@@ -382,6 +382,8 @@
 .historyTable th, .compareTable th { color: var(--ink-2); font-size: 10px; font-weight: var(--weight-semibold); }
 .historyTable tbody tr:hover, .compareTable tbody tr:hover { background: var(--surface-2); }
 .historyId, .historyDataset { max-width: 170px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.historyOpen { min-height: auto; overflow: hidden; border: 0; background: transparent; padding: 0; color: var(--brand); font-family: inherit; font-size: inherit; font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.historyOpen:hover { color: var(--brand-hover); text-decoration: underline; }
 .historyTable td small { display: block; margin-top: 2px; color: var(--ink-3); font-family: var(--font-mono); }
 .historyStatus { display: inline-flex; align-items: center; gap: 5px; text-transform: capitalize; }
 .historyStatus > span { width: 7px; height: 7px; }

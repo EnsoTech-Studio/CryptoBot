@@ -418,6 +418,9 @@
 .rankPlain { color: var(--ink-2); font-size: 13px; font-weight: var(--weight-semibold); }
 
 .partList { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.leaderStrategyButton { min-height: auto; border: 0; background: transparent; padding: 0; color: inherit; text-align: left; }
+.leaderStrategyButton:hover em { filter: brightness(0.94); }
+.leaderStrategyButton:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 .partPlus { color: var(--ink-3); font-size: 12px; }
 
 .partList em {

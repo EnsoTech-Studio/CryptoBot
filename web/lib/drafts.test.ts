@@ -131,6 +131,13 @@ test("mock execution markers keep a ledger sequence for chart selection", () => 
   const markers = mockExecutionMarkers(candles);
   assert.ok(markers.some((marker) => isExecutionMarkerSelected(marker, 1)));
   assert.ok(markers.some((marker) => isExecutionMarkerSelected(marker, 2)));
+  const maxPrice = Math.max(...candles.map((candle) => candle.high));
+  const minPrice = Math.min(...candles.map((candle) => candle.low));
+  assert.ok(markers.every((marker) => (
+    marker.price === undefined
+      || marker.price >= minPrice - (maxPrice - minPrice) * 0.1
+      && marker.price <= maxPrice + (maxPrice - minPrice) * 0.1
+  )));
 });
 
 test("trade pager fetches a cursor page only when the selected page is not loaded", () => {

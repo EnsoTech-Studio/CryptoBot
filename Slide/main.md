@@ -117,7 +117,66 @@ style: |
 
 ---
 
-## 1. Bối cảnh & 4 Nhóm Architectural Drivers
+## 1. Miền Nghiệp Vụ & Bối Cảnh (Business Domain)
+
+<div class="columns">
+<div>
+
+### Binance USDT-M Futures & Algo-Trading
+* **Thị trường Hợp đồng Tương lai Vĩnh cửu (Perpetual):**
+  * Giao dịch đòn bẩy 2 chiều **Long (Mua) / Short (Bán)** 24/7/365.
+  * Khớp lệnh theo sổ lệnh **BBO (Best Bid / Best Offer)** thời gian thực.
+* **Đặc tính Tài chính Khắt khe:**
+  * **Funding Rate:** Cân bằng giá Index & Mark Price mỗi 8h.
+  * **Chi phí Giao dịch:** Phí Maker/Taker (0.02% / 0.05%), Trượt giá (Slippage) khi biến động mạnh.
+  * **Rủi ro Thanh lý (Liquidation):** Yêu cầu tính toán Margin & Stop-Loss nghiêm ngặt.
+
+</div>
+<div>
+
+### Đối Tượng Sử Dụng & Nhu Cầu Cốt Lõi
+* **Quant Researcher / Algorithmic Trader:**
+  * Cần môi trường nạp nến độ trễ thấp (<200ms) đa khung giờ (1m, 5m, 1h, 1d).
+  * Kiểm thử chiến lược (Backtest) chính xác, đo lường Sharpe, Drawdown, Profit Factor.
+* **Autonomous AI Agents (LLM Multi-Agent):**
+  * Tự động crawl tin tức tài chính, chấm điểm sentiment.
+  * Tự sinh mã chiến lược, tự debug và quét không gian siêu tham số.
+
+</div>
+</div>
+
+---
+
+## 2. Bài Toán Thực Tế & Thách Thức (Problem Statement)
+
+<div class="columns-equal">
+<div>
+
+### Thách Thức Về Dữ Liệu & Khớp Lệnh
+* **Phân mảnh & Bất định Dữ liệu Realtime:**
+  * WebSocket sàn bị drop/jitter làm mất nến → Gây sai lệch tín hiệu vào lệnh.
+  * *Yêu cầu:* Tự phát hiện khoảng trống nến & bù dữ liệu tự động (Gap Backfill).
+* **Bẫy "Lookahead Bias" & Sai Lệch Parity:**
+  * Backtest giả lập phi thực tế (dùng giá tương lai, bỏ qua slippage/phí) → Khi chạy Live bị lỗ.
+  * *Yêu cầu:* Vectorized Engine mô phỏng sát sao trượt giá, BBO và phí sàn.
+
+</div>
+<div>
+
+### Thách Thức Về Mở Rộng & Kiến Trúc
+* **Bùng nổ Tổ hợp Tìm kiếm (Combinatorial Explosion):**
+  * Quét hàng ngàn tham số / chỉ báo kỹ thuật gây nghẽn UI nếu chạy đồng bộ.
+  * *Yêu cầu:* Kiến trúc Hàng đợi Bất đồng bộ (Outbox Job Queue) & Worker Pool.
+* **Bẫy Gắn Chặt Hệ Thống (Vendor Lock-in):**
+  * Mã nguồn bị trói chặt vào một sàn/thư viện duy nhất, khó thêm thuật toán mới.
+  * *Yêu cầu:* Plugin Architecture (mô hình cắm rút) & AST Sandbox an toàn.
+
+</div>
+</div>
+
+---
+
+## 3. Bối cảnh & 4 Nhóm Architectural Drivers
 
 <div class="columns">
 <div>
@@ -132,7 +191,7 @@ style: |
 <div>
 
 ### Quyết định Kiến trúc Tương ứng
-* **Driver 1 → Streaming & Kappa Architecture:** Tách biệt luồng WSS trực tiếp và Historical Backfill.
+* **Driver 1 → Dual-Channel Ingestion & Gap Repair:** Tách biệt luồng WSS trực tiếp và Historical Backfill đồng nhất schema.
 * **Driver 2 → Plugin Architecture & AST Sandbox:** Chuẩn hóa IStrategy contract, nạp plugin động.
 * **Driver 3 → Event-Driven Job Queue & Worker:** Phân tán tải Backtest qua PostgreSQL Outbox & Worker pool.
 * **Driver 4 → Multi-Agent & LLM Fallback:** Tự phát hiện cấu trúc HTML và chấm điểm sentiment.
@@ -142,12 +201,12 @@ style: |
 
 ---
 
-## 2. Hệ Thống Quality Attributes (ASRs Taxonomy)
+## 4. Hệ Thống Quality Attributes (ASRs Taxonomy)
 
 | Thuộc tính (QA) | Trọng tâm Thiết kế | Tactic / Kỹ thuật Kiến trúc Áp dụng |
 | :--- | :--- | :--- |
 | **Modifiability** | Thêm mới Strategy, Search, Data Provider không sửa Core | Plugin Architecture, Open-Closed Principle, Dynamic Registry |
-| **Scalability** | Xử lý tải >100,000 backtests và stream nến realtime | Scale-out Python Worker pool, Job Queue, Redis Caching |
+| **Scalability** | Xử lý tải >100,000 backtests và stream nến realtime | Scale-out Python Worker pool, PostgreSQL Leased Job Queue, In-memory Broadcaster |
 | **Realtime / Perf** | Độ trễ cập nhật nến < 200ms, thông lượng Backtest cao | Go Edge Gateway, WebSocket Streaming, Vectorized Engine |
 | **Reliability** | Lỗi crawl/search không sập API; tự reconnect sàn | Failure Isolation, Transactional Outbox, Lease Takeover |
 | **Observability** | Theo dõi trạng thái Worker, tiến độ Search Loop | Structured Logging, State Machine tracking, Run Metrics |
@@ -155,7 +214,7 @@ style: |
 
 ---
 
-## 3. Kịch Bản ASR Chi Tiết (Modifiability & Scalability)
+## 5. Kịch Bản ASR Chi Tiết (Modifiability & Scalability)
 
 <div class="columns">
 <div>
@@ -184,7 +243,7 @@ style: |
 
 ---
 
-## 4. Kịch Bản ASR Chi Tiết (Realtime & Reliability)
+## 6. Kịch Bản ASR Chi Tiết (Realtime & Reliability)
 
 <div class="columns">
 <div>
@@ -213,7 +272,7 @@ style: |
 
 ---
 
-## 5. Tổng Quan Use Case Hệ Thống
+## 7. Tổng Quan Use Case Hệ Thống
 
 <div class="columns">
 <div>
@@ -240,7 +299,7 @@ style: |
 
 ---
 
-## 6. C4 Model (Level 1) - System Context Diagram
+## 8. C4 Model (Level 1) - System Context Diagram
 
 <div class="columns">
 <div>
@@ -262,17 +321,18 @@ style: |
 
 ---
 
-## 7. C4 Model (Level 2) - Container Diagram
+## 9. C4 Model (Level 2) - Container Diagram
 
 <div class="columns">
 <div>
 
 ### Phân Rã Các Container Chính
-* **Next.js Web App (SPA):** Giao diện tương tác, biểu đồ nến realtime, cấu hình chiến lược & xem Leaderboard.
-* **Go Edge Gateway:** Xác thực RBAC, định tuyến CQRS, duy trì WebSocket Binance và stream nến qua SSE/WS.
-* **Python Research Engine:** Xử lý tính toán nặng (Backtest Worker, Loop Discovery, Metric Evaluation).
-* **PostgreSQL (Storage):** Lưu trữ nến, chiến lược, thí nghiệm và Outbox table.
-* **Redis (Cache & Bus):** In-memory Pub/Sub và caching realtime indicators.
+* **Next.js Web (SPA):** UI biểu đồ realtime, cấu hình chiến lược & Leaderboard.
+* **Go Edge Gateway (`api`):** CQRS, RBAC, thu nạp Binance WSS & stream SSE/WS.
+* **Python Research (`research`):** Strategy Registry, Backtest Engine & Search Loop.
+* **Async Workers (`worker` pool):** Xử lý Job Queue, Outbox Events, Crawl & AI Agent.
+* **AI Service (`ai`):** Cổng LLM (Groq/OpenAI) phân tích sentiment & sinh mã.
+* **PostgreSQL (Storage & Outbox):** Lưu trữ ACID nến, thí nghiệm và hàng đợi Outbox.
 
 </div>
 <div>
@@ -284,7 +344,7 @@ style: |
 
 ---
 
-## 8. C4 Model (Level 3) - Python Research Platform
+## 10. C4 Model (Level 3) - Python Research Platform
 
 <div class="columns">
 <div>
@@ -306,7 +366,7 @@ style: |
 
 ---
 
-## 9. C4 Model (Level 3) - Go Edge & Market Gateway
+## 11. C4 Model (Level 3) - Go Edge & Market Gateway
 
 <div class="columns">
 <div>
@@ -327,7 +387,7 @@ style: |
 
 ---
 
-## 10. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)
+## 12. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)
 
 <div class="columns">
 <div>
@@ -339,7 +399,7 @@ style: |
 4. **News Crawler (Python):** Thu thập tin RSS/HTML, kiểm soát an toàn SSRF.
 5. **News Intelligence (AI):** LLM trích xuất & chấm điểm sentiment độc lập.
 
-* **Loose Coupling:** Giao tiếp qua DTO chuẩn hóa, PostgreSQL Outbox và Redis Event Bus.
+* **Loose Coupling:** Giao tiếp qua DTO chuẩn hóa, PostgreSQL Outbox và Event Worker Dispatcher.
 
 </div>
 <div>
@@ -358,14 +418,14 @@ style: |
 
 ---
 
-## 11. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)
+## 13. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)
 
 <div class="columns">
 <div>
 
 ### 1. Market Realtime & 2. Strategy Engine
 * **Market Realtime:**
-  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; đóng nến vào Postgres, bắn `CandleClosed` qua Redis.
+  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; đóng nến vào Postgres, phát trực tiếp `CandleClosed` qua SSE/WebSocket.
   * **Invariant:** Chuỗi thời gian liên tục, không duplicate.
 * **Strategy Engine:**
   * **Thêm/Bớt:** Chiến lược đơn (Handcraft/AI) qua `IStrategy`.
@@ -388,7 +448,7 @@ style: |
 
 ---
 
-## 12. UML Class Diagram: Strategy Plugin Model
+## 14. UML Class Diagram: Strategy Plugin Model
 
 <div class="columns">
 <div>
@@ -409,7 +469,7 @@ style: |
 
 ---
 
-## 13. UML Class Diagram: Search Algorithm & Discovery Loop
+## 15. UML Class Diagram: Search Algorithm & Discovery Loop
 
 <div class="columns">
 <div>
@@ -432,7 +492,7 @@ style: |
 
 ---
 
-## 14. UML Class Diagram: Resilient News Crawler Model
+## 16. UML Class Diagram: Resilient News Crawler Model
 
 <div class="columns">
 <div>
@@ -454,7 +514,7 @@ style: |
 
 ---
 
-## 15. High-Level Architecture: Modular Monolith
+## 17. High-Level Architecture: Modular Monolith
 
 <div class="columns">
 <div>
@@ -463,7 +523,7 @@ style: |
 * **Frontend (Next.js):** SPA / JAMstack, Event Streaming (SSE/WS) cho biểu đồ realtime.
 * **Middleware (Go API Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Adapter.
 * **Backend Research (Python):** Plugin Architecture, Event-Driven Job Queue, Backtest Worker pool.
-* **Database (Tách nhóm data):** PostgreSQL (ACID Outbox, Candles, Experiments) & Redis (Pub/Sub, Indicator cache).
+* **Database (Tách nhóm data):** PostgreSQL (ACID Outbox, Candles, Experiments, News) & In-memory Ring Buffers (Go API Edge).
 * **Agent & External:** Strategy AI Agent, Crawling Agent, Binance API, OpenAI/Groq.
 
 </div>
@@ -476,7 +536,7 @@ style: |
 
 ---
 
-## 16. Các Design & Architectural Patterns Trọng Yếu
+## 18. Các Design & Architectural Patterns Trọng Yếu
 
 <div class="columns">
 <div>
@@ -484,8 +544,8 @@ style: |
 ### Các Pattern Cốt Lõi Áp Dụng
 * **CQRS (Go API):**
   * Tách biệt lệnh Command (tạo thí nghiệm) và Query (đọc nến, leaderboard) tối ưu hiệu năng.
-* **Event Streaming & Kappa Architecture:**
-  * Đồng nhất mô hình dữ liệu nến cho cả luồng Realtime (WSS) và Historical (Backtest dataset).
+* **Dual-Channel Market Engine with Parity:**
+  * Đồng nhất mô hình dữ liệu nến cho cả luồng Realtime (WSS) và Historical Backfill (REST).
 * **Transactional Outbox Pattern:**
   * Đảm bảo tính nguyên tử (Atomic) khi tạo Experiment và đẩy Job, loại bỏ rủi ro Dual-write.
 * **Plugin Architecture:**
@@ -501,7 +561,7 @@ style: |
 
 ---
 
-## 17. Nền Tảng Multi-Agent & Vòng Lặp AI Tự Chủ
+## 19. Nền Tảng Multi-Agent & Vòng Lặp AI Tự Chủ
 
 <div class="columns">
 <div>
@@ -525,7 +585,7 @@ style: |
 
 ---
 
-## 18. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill
+## 20. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill
 
 <div class="columns">
 <div>
@@ -533,7 +593,7 @@ style: |
 ### Xử Lý Nến & Khôi Phục Khoảng Trống (Gap Backfill)
 1. **Khởi Tạo Biểu Đồ:** Tải 1,000 nến lịch sử từ Postgres/Binance REST cho đa khung thời gian (1m, 5m, 1h, 1d).
 2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật nến tạm thời (provisional candle).
-3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán sự kiện `CandleClosed` qua Redis.
+3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán trực tiếp sự kiện `CandleClosed` qua SSE/WebSocket broadcaster.
 4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các nến bị khuyết, đảm bảo chuỗi thời gian liên tục.
 
 </div>
@@ -546,7 +606,7 @@ style: |
 
 ---
 
-## 19. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
+## 21. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
 
 <div class="columns">
 <div>
@@ -571,7 +631,7 @@ style: |
 
 ---
 
-## 20. Runtime Flow: Pipeline Backtest Bất Đồng Bộ
+## 22. Runtime Flow: Pipeline Backtest Bất Đồng Bộ
 
 <div class="columns">
 <div>
@@ -592,7 +652,7 @@ style: |
 
 ---
 
-## 21. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback
+## 23. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback
 
 <div class="columns">
 <div>
@@ -614,7 +674,7 @@ style: |
 
 ---
 
-## 22. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng
+## 24. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng
 
 <div class="columns">
 <div>
@@ -635,7 +695,7 @@ style: |
 
 ---
 
-## 23. Khả Năng Mở Rộng (Scalability) & Benchmark
+## 25. Khả Năng Mở Rộng (Scalability) & Benchmark
 
 <div class="columns">
 <div>
@@ -659,7 +719,7 @@ style: |
 
 ---
 
-## 24. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục
+## 26. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục
 
 <div class="columns">
 <div>
@@ -683,14 +743,14 @@ style: |
 
 ---
 
-## 25. Triển Khai Thực Tế & MLOps
+## 27. Triển Khai Thực Tế & MLOps
 
 <div class="columns">
 <div>
 
 ### Mô Hình Triển Khai Docker & Kubernetes Readiness
 * **Container Hóa Toàn Diện (Docker Compose):**
-  * Đóng gói độc lập: Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.
+  * Đóng gói độc lập: Next.js Web, Go Edge Gateway, Python Research API, Python Background Worker Pool (Backtest, Event, News, Agent), AI Service, PostgreSQL.
 * **Health Checks Khi Triển Khai:**
   * `/healthz` và `/readyz` tự động khởi động lại container khi lỗi.
 * **MLOps & Prompt Management:**
@@ -707,19 +767,19 @@ style: |
 
 ---
 
-## 26. Ma Trận Đánh Đổi Kiến Trúc (Tradeoffs Matrix)
+## 28. Ma Trận Đánh Đổi Kiến Trúc (Tradeoffs Matrix)
 
 | Lựa Chọn Thiết Kế | Phương Án Được Chọn | Phương Án Thay Thế | Lý Do & Đánh Đổi Kiến Trúc (Rationale) |
 | :--- | :--- | :--- | :--- |
 | **Kiến trúc Tổng thể** | **Modular Monolith** | Microservices | **Chọn:** Giảm độ phức tạp vận hành mạng, đảm bảo ranh giới module rõ ràng qua contracts. |
 | **Lưu trữ Nến & Job** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Thí nghiệm & Outbox; B-Tree index đủ đáp ứng hàng triệu nến. |
-| **Hàng Đợi Sự Kiện** | **Postgres Outbox + Redis** | Apache Kafka / RabbitMQ | **Chọn:** Loại bỏ sự cố Dual-write, đảm bảo Outbox nguyên tử và deploy gọn trong Docker Compose. |
+| **Hàng Đợi & Sự Kiện** | **PostgreSQL Outbox & Leases** | Apache Kafka / RabbitMQ / Redis | **Chọn:** Loại bỏ hoàn toàn Dual-write, đảm bảo Outbox nguyên tử ACID mà không cần duy trì thêm message broker ngoài. |
 | **Thực Thi Mã AI Sinh** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Khởi tạo sandbox tức thì (<10ms), kiểm soát an toàn cú pháp không tốn tài nguyên. |
 | **Phân Tích Sentiment** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Tiết kiệm chi phí token API, tránh nghẽn luồng crawl; chỉ gọi LLM khi cần phân tích sâu. |
 
 ---
 
-## 27. Khả Năng Thay Thế & Mở Rộng (Replaceability)
+## 29. Khả Năng Thay Thế & Mở Rộng (Replaceability)
 
 <div class="columns">
 <div>
@@ -742,7 +802,7 @@ style: |
 
 ---
 
-## 28. Tổng Kết Đồ Án & Giá Trị Kiến Trúc
+## 30. Tổng Kết Đồ Án & Giá Trị Kiến Trúc
 
 <div class="columns">
 <div>

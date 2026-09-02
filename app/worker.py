@@ -259,11 +259,19 @@ class BacktestWorker:
                         job.snapshot, candles
                     )
                 engine = self._engine
-                load_runtime_spec = getattr(self._dispatcher, "load_runtime_spec", None)
-                if load_runtime_spec is not None:
-                    runtime_spec = load_runtime_spec(job.snapshot.strategy)
-                    if runtime_spec is not None:
-                        engine = engine.with_runtime_spec(runtime_spec)
+                load_runtime_specs = getattr(self._dispatcher, "load_runtime_specs", None)
+                if load_runtime_specs is not None:
+                    runtime_specs = load_runtime_specs(job.snapshot)
+                    if runtime_specs:
+                        engine = engine.with_runtime_specs(runtime_specs)
+                else:
+                    # Compatibility seam for lightweight/test dispatchers and
+                    # older adapters that only know the top-level reference.
+                    load_runtime_spec = getattr(self._dispatcher, "load_runtime_spec", None)
+                    if load_runtime_spec is not None:
+                        runtime_spec = load_runtime_spec(job.snapshot.strategy)
+                        if runtime_spec is not None:
+                            engine = engine.with_runtime_spec(runtime_spec)
                 result = execute_job(
                     engine, job.snapshot, candles, quotes, sentiment_windows
                 )

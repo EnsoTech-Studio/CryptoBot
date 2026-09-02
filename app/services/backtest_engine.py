@@ -552,11 +552,18 @@ class DeterministicEngine:
         self._library = library if library is not None else DeterministicLibrary()
 
     def with_runtime_spec(self, spec: dict[str, Any]) -> "DeterministicEngine":
+        return self.with_runtime_specs([spec])
+
+    def with_runtime_specs(self, specs: list[dict[str, Any]]) -> "DeterministicEngine":
+        """Return an engine with every approved declarative child installed."""
         from ..domain.strategy.generated import DeclarativeStrategy
         from ..domain.strategy.plugins.catalog import default_registry
 
         registry = default_registry()
-        registry.register(lambda: DeclarativeStrategy(spec))
+        for spec in specs:
+            # Bind the current spec. A late-bound loop variable would make all
+            # factories resolve to the last generated child.
+            registry.register(lambda spec=spec: DeclarativeStrategy(spec))
         return DeterministicEngine(registry, self._library)
 
     def run(

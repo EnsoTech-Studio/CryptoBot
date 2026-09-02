@@ -71,7 +71,7 @@
 \begin{column}{0.48\textwidth}
 \begin{block}{\textbf{[Quyết định Kiến trúc Tương ứng]}}
 \begin{itemize}
-  \item \textbf{Driver 1 $\rightarrow$ Kappa / Streaming:} Tách biệt luồng Realtime WSS và Offline Backfill.
+  \item \textbf{Driver 1 $\rightarrow$ Dual-Channel Ingestion:} Luồng Realtime WSS \& REST Backfill đồng nhất schema.
   \item \textbf{Driver 2 $\rightarrow$ Plugin \& AST Sandbox:} Chuẩn hóa contract \texttt{IStrategy}.
   \item \textbf{Driver 3 $\rightarrow$ Distributed Job Queue:} Phân tán tải qua Postgres Outbox \& Worker Leases.
   \item \textbf{Driver 4 $\rightarrow$ Multi-Agent Crawler:} Tự động nhận diện cấu trúc DOM \& chấm sentiment.
@@ -89,7 +89,7 @@
 \textbf{Thuộc tính (QA)} & \textbf{Trọng tâm Thiết kế} & \textbf{Kỹ thuật / Tactic Kiến trúc áp dụng} \\
 \midrule
 \textbf{Modifiability} & Thêm Strategy, Search, Data Provider không sửa Core & Plugin Architecture, Open-Closed Principle, Dynamic Registry \\
-\textbf{Scalability} & Xử lý đồng thời $>100,000$ backtests \& stream nến realtime & Scale-out Python Worker pool, Job Queue, Redis Caching, Postgres B-Tree \\
+\textbf{Scalability} & Xử lý đồng thời $>100,000$ backtests \& stream nến realtime & Scale-out Python Worker pool, Postgres Leased Job Queue, In-memory Broadcaster \\
 \textbf{Realtime / Perf} & Độ trễ cập nhật nến $<200$ms, Backtest throughput cao & Go Edge Gateway, WebSocket Streaming, Vectorized Engine \\
 \textbf{Reliability} & Lỗi crawl/search không làm sập API; reconnect sàn & Failure Isolation, Transactional Outbox, Lease Takeover, Idempotency \\
 \textbf{Observability} & Theo dõi Worker, tiến độ Search Loop \& nến realtime & Structured Logging, State Machine tracking, Loop Run Metrics \\
@@ -200,7 +200,7 @@
   \item \textbf{Next.js Web App:} SPA tương tác, realtime chart, cấu hình chiến lược \& leaderboard.
   \item \textbf{Go Edge Gateway:} RBAC, CQRS routing, WebSocket streaming.
   \item \textbf{Python Research Engine:} Backtest worker, Loop discovery, Metric evaluation.
-  \item \textbf{PostgreSQL \& Redis:} ACID Outbox, Candle store \& Pub/Sub caching.
+  \item \textbf{PostgreSQL Storage:} ACID Outbox, Candle store \& Job queue.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -365,9 +365,9 @@
 \begin{column}{0.45\textwidth}
 \begin{itemize}
   \item \textbf{Frontend Layer:} Next.js SPA qua REST CQRS \& SSE/WebSocket.
-  \item \textbf{API \& Edge (Go):} Tiếp nhận request, RBAC, WSS Binance, Redis publisher.
+  \item \textbf{API \& Edge (Go):} Tiếp nhận request, RBAC, WSS Binance, SSE broadcaster.
   \item \textbf{Research Core (Python):} Worker Pool xử lý Backtest, Discovery Loop, Genetic Search.
-  \item \textbf{Storage \& Bus:} PostgreSQL ACID Outbox \& Redis Pub/Sub caching.
+  \item \textbf{Storage \& Outbox:} PostgreSQL ACID Outbox \& In-memory Ring Buffers.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -384,7 +384,7 @@
 \begin{itemize}
   \item \textbf{CQRS:} Phân tách luồng Command (ghi thí nghiệm) và Query (đọc nến, leaderboard).
   \item \textbf{Transactional Outbox:} Atomic transaction đảm bảo không mất mát job thực thi.
-  \item \textbf{Event Streaming \& Kappa:} Đồng nhất schema cho Realtime WSS và Historical Dataset.
+  \item \textbf{Dual-Channel Parity:} Đồng nhất schema cho Realtime WSS và Historical Backfill.
   \item \textbf{Plugin Architecture:} Độc lập hóa thuật toán giao dịch khỏi execution core.
 \end{itemize}
 \end{column}
@@ -554,7 +554,7 @@
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Docker Compose Topology:} Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.
+  \item \textbf{Docker Compose Topology:} Next.js Web, Go Edge, Python Research, Background Workers, AI Service, PostgreSQL.
   \item \textbf{Healthchecks:} Endpoint \texttt{/healthz} \& \texttt{/readyz} tự động restart container khi deadlock.
   \item \textbf{MLOps Configuration:} System prompt và LLM API keys đặt trong \texttt{.env}, không hardcode.
 \end{itemize}
@@ -575,7 +575,7 @@
 \midrule
 \textbf{Tổng thể} & \textbf{Modular Monolith} & Microservices & Giảm độ phức tạp vận hành mạng, ranh giới rõ qua contracts. \\
 \textbf{Lưu trữ} & \textbf{Postgres + B-Tree} & ClickHouse / InfluxDB & Giữ ACID cho Outbox \& Thí nghiệm; B-Tree đủ tải hàng triệu nến. \\
-\textbf{Hàng đợi} & \textbf{Outbox + Redis} & Kafka / RabbitMQ & Loại bỏ Dual-write, đảm bảo nguyên tử, nhẹ nhàng trong Docker. \\
+\textbf{Hàng đợi} & \textbf{Postgres Outbox} & Kafka / RabbitMQ / Redis & Loại bỏ Dual-write, đảm bảo ACID nguyên tử không cần broker ngoài. \\
 \textbf{Mã AI sinh} & \textbf{AST + Sandbox} & Docker-in-Docker & Khởi tạo tức thì ($<10$ms), kiểm soát an toàn không tốn container. \\
 \textbf{Sentiment} & \textbf{Hybrid Rule+LLM} & Pure Realtime LLM & Tiết kiệm token API, tránh nghẽn luồng crawl tin. \\
 \bottomrule

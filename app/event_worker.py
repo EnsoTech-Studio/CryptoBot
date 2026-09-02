@@ -80,17 +80,17 @@ class EventWorker:
                 )
 
     def _handle(self, event: ClaimedEvent) -> None:
-        if event.event_type != "BacktestCompleted":
+        if event.event_type not in {"BacktestCompleted", "BacktestFailed"}:
             return
-        evaluation_input, timeframe = self._dispatcher.load_evaluation_input(
-            UUID(str(event.aggregate_id))
-        )
-        evaluation = self._evaluator.evaluate(
-            evaluation_input, default_evaluation_policy(timeframe)
-        )
-        self._dispatcher.persist_evaluation(event.aggregate_id, evaluation)
+        run_id = UUID(str(event.aggregate_id))
+        if event.event_type == "BacktestCompleted":
+            evaluation_input, timeframe = self._dispatcher.load_evaluation_input(run_id)
+            evaluation = self._evaluator.evaluate(
+                evaluation_input, default_evaluation_policy(timeframe)
+            )
+            self._dispatcher.persist_evaluation(event.aggregate_id, evaluation)
         self._store.advance_discovery_for_experiment(
-            self._dispatcher.experiment_id_for_run(UUID(str(event.aggregate_id)))
+            self._dispatcher.experiment_id_for_run(run_id)
         )
 
 

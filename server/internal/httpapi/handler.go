@@ -680,6 +680,14 @@ func (h *Handler) strategyDraftByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		principal, ok := h.requireAuth(w, r)
+		if !ok {
+			return
+		}
+		h.callResearch(w, r, http.MethodGet, "/api/v1/experiments", nil, &principal)
+		return
+	}
 	if !allowMethod(w, r, http.MethodPost) {
 		return
 	}

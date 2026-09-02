@@ -27,9 +27,18 @@ import { ExperimentHistory, type ExperimentHistoryRecord } from "./ExperimentHis
 import { TradeLedger } from "./TradeLedger";
 import styles from "./backtest.module.css";
 
+const EXPERIMENT_HISTORY_KEY = "crypto-lab-experiment-history";
+
 type DatasetLoadState = "loading" | "ready" | "empty" | "error";
 
 export function BacktestScreen() {
+  const { user } = useWorkspace();
+  /* Login changes the owner boundary. Remounting keeps account-scoped draft,
+     ledger, and comparison state from ever leaking across accounts. */
+  return <BacktestContent key={user?.id ?? "anonymous"} />;
+}
+
+function BacktestContent() {
   const {
     marketPairs,
     availableTimeframes,
@@ -37,11 +46,13 @@ export function BacktestScreen() {
     strategies,
     experiment,
     result,
+    openExperiment,
     runBacktest,
     openInspector,
     user,
     dataMode,
   } = useWorkspace();
+  const userId = user?.id;
 
   const [draft, setDraft] = useState<BacktestDraft>(() =>
     createBacktestDraft(selectedMarket, "5m"),
@@ -52,7 +63,7 @@ export function BacktestScreen() {
   const [datasets, setDatasets] = useState<MarketDataset[]>([]);
   const [datasetLoadState, setDatasetLoadState] = useState<DatasetLoadState>("loading");
   const [selectedTradeSequence, setSelectedTradeSequence] = useState<number | null>(null);
-  const [history, setHistory] = useState<ExperimentHistoryRecord[]>([]);
+  const [history, setHistory] = useState<ExperimentHistoryRecord[]>(() => user ? readExperimentHistory(user.id) : []);
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [uiCancelled, setUiCancelled] = useState(false);
   const [mockRunState, setMockRunState] = useState<"idle" | "running" | "completed">("idle");
@@ -146,6 +157,32 @@ export function BacktestScreen() {
   );
   const kpis = useMemo(() => deriveKpis(trades), [trades]);
   const shownDraft = submitted ?? effectiveDraft;
+
+  /* The API exposes individual experiments but no owner-scoped collection.
+     Keep the rendered experiment ledger per signed-in user so it survives
+     sign-out, reload, and a later login on this browser. */
+  useEffect(() => {
+    if (!user) return;
+    try {
+      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history.slice(0, 20)));
+    } catch {
+      // Private-mode storage failures must not block a backtest.
+    }
+  }, [history, user]);
+
+  useEffect(() => {
+    if (!userId || dataMode === "mock") return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api.experiments().then(({ experiments }) => {
+        if (!cancelled) setHistory(experiments.map(summaryToHistory));
+      }).catch(() => undefined);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [dataMode, userId]);
 
   useEffect(() => {
     if (!experiment) return;
@@ -294,6 +331,7 @@ export function BacktestScreen() {
           selectedIds={comparisonIds}
           onToggle={toggleComparison}
           onCancel={cancelHistory}
+          onVisualize={(id) => void openExperiment(id)}
         />
       </div>
     </section>
@@ -331,4 +369,37 @@ function statusText(status: string) {
     default:
       return "";
   }
+}
+
+function experimentHistoryStorageKey(ownerId: string) {
+  return `${EXPERIMENT_HISTORY_KEY}:${ownerId}`;
+}
+
+function readExperimentHistory(ownerId: string): ExperimentHistoryRecord[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(experimentHistoryStorageKey(ownerId)) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter(isExperimentHistoryRecord).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function isExperimentHistoryRecord(value: unknown): value is ExperimentHistoryRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<ExperimentHistoryRecord>;
+  return typeof record.id === "string"
+    && typeof record.status === "string"
+    && typeof record.createdAt === "string"
+    && typeof record.symbol === "string"
+    && typeof record.timeframe === "string"
+    && typeof record.strategy === "string"
+    && typeof record.strategyVersion === "string"
+    && typeof record.datasetVersion === "string"
+    && typeof record.rangeFrom === "string"
+    && typeof record.rangeTo === "string"
+    && typeof record.parameters === "object"
+    && record.parameters !== null
+    && typeof record.execution === "object"
+    && record.execution !== null;
 }

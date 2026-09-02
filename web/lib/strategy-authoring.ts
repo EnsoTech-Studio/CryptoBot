@@ -99,7 +99,7 @@ export type ImportRow = {
   createdAt: string;
   version: string;
   tags: string[];
-  status: "approved" | "review" | "rejected" | "failed";
+  status: "approved" | "processing" | "review" | "rejected" | "failed";
 };
 
 export type RecentImportDraft = {
@@ -147,7 +147,15 @@ export function recentImportRows(drafts: RecentImportDraft[], useReferenceFixtur
     createdAt: formatImportedAt(draft.created_at),
     version: `v${draft.current_revision}`,
     tags: tagsForDraft(draft),
-    status: draft.status === "APPROVED" ? "approved" : draft.status === "REJECTED" ? "rejected" : draft.status === "FAILED" ? "failed" : "review",
+    status: draft.status === "APPROVED"
+      ? "approved"
+      : draft.status === "REVIEW_REQUIRED"
+        ? "review"
+        : draft.status === "REJECTED"
+          ? "rejected"
+          : draft.status === "FAILED"
+            ? "failed"
+            : "processing",
   }));
 }
 
