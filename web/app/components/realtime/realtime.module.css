@@ -10,9 +10,8 @@
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 18px;
 }
 
 .marketColumn {
@@ -89,36 +88,6 @@
 
 .selectWrap select:disabled { color: var(--ink-3); cursor: not-allowed; }
 .selectWrap > svg { position: absolute; top: 50%; right: 12px; width: 15px; height: 15px; color: var(--ink-3); transform: translateY(-50%); pointer-events: none; }
-
-.timeframeGroup { min-width: 378px; }
-
-.timeframes {
-  display: inline-flex;
-  width: fit-content;
-  min-height: 39px;
-  gap: 10px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.timeframes button {
-  min-width: 66px;
-  min-height: 39px;
-  border: 1px solid var(--line-2);
-  border-radius: 7px;
-  background: var(--surface-1);
-  padding: 0 13px;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: var(--weight-semibold);
-}
-
-.timeframes button:hover { color: var(--ink-1); }
-.timeframes .timeframeActive { background: var(--brand); color: var(--brand-ink); box-shadow: 0 2px 7px rgba(23, 105, 232, 0.2); }
-.timeframes .timeframeActive:hover { color: var(--brand-ink); }
 
 .realtimeControl { min-width: 271px; margin-left: auto; }
 .realtimeRow { display: flex; min-height: 39px; align-items: center; justify-content: space-between; gap: 13px; }
@@ -257,7 +226,15 @@
 .positive { color: var(--data-up); }
 .negative { color: var(--data-down); }
 
-.chartMeta { display: flex; min-height: 22px; align-items: center; gap: 8px; padding: 0 14px 4px; }
+.chartMeta { display: flex; min-width: 0; min-height: 31px; align-items: center; gap: 10px; padding: 0 14px 4px; }
+.chartTimeframeControl { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.chartControlLabel { flex: 0 0 auto; color: var(--chart-axis); font-size: 10px; font-weight: var(--weight-semibold); }
+.chartTimeframes { display: flex; min-width: 0; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.chartTimeframes::-webkit-scrollbar { display: none; }
+.chartTimeframes button { min-width: 36px; min-height: 25px; border: 1px solid var(--line-2); border-radius: 5px; background: var(--surface-1); padding: 0 7px; color: var(--ink-3); font-family: var(--font-mono); font-size: 10px; font-weight: var(--weight-semibold); }
+.chartTimeframes button:hover { color: var(--ink-1); }
+.chartTimeframes .timeframeActive { background: var(--brand); color: var(--brand-ink); box-shadow: 0 2px 7px rgba(23, 105, 232, 0.2); }
+.chartTimeframes .timeframeActive:hover { color: var(--brand-ink); }
 
 .signalBadge { display: inline-grid; min-width: 53px; min-height: 27px; place-items: center; border: 1px solid currentColor; border-radius: 5px; padding: 0 7px; font-family: var(--font-mono); font-size: 11px; font-weight: var(--weight-bold); letter-spacing: 0.04em; }
 .chartHeader > .signalBadge { justify-self: end; }
@@ -354,18 +331,9 @@
 .sellMark { border-top: 9px solid var(--data-down); }
 
 @media (max-width: 1460px) {
-  .workspace { grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; }
   .controls { gap: 18px; padding-right: 16px; padding-left: 16px; }
   .controlGroup { min-width: 180px; }
-  .timeframeGroup { min-width: 326px; }
-  .timeframes { gap: 7px; }
-  .timeframes button { min-width: 58px; padding-right: 10px; padding-left: 10px; }
   .realtimeControl { min-width: 190px; }
-}
-
-@media (max-width: 1240px) {
-  .workspace { grid-template-columns: 1fr; }
-  .infoRail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
@@ -376,11 +344,9 @@
 @media (max-width: 760px) {
   .workspace, .marketColumn { gap: 12px; }
   .controls { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 16px; }
-  .controlGroup, .timeframeGroup, .realtimeControl { min-width: 0; }
-  .timeframes { width: 100%; overflow-x: auto; }
-  .timeframes button { flex: 1 0 52px; }
+  .controlGroup, .realtimeControl { min-width: 0; }
   .catalogError { position: static; }
-  .chartGrid, .infoRail { grid-template-columns: 1fr; }
+  .chartGrid { grid-template-columns: 1fr; }
   .chartCard { min-height: 342px; }
   .chartViewport { min-height: 228px; }
 }
