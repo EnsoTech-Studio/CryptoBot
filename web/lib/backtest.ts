@@ -1,5 +1,7 @@
 import type { MarketSelection } from "./market";
-import type { ExecutionMarker, ExecutionSettings, Strategy, Trade } from "./api";
+import type { ExecutionMarker, ExecutionSettings, MarketDataset, Strategy, StrategyExecution, Trade } from "./api";
+
+export type BacktestMode = "single" | "composite";
 
 /* The visible filter strip on ui-reference/backtest.jpg is the request. Before
    this type existed the eight controls were decoration and createExperiment
@@ -8,6 +10,9 @@ import type { ExecutionMarker, ExecutionSettings, Strategy, Trade } from "./api"
 export type BacktestDraft = {
   market: MarketSelection;
   timeframe: string;
+  mode: BacktestMode;
+  selectedStrategyIds: string[];
+  datasetVersion: string;
   rangeFrom: string;
   rangeTo: string;
   initialEquity: number;
@@ -32,6 +37,38 @@ export function needsMoreTradesForPage(
   return nextCursor !== null && loadedCount < page * pageSize;
 }
 
+export function canRunBacktest(userPresent: boolean, running: boolean, noStrategies: boolean, issues: string[]): boolean {
+  return userPresent && !running && !noStrategies && issues.length === 0;
+}
+
+export function canCancelBacktest(status: string | null): boolean {
+  return status === "queued" || status === "running";
+}
+
+export function buildBacktestChildren(
+  mode: BacktestMode,
+  singleStrategyId: string,
+  selectedStrategyIds: string[],
+  strategies: Strategy[],
+): StrategyExecution[] {
+  const ids = mode === "single" ? [singleStrategyId] : selectedStrategyIds;
+  const valid = ids.filter((id, index) => id && ids.indexOf(id) === index && strategies.some((strategy) => strategy.strategy_id === id));
+  const weight = mode === "single" ? 1 : valid.length > 0 ? 1 / valid.length : 0;
+  return valid.map((strategyId) => {
+    const definition = strategies.find((strategy) => strategy.strategy_id === strategyId);
+    return {
+      strategy_id: strategyId,
+      strategy_version: definition?.version ?? "v1",
+      parameters: definition?.default_params ?? {},
+      weight: mode === "single" ? 1 : Number(weight.toFixed(6)),
+    };
+  });
+}
+
+export function pickBacktestDataset(datasets: MarketDataset[], version: string): MarketDataset | undefined {
+  return datasets.find((dataset) => dataset.dataset_version === version) ?? datasets[0];
+}
+
 export function defaultBacktestStrategyId(strategies: Strategy[]): string {
   return strategies.find((strategy) => strategy.strategy_id === "ma_cross")?.strategy_id
     ?? strategies[0]?.strategy_id
@@ -46,6 +83,9 @@ export function createBacktestDraft(market: MarketSelection, timeframe: string):
   return {
     market,
     timeframe,
+    mode: "single",
+    selectedStrategyIds: ["ma_cross"],
+    datasetVersion: "",
     rangeFrom: "2025-05-01",
     rangeTo: "2025-05-15",
     initialEquity: 100,
@@ -76,6 +116,9 @@ export function draftToExecution(draft: BacktestDraft): ExecutionSettings {
 
 export function backtestIssues(draft: BacktestDraft): string[] {
   const issues: string[] = [];
+  if (draft.mode === "composite" && draft.selectedStrategyIds.length < 2) {
+    issues.push("Composite cần ít nhất 2 strategy.");
+  }
   if (draft.initialEquity <= 0) issues.push("Vốn phải lớn hơn 0.");
   if (draft.feePercent < 0 || draft.feePercent > 100) issues.push("Transaction cost phải trong [0, 100]%.");
   if (draft.slippageBps < 0 || draft.slippageBps > 10_000) issues.push("Slippage phải trong [0, 10000] bps.");

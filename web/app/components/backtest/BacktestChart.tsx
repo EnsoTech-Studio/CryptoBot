@@ -71,9 +71,15 @@ export function BacktestChart({
     <Panel
       title={`Biểu đồ Backtest (${draft.market.symbol} · ${draft.timeframe})`}
       action={
-        <button type="button" className={styles.expandButton} onClick={onInspect} aria-label="Xem chi tiết kết quả">
-          <Icon name="expand" />
-        </button>
+        <span className={styles.chartActions}>
+          <Button variant="primary" disabled={runDisabled} onClick={onRun}>
+            <Icon name="play" aria-hidden="true" />
+            {runLabel}
+          </Button>
+          <button type="button" className={styles.expandButton} onClick={onInspect} aria-label="Xem chi tiết kết quả">
+            <Icon name="expand" />
+          </button>
+        </span>
       }
     >
       <div className={styles.legendRow}>

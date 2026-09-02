@@ -179,7 +179,7 @@ type WorkspaceValue = {
   register: (email: string, password: string, displayName: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection) => Promise<void>;
+  runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection, datasetVersion?: string) => Promise<void>;
   startSearch: (draft: DiscoveryDraft) => Promise<void>;
   searchAction: (action: "pause" | "resume" | "cancel") => Promise<void>;
   refreshStaticData: () => Promise<void>;
@@ -604,6 +604,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    if (referenceModeEnabled) {
+      const bootstrapTimer = window.setTimeout(() => activateMockMode(REFERENCE_MARKET), 0);
+      return () => window.clearTimeout(bootstrapTimer);
+    }
     api.me()
       .then((payload) => {
         setUser(payload.user);
@@ -619,8 +623,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     api.strategies().then((payload) => setStrategies(payload.strategies ?? [])).catch(() => undefined);
     const bootstrapTimer = window.setTimeout(() => {
       void refreshStaticData();
-      if (referenceModeEnabled) activateMockMode(REFERENCE_MARKET);
-      else void retryMarketPairs();
+      void retryMarketPairs();
     }, 0);
     return () => window.clearTimeout(bootstrapTimer);
     // Bootstrap once; retries are user-driven after the initial request.
@@ -1045,7 +1048,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         report(messageFromError(error), "error");
       }
     },
-    async runBacktest(children = compositeChildren, execution = DEFAULT_EXECUTION, timeframe, range, market) {
+    async runBacktest(children = compositeChildren, execution = DEFAULT_EXECUTION, timeframe, range, market, datasetVersion) {
       try {
         const accepted = await api.createExperiment(
           resolveStrategyExecutions(children),
@@ -1053,6 +1056,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           timeframe ?? panels[0]?.timeframe ?? "5m",
           execution,
           range,
+          datasetVersion,
         );
         setActiveExperimentId(accepted.experiment_id);
         setResult(null);
