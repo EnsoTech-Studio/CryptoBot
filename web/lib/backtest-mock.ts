@@ -1,4 +1,4 @@
-import type { Candle, ExecutionMarker, Trade } from "./api";
+import type { Candle, ExecutionMarker, MarketDataset, Trade } from "./api";
 
 /* Reference-exact ledger and KPI figures for ui-reference/backtest.jpg. Used
    only while no experiment has completed — BacktestScreen prefers the real
@@ -14,6 +14,18 @@ export const MOCK_KPIS = {
   maxDrawdownUsd: -3.21,
   maxDrawdownPct: -3.21,
 };
+
+export const MOCK_DATASETS: MarketDataset[] = [{
+  id: "mock-dataset-btc-5m",
+  dataset_version: "reference:BTCUSDT:5m:v1",
+  market: { provider: "binance_usdm", symbol: "BTCUSDT", timeframe: "5m" },
+  range_from: "2025-05-01T00:00:00Z",
+  range_to: "2025-05-16T00:00:00Z",
+  revision_no: 1,
+  candle_count: 4_320,
+  content_hash: "reference-candle-hash",
+  bbo_content_hash: "reference-bbo-hash",
+}];
 
 /* Ten rows matching the reference table, then repeated with shifted timestamps
    so pagination has something to page through (178 total, as the KPI claims). */

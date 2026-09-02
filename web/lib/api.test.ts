@@ -252,6 +252,31 @@ test("experiment submission uses the market selected by the backtest form", asyn
   }
 });
 
+test("experiment submission uses the dataset version selected by the backtest form", async () => {
+  const originalFetch = globalThis.fetch;
+  let submitted: Record<string, unknown> | undefined;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/markets/datasets")) {
+      return new Response(JSON.stringify({
+        datasets: [
+          { id: "dataset-new", dataset_version: "fixture:BTCUSDT:5m:v2", market: { provider: "binance_usdm", symbol: "BTCUSDT", timeframe: "5m" }, range_from: "2026-01-01T00:00:00Z", range_to: "2026-01-02T00:00:00Z", revision_no: 2, candle_count: 288, content_hash: "new", bbo_content_hash: "new-bbo" },
+          { id: "dataset-old", dataset_version: "fixture:BTCUSDT:5m:v1", market: { provider: "binance_usdm", symbol: "BTCUSDT", timeframe: "5m" }, range_from: "2025-01-01T00:00:00Z", range_to: "2025-01-02T00:00:00Z", revision_no: 1, candle_count: 288, content_hash: "old", bbo_content_hash: "old-bbo" },
+        ],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    submitted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ run_id: "run-dataset", experiment_id: "experiment-dataset", status: "queued" }), { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.createExperiment([{ strategy_id: "ma_cross", weight: 1 }], { provider: "binance_usdm", symbol: "BTCUSDT" }, "5m", undefined, undefined, "fixture:BTCUSDT:5m:v1");
+    assert.equal(submitted?.dataset_version, "fixture:BTCUSDT:5m:v1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("search submission preserves the catalog strategy version and defaults", async () => {
   const originalFetch = globalThis.fetch;
   const submitted: Array<Record<string, unknown>> = [];

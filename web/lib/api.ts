@@ -369,9 +369,11 @@ function normalizeSearchRun(run: ResearchSearchRun): SearchRun {
   };
 }
 
-async function ensureDataset(market: MarketSelection, timeframe: string): Promise<MarketDataset> {
+async function ensureDataset(market: MarketSelection, timeframe: string, requestedVersion?: string): Promise<MarketDataset> {
   const existing = await api.datasets(market, timeframe);
-  return existing.datasets[0] ?? api.createDataset(market, timeframe);
+  return existing.datasets.find((dataset) => dataset.dataset_version === requestedVersion)
+    ?? existing.datasets[0]
+    ?? api.createDataset(market, timeframe);
 }
 
 /* Discovery needs enough legal, reproducible variants for a real demo run.
@@ -584,8 +586,9 @@ export const api = {
     timeframe = "5m",
     execution: ExecutionSettings = DEFAULT_EXECUTION,
     range?: { from: string; to: string },
+    datasetVersion?: string,
   ) {
-    const dataset = await ensureDataset(market, timeframe);
+    const dataset = await ensureDataset(market, timeframe, datasetVersion);
     const isSingleStrategy = children.length === 1;
     const single = children[0];
     const replayRange = range ? boundedReplayRange(range, dataset) : undefined;

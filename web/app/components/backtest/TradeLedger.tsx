@@ -76,7 +76,9 @@ export function TradeLedger({
               <th scope="col">#</th>
               <th scope="col">Pair / Coin</th>
               <th scope="col">Thời gian vào lệnh</th>
+              <th scope="col">Thời gian thoát</th>
               <th scope="col">Hướng</th>
+              <th scope="col">Quantity</th>
               <th scope="col">Giá vào</th>
               <th scope="col">Stoploss</th>
               <th scope="col">TakeProfit</th>
@@ -89,7 +91,7 @@ export function TradeLedger({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className={styles.mockNote}>
+                <td colSpan={13} className={styles.mockNote}>
                   Run này không phát sinh lệnh nào.
                 </td>
               </tr>
@@ -108,11 +110,13 @@ export function TradeLedger({
                   <td className={styles.numeric}>{trade.sequence_no}</td>
                   <td>{trade.symbol || symbol}</td>
                   <td>{ledgerDate(trade.entry_time)}</td>
+                  <td>{ledgerDate(trade.exit_time)}</td>
                   <td>
                     <span className={`${styles.sideTag} ${isLong(trade.side) ? styles.sideLong : styles.sideShort}`}>
                       {isLong(trade.side) ? "LONG" : "SHORT"}
                     </span>
                   </td>
+                  <td className={styles.numeric}>{trade.quantity.toFixed(6)}</td>
                   <td className={styles.numeric}>{price(trade.entry_price)}</td>
                   <td className={styles.numeric}>{trade.sl_price === null ? "—" : price(trade.sl_price)}</td>
                   <td className={styles.numeric}>{trade.tp_price === null ? "—" : price(trade.tp_price)}</td>

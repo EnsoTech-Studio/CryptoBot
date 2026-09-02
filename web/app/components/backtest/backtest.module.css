@@ -68,6 +68,10 @@
 
 .dateField input { padding-left: 34px; font-family: var(--font-mono); }
 
+.strategyChecks { display: flex; min-height: 38px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
+.strategyCheck { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); font-size: 11px; }
+.strategyCheck input, .historyTable input { accent-color: var(--brand); }
+
 /* --- results row ---------------------------------------------------------- */
 
 .resultsRow {
@@ -121,6 +125,9 @@
 .chartViewport svg { display: block; width: 100%; height: auto; }
 .chartEmpty { display: grid; min-height: 390px; place-items: center; align-content: center; gap: 12px; color: var(--ink-3); font-size: 13px; text-align: center; }
 
+.chartActions { display: inline-flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 8px; }
+.chartActions > button:first-child { min-width: 0; }
+
 .expandButton {
   display: grid;
   width: 30px;
@@ -135,28 +142,36 @@
 
 .expandButton > svg { width: 15px; height: 15px; }
 
+@media (max-width: 560px) {
+  .chartActions { flex-wrap: wrap; }
+  .chartActions > button:first-child { flex: 1 1 150px; }
+}
+
 /* --- trade ledger --------------------------------------------------------- */
 
 .ledgerWrap { min-width: 0; overflow-x: auto; }
 
 .ledger {
   width: 100%;
+  min-width: 980px;
   border-collapse: collapse;
   table-layout: fixed;
   font-variant-numeric: tabular-nums;
 }
 
-.ledger th:nth-child(1), .ledger td:nth-child(1) { width: 4%; }
-.ledger th:nth-child(2), .ledger td:nth-child(2) { width: 10.5%; }
-.ledger th:nth-child(3), .ledger td:nth-child(3) { width: 16.5%; }
-.ledger th:nth-child(4), .ledger td:nth-child(4) { width: 7%; }
-.ledger th:nth-child(5), .ledger td:nth-child(5),
-.ledger th:nth-child(6), .ledger td:nth-child(6),
+.ledger th:nth-child(1), .ledger td:nth-child(1) { width: 2%; }
+.ledger th:nth-child(2), .ledger td:nth-child(2) { width: 7%; }
+.ledger th:nth-child(3), .ledger td:nth-child(3),
+.ledger th:nth-child(4), .ledger td:nth-child(4) { width: 11%; }
+.ledger th:nth-child(5), .ledger td:nth-child(5) { width: 6%; }
+.ledger th:nth-child(6), .ledger td:nth-child(6) { width: 8%; }
 .ledger th:nth-child(7), .ledger td:nth-child(7),
-.ledger th:nth-child(8), .ledger td:nth-child(8) { width: 10%; }
-.ledger th:nth-child(9), .ledger td:nth-child(9) { width: 5%; }
-.ledger th:nth-child(10), .ledger td:nth-child(10) { width: 7%; }
-.ledger th:nth-child(11), .ledger td:nth-child(11) { width: 11%; }
+.ledger th:nth-child(8), .ledger td:nth-child(8),
+.ledger th:nth-child(9), .ledger td:nth-child(9),
+.ledger th:nth-child(10), .ledger td:nth-child(10) { width: 8%; }
+.ledger th:nth-child(11), .ledger td:nth-child(11) { width: 5%; }
+.ledger th:nth-child(12), .ledger td:nth-child(12) { width: 5%; }
+.ledger th:nth-child(13), .ledger td:nth-child(13) { width: 13%; }
 
 .ledger th {
   border-bottom: 1px solid var(--line-1);
@@ -293,6 +308,7 @@
 
 .kpiValue > em { font-size: 13px; font-style: normal; font-weight: var(--weight-semibold); }
 .kpiCaption { color: var(--ink-3); font-size: 11px; }
+.equityLabel { color: var(--ink-3); font-size: 10px; font-weight: var(--weight-semibold); }
 .kpiSpark { margin-top: 4px; }
 .kpiSpark svg { display: block; width: 100%; height: 42px; }
 
@@ -341,6 +357,11 @@
 
 .assumptionList { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
 
+.advancedMetrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.advancedMetrics > div { display: grid; gap: 3px; }
+.advancedMetrics span { color: var(--ink-3); font-size: 11px; }
+.advancedMetrics strong { color: var(--ink-1); font-family: var(--font-mono); font-size: 17px; }
+
 .assumptionList > li {
   display: grid;
   grid-template-columns: 17px minmax(0, 1fr);
@@ -355,6 +376,28 @@
 
 .mockNote { margin: 0; color: var(--ink-3); font-size: 12px; }
 
+/* --- experiment history -------------------------------------------------- */
+
+.emptyHistory { margin: 0; color: var(--ink-3); font-size: 13px; }
+.historyWrap, .compareWrap { min-width: 0; overflow-x: auto; }
+.historyTable, .compareTable { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 11px; }
+.historyTable th, .historyTable td, .compareTable th, .compareTable td { border-bottom: 1px solid var(--line-1); padding: 8px 7px; text-align: left; white-space: nowrap; }
+.historyTable th, .compareTable th { color: var(--ink-2); font-size: 10px; font-weight: var(--weight-semibold); }
+.historyTable tbody tr:hover, .compareTable tbody tr:hover { background: var(--surface-2); }
+.historyId, .historyDataset { max-width: 170px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.historyTable td small { display: block; margin-top: 2px; color: var(--ink-3); font-family: var(--font-mono); }
+.historyStatus { display: inline-flex; align-items: center; gap: 5px; text-transform: capitalize; }
+.historyStatus > span { width: 7px; height: 7px; }
+.historyActions { display: flex; gap: 6px; }
+.historyActions button { min-height: 28px; padding: 0 8px; font-size: 11px; }
+.compareHint { color: var(--ink-3); font-size: 11px; }
+.compareTable th:not(:first-child), .compareTable td:not(:first-child) { text-align: right; font-family: var(--font-mono); }
+.detailGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.detailItem { display: grid; min-width: 0; gap: 4px; }
+.detailItem > span { color: var(--ink-3); font-size: 11px; }
+.detailItem > strong { overflow-wrap: anywhere; color: var(--ink-1); font-family: var(--font-mono); font-size: 12px; font-weight: var(--weight-semibold); }
+.detailWide { grid-column: 1 / -1; }
+
 /* --- responsive ----------------------------------------------------------- */
 
 @media (max-width: 1560px) {
@@ -367,7 +410,7 @@
   .formulaPanel, .assumptionPanel { grid-column: span 3; }
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1450px) {
   .resultsRow { grid-template-columns: minmax(0, 1fr); }
   .metricsRow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .formulaPanel, .assumptionPanel { grid-column: span 3; }
@@ -384,6 +427,8 @@
   .formulaPanel, .assumptionPanel { grid-column: span 2; }
   .formulaRow { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
   .formulaOperator { display: none; }
+  .detailGrid { grid-template-columns: minmax(0, 1fr); }
+  .detailWide { grid-column: auto; }
 }
 
 @media (max-width: 620px) {

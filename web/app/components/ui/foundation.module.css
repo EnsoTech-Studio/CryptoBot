@@ -202,6 +202,7 @@
 
 .panelHead {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -210,12 +211,16 @@
 
 .panelTitle {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   margin: 0;
   font-size: 16px;
   font-weight: var(--weight-bold);
   letter-spacing: var(--tracking-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panelTitle > svg { width: 17px; height: 17px; color: var(--ink-3); }
