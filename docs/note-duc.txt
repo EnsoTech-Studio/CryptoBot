@@ -184,7 +184,7 @@ System prompt của LLM để vào folder config, không gán cứng trong code
 
 - add chosing news to crawl in stead of job queres
 - Chỉnh lại crawling thêm news API, ... vào provider
-
+- Thêm Discovery slide
 
 ## Strategy 
 
