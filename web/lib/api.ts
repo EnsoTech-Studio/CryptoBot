@@ -594,7 +594,11 @@ export const api = {
       { signal },
     );
   },
-  createDataset(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
+  createDataset(
+    market: MarketSelection = DEFAULT_MARKET,
+    timeframe = "5m",
+    range?: { from: string; to: string },
+  ) {
     return request<MarketDataset>("/api/v1/markets/datasets", {
       method: "POST",
       body: JSON.stringify({
@@ -602,6 +606,7 @@ export const api = {
         symbol: market.symbol,
         timeframe,
         revision_no: 1,
+        ...(range ? { range_from: utcStart(range.from), range_to: utcEndExclusive(range.to) } : {}),
       }),
     }, 30_000);
   },

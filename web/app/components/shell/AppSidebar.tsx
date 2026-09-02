@@ -9,7 +9,7 @@ import { isActiveRoute, navigationItems } from "./navigation";
 import styles from "./shell.module.css";
 import { UserMenu } from "./UserMenu";
 
-export function AppSidebar({ open, onClose, closeButtonRef }: { open: boolean; onClose: () => void; closeButtonRef: RefObject<HTMLButtonElement | null> }) {
+export function AppSidebar({ open, collapsed, onToggleCollapse, onClose, closeButtonRef }: { open: boolean; collapsed: boolean; onToggleCollapse: () => void; onClose: () => void; closeButtonRef: RefObject<HTMLButtonElement | null> }) {
   const pathname = usePathname();
 
   return (
@@ -19,6 +19,16 @@ export function AppSidebar({ open, onClose, closeButtonRef }: { open: boolean; o
           <span className={styles.brandMark}><Icon name="flask" /></span>
           <span><strong>Crypto<br />Strategy Lab</strong></span>
         </Link>
+        <button
+          type="button"
+          className={styles.collapseToggle}
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? "Mở rộng panel điều hướng" : "Thu gọn panel điều hướng"}
+          aria-expanded={!collapsed}
+          title={collapsed ? "Mở rộng panel" : "Thu gọn panel"}
+        >
+          <Icon name={collapsed ? "chevron-right" : "chevron-left"} />
+        </button>
         <button ref={closeButtonRef} type="button" className={styles.drawerClose} onClick={onClose} aria-label="Đóng menu">
           <Icon name="close" />
         </button>
@@ -29,7 +39,7 @@ export function AppSidebar({ open, onClose, closeButtonRef }: { open: boolean; o
           const active = isActiveRoute(pathname, item);
           const content = <><Icon name={item.icon} /><span>{item.label}</span>{!item.available ? <small>Sớm</small> : null}</>;
           return item.available ? (
-            <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} onClick={onClose}>{content}</Link>
+            <Link key={item.href} href={item.href} title={collapsed ? item.label : undefined} aria-current={active ? "page" : undefined} onClick={onClose}>{content}</Link>
           ) : (
             <span key={item.href} className={styles.disabledNav} aria-disabled="true" title={`${item.label} sẽ được triển khai ở bước tiếp theo`}>{content}</span>
           );

@@ -81,11 +81,11 @@ test("backtest run action stays enabled after a result is loaded", () => {
 test("backtest configuration builds single and composite children from the selected registry entries", () => {
   const registry = [strategy("ma_cross"), strategy("rsi"), strategy("bollinger")];
   assert.deepEqual(buildBacktestChildren("single", "rsi", [], registry), [
-    { strategy_id: "rsi", strategy_version: "v1", parameters: {}, weight: 1 },
+    { strategy_id: "rsi", strategy_version: "v1", parameters: { period: 14, oversold: 30, overbought: 70 }, weight: 1 },
   ]);
   assert.deepEqual(buildBacktestChildren("composite", "", ["ma_cross", "rsi", "missing"], registry), [
-    { strategy_id: "ma_cross", strategy_version: "v1", parameters: {}, weight: 0.5 },
-    { strategy_id: "rsi", strategy_version: "v1", parameters: {}, weight: 0.5 },
+    { strategy_id: "ma_cross", strategy_version: "v1", parameters: { fast: 20, slow: 50 }, weight: 0.5 },
+    { strategy_id: "rsi", strategy_version: "v1", parameters: { period: 14, oversold: 30, overbought: 70 }, weight: 0.5 },
   ]);
 });
 

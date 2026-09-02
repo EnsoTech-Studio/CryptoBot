@@ -70,6 +70,8 @@ function BacktestContent() {
   const [submitPending, setSubmitPending] = useState(false);
   const submitLock = useRef(false);
   const submitOriginExperimentId = useRef<string | null>(null);
+  const [datasetAction, setDatasetAction] = useState<"idle" | "creating">("idle");
+  const [datasetActionError, setDatasetActionError] = useState("");
   const backtestStrategies = useMemo(
     () => (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter((strategy) => !strategy.is_composite),
     [dataMode, strategies],
@@ -211,6 +213,32 @@ function BacktestContent() {
 
   function patch(next: Partial<BacktestDraft>) {
     setDraft((current) => ({ ...current, ...next }));
+    if (next.datasetVersion !== undefined || next.market !== undefined || next.timeframe !== undefined) {
+      setDatasetActionError("");
+    }
+  }
+
+  async function createHistoricalDataset() {
+    if (!user || datasetAction === "creating" || !effectiveDraft.rangeFrom || !effectiveDraft.rangeTo) return;
+    setDatasetAction("creating");
+    setDatasetActionError("");
+    try {
+      const dataset = await api.createDataset(effectiveDraft.market, effectiveDraft.timeframe, {
+        from: effectiveDraft.rangeFrom,
+        to: effectiveDraft.rangeTo,
+      });
+      setDatasets((current) => [dataset, ...current.filter((item) => item.dataset_version !== dataset.dataset_version)]);
+      setDraft((current) => ({
+        ...current,
+        datasetVersion: dataset.dataset_version,
+        rangeFrom: dataset.range_from.slice(0, 10),
+        rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+      }));
+    } catch (error) {
+      setDatasetActionError(error instanceof Error ? error.message : "Không tạo được dataset cho khoảng ngày này.");
+    } finally {
+      setDatasetAction("idle");
+    }
   }
 
   function submit() {
@@ -310,6 +338,10 @@ function BacktestContent() {
           strategies={backtestStrategies}
           datasets={datasets}
           datasetLoadState={datasetLoadState}
+          canCreateDataset={Boolean(user) && !running}
+          creatingDataset={datasetAction === "creating"}
+          datasetActionError={datasetActionError}
+          onCreateDataset={createHistoricalDataset}
           disabled={running}
           onChange={patch}
         />

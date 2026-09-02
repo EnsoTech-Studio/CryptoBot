@@ -16,6 +16,10 @@ export function BacktestFilters({
   strategies,
   datasets,
   datasetLoadState,
+  canCreateDataset,
+  creatingDataset,
+  datasetActionError,
+  onCreateDataset,
   disabled,
   onChange,
 }: {
@@ -25,6 +29,10 @@ export function BacktestFilters({
   strategies: Strategy[];
   datasets: MarketDataset[];
   datasetLoadState: "loading" | "ready" | "empty" | "error";
+  canCreateDataset: boolean;
+  creatingDataset: boolean;
+  datasetActionError: string;
+  onCreateDataset: () => void;
   disabled: boolean;
   onChange: (patch: Partial<BacktestDraft>) => void;
 }) {
@@ -63,20 +71,54 @@ export function BacktestFilters({
       </Field>
 
       <Field label="Dataset lịch sử">
-        <Select
-          value={draft.datasetVersion}
-          disabled={disabled || datasetLoadState !== "ready"}
-          onChange={(event) => onChange({ datasetVersion: event.target.value })}
-        >
-          {datasets.length === 0 ? <option value="">
-            {datasetLoadState === "loading" ? "Đang tải dataset…" : datasetLoadState === "empty" ? "Không có dataset cho timeframe này" : "Không tải được dataset"}
-          </option> : null}
-          {datasets.map((dataset) => (
-            <option key={dataset.dataset_version} value={dataset.dataset_version}>
-              {dataset.dataset_version} · {dataset.candle_count.toLocaleString("en-US")} nến
-            </option>
-          ))}
-        </Select>
+        <span className={styles.datasetControl}>
+          <Select
+            value={draft.datasetVersion}
+            disabled={disabled || datasetLoadState !== "ready"}
+            onChange={(event) => {
+              const dataset = datasets.find((item) => item.dataset_version === event.target.value);
+              onChange({
+                datasetVersion: event.target.value,
+                /* Selecting a snapshot also selects its legal date bounds.
+                   The user can still narrow the range with From/To fields. */
+                ...(dataset ? {
+                  rangeFrom: dataset.range_from.slice(0, 10),
+                  rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+                } : {}),
+              });
+            }}
+          >
+            {datasets.length === 0 ? <option value="">
+              {datasetLoadState === "loading" ? "Đang tải dataset…" : datasetLoadState === "empty" ? "Không có dataset cho timeframe này" : "Không tải được dataset"}
+            </option> : null}
+            {datasets.map((dataset) => (
+              <option key={dataset.dataset_version} value={dataset.dataset_version}>
+                {dataset.range_from.slice(0, 10)} → {dataset.range_to.slice(0, 10)} · {dataset.candle_count.toLocaleString("en-US")} nến · r{dataset.revision_no}
+              </option>
+            ))}
+          </Select>
+          {datasets.length > 0 && draft.datasetVersion ? (
+            <small className={styles.datasetMeta} title={draft.datasetVersion}>
+              Snapshot bất biến · {draft.datasetVersion}
+            </small>
+          ) : null}
+          {canCreateDataset ? (
+            <button
+              type="button"
+              className={styles.datasetCreateButton}
+              disabled={disabled || creatingDataset || !draft.rangeFrom || !draft.rangeTo || draft.rangeFrom > draft.rangeTo}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onCreateDataset();
+              }}
+            >
+              <Icon name="refresh" />
+              {creatingDataset ? "Đang tạo snapshot…" : "Tạo snapshot từ khoảng ngày"}
+            </button>
+          ) : null}
+          {datasetActionError ? <small className={styles.datasetError}>{datasetActionError}</small> : null}
+        </span>
       </Field>
 
       <DateField
