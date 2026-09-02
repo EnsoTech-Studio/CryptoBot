@@ -103,16 +103,17 @@ result facts**. Nó không đo Go/API, frontend hoặc event-evaluation.
   7.318s; 136.642 job/s; p50 3670.410ms; p95 6988.348ms; 180,000 persisted
   equity points. Mẫu 12 jobs/2 workers cũng pass; harness yêu cầu ít nhất 50
   candles vì MA warm-up.
-- **100,000 executed backtests vẫn Pending.** Không suy diễn từ mẫu 1k. Chỉ
-  chạy 100k sau khi chủ repo đồng ý vì tốn tài nguyên; dùng DB mới cô lập và
-  ghi machine, worker count, duration, p50/p95, errors, queue depth, disk.
+- **100,000 executed backtests đã đo xong cho mốc 4 workers.** Artifact
+  `docs/benchmark-100k-2026-09-03.json` ghi 100% completion trên DB cô lập,
+  50 candles, 1519.209s, 65.824 jobs/s, p50 746604.202ms và p95
+  1438429.875ms. Không suy diễn sang 8/16 workers; các mốc đó chưa chạy.
 - Có thể còn container tạm `cryptobot-throughput-sample-test`. Kiểm tra trước;
   chỉ xóa đúng container tạm sau khi xác minh an toàn.
 
 ## Trạng thái chính xác và thứ tự tiếp tục
 
 - Failure injection: **Done (isolated rehearsal)**.
-- 100k executed throughput: **Pending**.
+- 100k executed throughput: **Done for 4 workers; 8/16 Pending**.
 - Provider thứ hai: **Partial — fixture only**, không phải live integration.
 - Agent 2/3: **Deferred P2** vì scope SSRF/security chưa chốt; không tự làm
   crawler không giới hạn.
