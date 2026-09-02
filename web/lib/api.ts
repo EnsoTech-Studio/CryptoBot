@@ -757,6 +757,11 @@ export const api = {
   searchRun(id: string) {
     return request<ResearchSearchRun>(`/api/v1/search-runs/${id}`).then(normalizeSearchRun);
   },
+  discoveryRuns() {
+    return request<{ runs: ResearchSearchRun[] }>("/api/v1/search-runs").then(
+      (payload) => payload.runs.map(normalizeSearchRun),
+    );
+  },
   searchAction(id: string, action: "pause" | "resume" | "cancel") {
     return request<{ status: string }>(`/api/v1/search-runs/${id}/actions`, {
       method: "POST",

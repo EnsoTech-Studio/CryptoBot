@@ -12,7 +12,7 @@ import {
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
 import { api, type LeaderboardEntry } from "../../../lib/api";
 import { useWorkspace } from "../../providers/workspace";
-import { StatusMessage } from "../ui/Foundation";
+import { Field, Panel, Select, StatusMessage } from "../ui/Foundation";
 import { BuilderActions, CombinedStrategyBuilder } from "./CombinedStrategyBuilder";
 import { DiscoveryLeaderboard } from "./DiscoveryLeaderboard";
 import { DiscoveryMethodSelector, DiscoveryProgress } from "./DiscoveryControls";
@@ -31,9 +31,12 @@ export function DiscoveryScreen() {
     discoveryArchiveState,
     loadProvenance,
     search,
+    discoverySessions,
+    discoverySessionsState,
     submittedDraft,
     startSearch,
     searchAction,
+    selectDiscoverySession,
     runBacktest,
     focusIndex,
     availableTimeframes,
@@ -185,6 +188,30 @@ export function DiscoveryScreen() {
             onRefresh={() => void refreshDiscoveryLeaderboard()}
             onTrace={(id) => void loadProvenance(id)}
           />
+          <Panel title="Discovery sessions" bodyClassName={styles.sessionHistory}>
+            <Field label="Past sessions">
+              <Select
+                aria-label="Discovery sessions"
+                value={search?.search_run_id ?? ""}
+                disabled={discoverySessionsState === "loading" || discoverySessions.length === 0}
+                onChange={(event) => { if (event.target.value) void selectDiscoverySession(event.target.value); }}
+              >
+                <option value="">Select saved Discovery session</option>
+                {discoverySessions.map((session) => (
+                  <option key={session.search_run_id} value={session.search_run_id}>
+                    {sessionLabel(session)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <p className={styles.sessionHint}>
+              {discoverySessionsState === "unavailable"
+                ? "Could not load saved sessions."
+                : discoverySessions.length === 0
+                  ? "No saved Discovery sessions yet."
+                  : "Past sessions include archive, candidate status, and results."}
+            </p>
+          </Panel>
           <div className={styles.methodProgressRow}>
             <DiscoveryMethodSelector
               method={activeDraft.method}
@@ -205,6 +232,11 @@ export function DiscoveryScreen() {
       </div>
     </section>
   );
+}
+
+function sessionLabel(session: { search_run_id: string; status: string; candidates: { tested: number; generated: number }; updated_at: string }) {
+  const when = new Date(session.updated_at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+  return `${session.status} · ${session.candidates.tested}/${session.candidates.generated} candidates · ${when}`;
 }
 
 /* New rows start at an even split. Existing user-set weights survive because

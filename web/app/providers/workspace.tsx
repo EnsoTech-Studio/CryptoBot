@@ -148,6 +148,8 @@ type WorkspaceValue = {
   experiment: ExperimentSummary | null;
   result: ResultBundle | null;
   search: SearchRun | null;
+  discoverySessions: SearchRun[];
+  discoverySessionsState: LoadState;
   /* The API reports tested/generated but never echoes back the draft that
      started the run. Snapshotting it keeps progress honest: the denominator and
      the strategy names shown beside a score belong to the submitted run, not to
@@ -182,6 +184,7 @@ type WorkspaceValue = {
   runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection) => Promise<void>;
   startSearch: (draft: DiscoveryDraft) => Promise<void>;
   searchAction: (action: "pause" | "resume" | "cancel") => Promise<void>;
+  selectDiscoverySession: (id: string) => Promise<void>;
   refreshStaticData: () => Promise<void>;
   loadProvenance: (id: string) => Promise<void>;
   testSentiment: () => Promise<void>;
@@ -238,6 +241,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [searchId, setSearchId] = useState<string | null>(null);
   const [search, setSearch] = useState<SearchRun | null>(null);
   const [submittedDraft, setSubmittedDraft] = useState<DiscoveryDraft | null>(null);
+  const [discoverySessions, setDiscoverySessions] = useState<SearchRun[]>([]);
+  const [discoverySessionsState, setDiscoverySessionsState] = useState<LoadState>("idle");
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [leaderboardState, setLeaderboardState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [discoveryArchive, setDiscoveryArchive] = useState<DiscoveryArchive | null>(null);
@@ -261,13 +266,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const realtimeEnabledRef = useRef(realtimeEnabled);
   const dataModeRef = useRef<DataMode>(dataMode);
   const mockTickRef = useRef(0);
+  const discoverySessionsRequest = useRef(0);
 
   useEffect(() => {
-    if (!user || !searchId || !submittedDraft) return;
+    if (!user || !searchId) return;
     try {
       window.sessionStorage.setItem(
         DISCOVERY_SESSION_KEY,
-        JSON.stringify({ ownerId: user.id, searchId, submittedDraft }),
+        JSON.stringify({ ownerId: user.id, searchId, submittedDraft: submittedDraft ?? undefined }),
       );
     } catch {
       // Storage can be unavailable in a privacy-restricted browser; the live run still works.
@@ -556,6 +562,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setNewsDistribution(distributionFromCounts(aggregate?.distribution));
   }
 
+  async function refreshDiscoverySessions() {
+    const request = ++discoverySessionsRequest.current;
+    if (referenceModeEnabled) {
+      if (request === discoverySessionsRequest.current) {
+        setDiscoverySessions([]);
+        setDiscoverySessionsState("ready");
+      }
+      return;
+    }
+    try {
+      const sessions = await api.discoveryRuns();
+      if (request === discoverySessionsRequest.current) {
+        setDiscoverySessions(sessions);
+        setDiscoverySessionsState("ready");
+      }
+    } catch {
+      if (request === discoverySessionsRequest.current) setDiscoverySessionsState("unavailable");
+    }
+  }
+
   async function refreshExperiment(id: string) {
     try {
       const summary = await api.experiment(id);
@@ -614,6 +640,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           setDiscoveryArchiveState("loading");
         }
         void refreshStaticData();
+        void refreshDiscoverySessions();
       })
       .catch(() => report("Sign in to run experiments and search loops.", "warn"));
     api.strategies().then((payload) => setStrategies(payload.strategies ?? [])).catch(() => undefined);
@@ -908,6 +935,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const next = await api.searchRun(searchId);
         if (stopped) return;
         setSearch(next);
+        setDiscoverySessions((current) => [next, ...current.filter((item) => item.search_run_id !== next.search_run_id)]);
         if (next.generator_id !== "discovery") {
           setDiscoveryArchive(null);
           setDiscoveryArchiveState("ready");
@@ -993,6 +1021,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     experiment,
     result,
     search,
+    discoverySessions,
+    discoverySessionsState,
     submittedDraft,
     leaderboard,
     leaderboardState,
@@ -1019,7 +1049,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const payload = await api.register(email, password, displayName);
         setUser(payload.user);
-        await refreshStaticData();
+        await Promise.all([refreshStaticData(), refreshDiscoverySessions()]);
         report(`Registered as ${payload.user.email}`);
       } catch (error) {
         report(messageFromError(error), "error");
@@ -1029,7 +1059,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const payload = await api.login(email, password);
         setUser(payload.user);
-        await refreshStaticData();
+        await Promise.all([refreshStaticData(), refreshDiscoverySessions()]);
         report(`Signed in as ${payload.user.email}`);
       } catch (error) {
         report(messageFromError(error), "error");
@@ -1038,8 +1068,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     async logout() {
       try {
         await api.logout();
+        discoverySessionsRequest.current += 1;
         setUser(null);
         setStrategyDrafts([]);
+        setSearchId(null);
+        setSearch(null);
+        setSubmittedDraft(null);
+        setDiscoveryArchive(null);
+        setDiscoverySessions([]);
         report("Signed out.");
       } catch (error) {
         report(messageFromError(error), "error");
@@ -1068,7 +1104,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           draft.selectedStrategyIds.map((strategy_id) => ({ strategy_id, weight: weights[strategy_id] })),
         ));
         setSearchId(accepted.search_run_id);
+        setSearch(accepted);
         setSubmittedDraft(draft);
+        setDiscoverySessions((current) => [accepted, ...current.filter((item) => item.search_run_id !== accepted.search_run_id)]);
         setDiscoveryArchive(null);
         setDiscoveryArchiveState(accepted.generator_id === "discovery" ? "loading" : "ready");
         report(`Search run started: ${accepted.search_run_id.slice(0, 8)}`);
@@ -1082,6 +1120,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         await api.searchAction(search.search_run_id, action);
         setSearch(await api.searchRun(search.search_run_id));
         report(`Search ${action} accepted.`);
+      } catch (error) {
+        report(messageFromError(error), "error");
+      }
+    },
+    async selectDiscoverySession(id) {
+      try {
+        const selected = await api.searchRun(id);
+        if (selected.generator_id !== "discovery") throw new Error("Selected run is not a Discovery session.");
+        setSearchId(selected.search_run_id);
+        setSearch(selected);
+        setSubmittedDraft(null);
+        setDiscoveryArchive(null);
+        setDiscoveryArchiveState("loading");
+        setDiscoverySessions((current) => [selected, ...current.filter((item) => item.search_run_id !== selected.search_run_id)]);
       } catch (error) {
         report(messageFromError(error), "error");
       }
@@ -1137,7 +1189,7 @@ function readPersistedMarket(): MarketSelection | null {  try {
 
 function readPersistedDiscoverySession(ownerId: string): {
   searchId: string;
-  submittedDraft: DiscoveryDraft;
+  submittedDraft: DiscoveryDraft | null;
 } | null {
   try {
     if (typeof window === "undefined") return null;
@@ -1150,10 +1202,12 @@ function readPersistedDiscoverySession(ownerId: string): {
       value?.ownerId !== ownerId ||
       typeof value.searchId !== "string" ||
       !value.searchId ||
-      !Array.isArray(value.submittedDraft?.selectedStrategyIds) ||
-      typeof value.submittedDraft?.timeframe !== "string"
+      (value.submittedDraft !== undefined && (
+        !Array.isArray(value.submittedDraft.selectedStrategyIds) ||
+        typeof value.submittedDraft.timeframe !== "string"
+      ))
     ) return null;
-    return { searchId: value.searchId, submittedDraft: value.submittedDraft as DiscoveryDraft };
+    return { searchId: value.searchId, submittedDraft: value.submittedDraft as DiscoveryDraft | null ?? null };
   } catch {
     return null;
   }

@@ -2245,6 +2245,21 @@ class Store:
             raise not_found("search_run")
         return self._search_row(row)
 
+    def list_discovery_runs(self, owner_id: UUID, limit: int) -> list[dict[str, Any]]:
+        """Return recent Discovery runs for one owner, newest first."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.*,d.dataset_version,d.content_hash
+                FROM search_runs s JOIN market_datasets d ON d.id=s.market_dataset_id
+                WHERE s.owner_id=%s AND s.generator_id='discovery'
+                ORDER BY s.updated_at DESC,s.id DESC
+                LIMIT %s
+                """,
+                (owner_id, limit),
+            ).fetchall()
+        return [self._search_row(row) for row in rows]
+
     def get_discovery_archive(self, run_id: UUID, owner_id: UUID) -> dict[str, Any]:
         with self._connect() as connection:
             run = connection.execute(

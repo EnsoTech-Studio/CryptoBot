@@ -665,6 +665,16 @@ def create_search_run(body: SearchRunCreateIn, _auth: Internal, request: Request
     )
 
 
+@app.get("/api/v1/search-runs", response_model=dict[str, list[SearchRunOut]])
+def list_discovery_runs(
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> dict[str, Any]:
+    return {"runs": _store(request).list_discovery_runs(owner_id, limit)}
+
+
 @app.get("/api/v1/search-runs/{run_id}", response_model=SearchRunOut)
 def get_search_run(
     run_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request

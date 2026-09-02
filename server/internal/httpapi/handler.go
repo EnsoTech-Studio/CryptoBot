@@ -803,6 +803,14 @@ func (h *Handler) experimentByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) searchRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		principal, ok := h.requireAuth(w, r)
+		if !ok {
+			return
+		}
+		h.callResearch(w, r, http.MethodGet, "/api/v1/search-runs", nil, &principal)
+		return
+	}
 	if !allowMethod(w, r, http.MethodPost) {
 		return
 	}

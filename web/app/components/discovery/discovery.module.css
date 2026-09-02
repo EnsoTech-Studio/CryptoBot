@@ -31,6 +31,9 @@
 .rightColumn > section:first-child { height: 255px; }
 .rightColumn > section:nth-child(2) { height: 273px; overflow: hidden; }
 
+.sessionHistory { display: grid; gap: 8px; }
+.sessionHint { margin: 0; color: var(--ink-3); font-size: 12px; line-height: var(--leading-normal); }
+
 .builderColumn {
   display: grid;
   min-width: 0;

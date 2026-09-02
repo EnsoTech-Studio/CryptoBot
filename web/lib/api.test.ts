@@ -390,6 +390,32 @@ test("discovery submission uses the durable generator and archive endpoint", asy
   }
 });
 
+test("discovery session history uses the owner-scoped search run collection", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({
+      runs: [{
+        search_run_id: "run-history", generator_id: "discovery", status: "completed",
+        generated: 2, tested: 2, failed: 0, best_score: 1.1,
+        current_candidate_hash: null, dataset_version: "fixture:SOLUSDT:1h:v1",
+        content_hash: "a".repeat(64), stop_reason: "final_test_completed",
+        updated_at: "2026-09-02T00:00:00Z",
+      }],
+    }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const sessions = await api.discoveryRuns();
+    assert.match(requestedURL, /\/api\/v1\/search-runs$/);
+    assert.equal(sessions[0]?.search_run_id, "run-history");
+    assert.equal(sessions[0]?.candidates.tested, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("leaderboard requests the selected market and timeframe", async () => {
   const originalFetch = globalThis.fetch;
   let requestedURL = "";
