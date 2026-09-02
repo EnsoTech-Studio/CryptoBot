@@ -14,6 +14,18 @@ SKIP_MIGRATIONS=false
 services=(research ai worker event-worker news-worker agent-worker api)
 workers=(worker event-worker news-worker agent-worker)
 
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose "$@"
+    return
+  fi
+  die "Docker Compose is required. Install the Docker Compose plugin or docker-compose."
+}
+
 die() {
   echo "Error: $*" >&2
   exit 1
@@ -87,7 +99,7 @@ ensure_database() {
     echo "External PostgreSQL configured; skipping Docker PostgreSQL."
     return
   fi
-  docker compose --profile local-db up -d postgres
+  compose --profile local-db up -d postgres
 }
 
 wait_database() {
@@ -247,7 +259,7 @@ show_status() {
     fi
   done
   echo
-  docker compose --profile local-db ps
+  compose --profile local-db ps
 }
 
 setup() {
@@ -332,7 +344,7 @@ main() {
       [[ -f "$LOG_DIR/$target.out.log" ]] || die "No log found for $target"
       tail -n 100 -f "$LOG_DIR/$target.out.log"
       ;;
-    down) stop_target all; if ! uses_external_database; then docker compose --profile local-db down; fi ;;
+    down) stop_target all; if ! uses_external_database; then compose --profile local-db down; fi ;;
     *) usage; exit 1 ;;
   esac
 }

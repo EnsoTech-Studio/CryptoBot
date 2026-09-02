@@ -60,7 +60,7 @@ import {
   type DisplayTick,
 } from "../../lib/realtime-mock";
 
-export type LiveState = "connecting" | "live" | "stale" | "paused";
+export type LiveState = "connecting" | "live" | "stale" | "unavailable" | "paused";
 export type ConnectionLabel = "Live" | "Syncing" | "Degraded" | "Paused" | "Unavailable" | "Mock";
 export type DataMode = "live" | "mock";
 
@@ -74,6 +74,8 @@ export type Panel = {
   markers: OverlayMarker[];
   lastClosed?: string;
   liveState: LiveState;
+  lastFrameAt?: string;
+  latencyMs: number | null;
   loaded: boolean;
   historyLoading: boolean;
   historyLimit: number;
@@ -97,6 +99,9 @@ export type InspectorTab = "metrics" | "trades" | "provenance";
 export type LoadState = "idle" | "loading" | "ready" | "unavailable";
 
 const requiredTimeframes = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const knownTimeframes = ["1s", ...requiredTimeframes];
+const MIN_REALTIME_CHARTS = 1;
+const MAX_REALTIME_CHARTS = 4;
 const referenceModeEnabled = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true";
 const DISCOVERY_SESSION_KEY = "crypto-lab-discovery-session";
 const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true" || referenceModeEnabled;
@@ -118,6 +123,8 @@ type WorkspaceValue = {
   strategies: Strategy[];
   strategyDrafts: StrategyDraft[];
   panels: Panel[];
+  chartCount: number;
+  setChartCount: (count: number) => void;
   focusIndex: number;
   setFocusIndex: (index: number) => void;
   panelHandlers: (index: number) => { onTimeframe: (tf: string) => void; onStrategy: (strategy: string) => void };
@@ -209,6 +216,8 @@ function createPanels(timeframes = requiredTimeframes, realtimeEnabled = true, s
     timeframe: chartTimeframes[index] ?? seed.timeframe,
     ...(seedMock ? createMockPanelData(panelMarket, chartTimeframes[index] ?? seed.timeframe, PANEL_BOOTSTRAP_CANDLE_LIMIT) : { candles: [], series: [], markers: [] }),
     liveState: seedMock ? (realtimeEnabled ? "live" : "paused") : realtimeEnabled ? "connecting" : "paused",
+    lastFrameAt: seedMock ? "2025-04-29T10:45:38.123Z" : undefined,
+    latencyMs: seedMock ? 102 : null,
     loaded: seedMock,
     historyLoading: false,
     historyLimit: PANEL_BOOTSTRAP_CANDLE_LIMIT,
@@ -220,6 +229,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [strategyDrafts, setStrategyDrafts] = useState<StrategyDraft[]>([]);
   const [panels, setPanels] = useState<Panel[]>(() => createPanels(requiredTimeframes, true, referenceModeEnabled));
+  const [chartCount, setChartCountState] = useState(MAX_REALTIME_CHARTS);
   const [focusIndex, setFocusIndex] = useState(0);
   const [marketPairs, setMarketPairs] = useState<MarketPair[]>(referenceModeEnabled ? MOCK_MARKET_PAIRS : []);
   const [marketPairsState, setMarketPairsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
@@ -304,7 +314,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const supported = selectedPair?.timeframes?.filter(Boolean) ?? [];
     if (supported.length === 0) return requiredTimeframes;
     const supportedSet = new Set(supported);
-    return requiredTimeframes.filter((timeframe) => supportedSet.has(timeframe));
+    return knownTimeframes.filter((timeframe) => supportedSet.has(timeframe));
   }, [selectedPair]);
 
   const latestCandle = useMemo(() => {
@@ -315,20 +325,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return candles.at(-1);
   }, [panels]);
 
-  const readyPanelCount = panels.filter((panel) => panel.candles.length > 0).length;
-  const stalePanelCount = panels.filter((panel) => panel.liveState === "stale").length;
-  const livePanelCount = panels.filter((panel) => panel.liveState === "live").length;
+  const visiblePanels = panels.slice(0, chartCount);
+  const readyPanelCount = visiblePanels.filter((panel) => panel.candles.length > 0).length;
+  const stalePanelCount = visiblePanels.filter((panel) => panel.liveState === "stale").length;
+  const unavailablePanelCount = visiblePanels.filter((panel) => panel.liveState === "unavailable").length;
+  const livePanelCount = visiblePanels.filter((panel) => panel.liveState === "live").length;
   const signalCount = panels.reduce((sum, panel) => sum + panel.markers.length, 0);
   const activeStrategyCount = new Set(panels.map((panel) => panel.strategy)).size;
   const streamLabel: ConnectionLabel = !realtimeEnabled
     ? "Paused"
     : dataMode === "mock"
       ? "Mock"
-      : marketPairsState === "unavailable" && readyPanelCount === 0
+      : marketPairsState === "unavailable" || unavailablePanelCount === visiblePanels.length
       ? "Unavailable"
-      : stalePanelCount > 0 || marketStatus?.stale
+      : stalePanelCount > 0 || unavailablePanelCount > 0 || marketStatus?.stale
         ? "Degraded"
-        : readyPanelCount === panels.length && livePanelCount === panels.length
+        : readyPanelCount === visiblePanels.length && livePanelCount === visiblePanels.length
           ? "Live"
           : "Syncing";
   const headerChange = latestCandle && latestCandle.open !== 0
@@ -376,6 +388,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setRecentTicks(createMockTicks(market.symbol));
     setLatencyMs(102);
     setLastFrameAt("2025-04-29T10:45:38.123Z");
+    setPanels((current) => current.map((panel) => ({
+      ...panel,
+      liveState: realtimeEnabledRef.current ? "live" : "paused",
+      lastFrameAt: "2025-04-29T10:45:38.123Z",
+      latencyMs: 102,
+    })));
     setMarketStatus({
       provider: "deterministic_mock",
       symbol: market.symbol.toUpperCase(),
@@ -409,6 +427,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ...mock,
         lastClosed: mock.candles.at(-1)?.close_time,
         liveState: realtimeEnabledRef.current ? "live" : "paused",
+        lastFrameAt: panel.lastFrameAt,
+        latencyMs: panel.latencyMs,
         loaded: true,
         historyLoading: false,
         historyLimit: limit,
@@ -447,7 +467,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         candles: [],
         series: [],
         markers: [],
-        liveState: realtimeEnabledRef.current ? "stale" : "paused",
+        liveState: realtimeEnabledRef.current ? "unavailable" : "paused",
+        lastFrameAt: undefined,
+        latencyMs: null,
         loaded: true,
         historyLoading: false,
         historyLimit: limit,
@@ -485,6 +507,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           series: [],
           markers: [],
           liveState: realtimeEnabled ? "connecting" : "paused",
+          lastFrameAt: undefined,
+          latencyMs: null,
           loaded: false,
           historyLimit: PANEL_BOOTSTRAP_CANDLE_LIMIT,
           error: undefined,
@@ -492,7 +516,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         window.setTimeout(() => void loadPanel(index, { timeframe }), 0);
       },
       onStrategy: (strategy: string) => {
-        setPanel(index, { strategy, liveState: realtimeEnabled ? "connecting" : "paused", loaded: false, error: undefined });
+        setPanel(index, { strategy, liveState: realtimeEnabled ? "connecting" : "paused", lastFrameAt: undefined, latencyMs: null, loaded: false, error: undefined });
         window.setTimeout(() => void loadPanel(index, { strategy }), 0);
       },
     };
@@ -540,6 +564,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setMarketPairsState("unavailable");
       setMarketStatus(null);
       setMarketStatusState("unavailable");
+      setPanels((current) => current.map((panel) => ({
+        ...panel,
+        liveState: realtimeEnabledRef.current ? "unavailable" : "paused",
+        error: `Market data unavailable: ${messageFromError(error)}`,
+      })));
       report(`Market backend unavailable: ${messageFromError(error)}`, "error");
     }
   }
@@ -796,11 +825,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             if (sequence > lastSequence) lastSequence = sequence;
           }
 
-          if (frame.serverTime) {
-            const serverTime = Date.parse(frame.serverTime);
-            if (Number.isFinite(serverTime)) setLatencyMs(Math.max(0, Date.now() - serverTime));
+          const frameTimestamp = frame.serverTime ?? frame.occurredAt;
+          const frameLatency = frame.serverTime
+            ? Date.parse(frame.serverTime)
+            : Number.NaN;
+          const nextLatency = Number.isFinite(frameLatency) ? Math.max(0, Date.now() - frameLatency) : null;
+          if (nextLatency != null) setLatencyMs(nextLatency);
+          if (frameTimestamp) {
+            const receivedAt = new Date().toISOString();
+            setLastFrameAt(receivedAt);
+            setPanel(index, { lastFrameAt: receivedAt, ...(nextLatency != null ? { latencyMs: nextLatency } : {}) });
           }
-          if (frame.serverTime || frame.occurredAt) setLastFrameAt(frame.serverTime ?? frame.occurredAt);
 
           if (frame.type === "kline" && frame.kline) {
             const candle: Candle = {
@@ -861,19 +896,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               setSocketReconnectCount((current) => Math.max(current, frame.reconnectNo!));
             }
             setPanel(index, {
-              liveState: frame.state === "stale" || frame.state === "connecting" ? "stale" : "live",
+              liveState: frame.state === "stale" || frame.state === "connecting"
+                ? panelsRef.current[index]?.candles.length ? "stale" : "unavailable"
+                : "live",
             });
           }
         };
         socket.onerror = () => {
           if (realtimeEnabledRef.current && marketKey(selectedMarketRef.current) === marketKey(selectedMarket)) {
-            setPanel(index, { liveState: "stale" });
+            setPanel(index, { liveState: panelsRef.current[index]?.candles.length ? "stale" : "unavailable" });
           }
         };
         socket.onclose = () => {
           sockets.delete(socket);
           if (stopped || !realtimeEnabledRef.current || marketKey(selectedMarketRef.current) !== marketKey(selectedMarket)) return;
-          setPanel(index, { liveState: "stale" });
+          setPanel(index, { liveState: panelsRef.current[index]?.candles.length ? "stale" : "unavailable" });
           reconnectAttempt += 1;
           setSocketReconnectCount((current) => Math.max(current, reconnectAttempt));
           const delay = Math.min(10_000, 500 * (2 ** (reconnectAttempt - 1)));
@@ -902,6 +939,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const timer = window.setInterval(() => {
       mockTickRef.current += 1;
       const tick = mockTickRef.current;
+      const now = new Date().toISOString();
+      const nextLatency = 22 + (tick % 9);
       const nextPanels = panelsRef.current.map((panel) => {
         const last = panel.candles.at(-1);
         if (!last) return panel;
@@ -910,11 +949,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...panel,
           candles: [...panel.candles.slice(0, -1), nextCandle],
           liveState: "live" as const,
+          lastFrameAt: now,
+          latencyMs: nextLatency,
         };
       });
       setPanels(nextPanels);
       const price = nextPanels[0]?.candles.at(-1)?.close;
-      const now = new Date().toISOString();
       if (price != null) {
         setRecentTicks((current) => [{
           id: `mock-live-${tick}`,
@@ -925,7 +965,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }, ...current].slice(0, 50));
       }
       setLastFrameAt(now);
-      setLatencyMs(22 + (tick % 9));
+      setLatencyMs(nextLatency);
     }, 60_000);
     return () => window.clearInterval(timer);
   }, [dataMode, marketSignature, realtimeEnabled, selectedMarket.symbol]);
@@ -996,6 +1036,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     strategies,
     strategyDrafts,
     panels,
+    chartCount,
+    setChartCount(count) {
+      const nextCount = Math.max(MIN_REALTIME_CHARTS, Math.min(MAX_REALTIME_CHARTS, Math.round(count)));
+      setChartCountState(nextCount);
+      setFocusIndex((current) => Math.min(current, nextCount - 1));
+    },
     focusIndex,
     setFocusIndex,
     panelHandlers,
@@ -1191,10 +1237,10 @@ function distributionFromCounts(counts?: Record<"POSITIVE" | "NEUTRAL" | "NEGATI
 }
 
 function timeframeOrder(timeframe: string) {
-  const match = timeframe.match(/^(\d+)([mhdw])$/i);
+  const match = timeframe.match(/^(\d+)([smhdw])$/i);
   if (!match) return Number.MAX_SAFE_INTEGER;
-  const unitMinutes: Record<string, number> = { m: 1, h: 60, d: 1_440, w: 10_080 };
-  return Number(match[1]) * (unitMinutes[match[2].toLowerCase()] ?? Number.MAX_SAFE_INTEGER);
+  const unitSeconds: Record<string, number> = { s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800 };
+  return Number(match[1]) * (unitSeconds[match[2].toLowerCase()] ?? Number.MAX_SAFE_INTEGER);
 }
 
 function readPersistedMarket(): MarketSelection | null {  try {

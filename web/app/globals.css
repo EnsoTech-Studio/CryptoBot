@@ -999,6 +999,12 @@ td span {
   font-weight: var(--weight-semibold);
 }
 
+.crosshair-line { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.72; }
+.crosshair-point { fill: var(--surface-1); stroke: var(--brand); stroke-width: 2; }
+.chart-tooltip-bg { fill: color-mix(in srgb, var(--surface-1) 96%, var(--brand)); stroke: var(--line-2); stroke-width: 1; filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.16)); }
+.chart-tooltip-title { fill: var(--ink-1); font-family: var(--font-mono); font-size: 9px; font-weight: var(--weight-semibold); }
+.chart-tooltip-text { fill: var(--ink-2); font-family: var(--font-mono); font-size: 8px; }
+
 .wick {
   stroke-width: 1.2;
 }

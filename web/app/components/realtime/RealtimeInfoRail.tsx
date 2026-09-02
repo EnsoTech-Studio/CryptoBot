@@ -13,35 +13,38 @@ export function RealtimeInfoRail() {
     selectedMarket,
     streamLabel,
     dataMode,
-    latencyMs,
-    lastFrameAt,
     reconnectCount,
     recentTicks,
     marketStatusState,
+    panels,
+    chartCount,
   } = useWorkspace();
+  const visiblePanels = panels.slice(0, chartCount);
+  const statusCounts = visiblePanels.reduce<Record<string, number>>((counts, panel) => {
+    counts[panel.liveState] = (counts[panel.liveState] ?? 0) + 1;
+    return counts;
+  }, {});
 
   return (
     <aside className={styles.infoRail} aria-label="Hướng dẫn và trạng thái realtime">
-      <section className={styles.infoCard}>
-        <CardTitle icon="info" title="Logic cập nhật candle" />
-        <div className={styles.guideList}>
-          <GuideRow variant="update" title="Trùng nến cuối" action="Update candle" text="Cùng open time: cập nhật OHLC và volume của nến hiện tại." />
-          <GuideRow variant="append" title="Nến mới hoàn toàn" action="Append candle" text="Open time mới: thêm nến tiếp theo vào cuối chuỗi." />
-        </div>
-      </section>
-
       <section className={styles.infoCard}>
         <div className={styles.connectionTitleRow}>
           <CardTitle icon="activity" title="Trạng thái kết nối" />
           <span className={styles.connectionMain} data-state={streamLabel.toLowerCase()}>
             <StatusDot tone={statusTone(streamLabel)} />
-            {dataMode === "mock" ? "Đã kết nối" : streamLabel === "Live" ? "Đã kết nối" : streamLabel}
+            {connectionStateLabel(streamLabel, dataMode)}
           </span>
+        </div>
+        <div className={styles.statusSummary} aria-label="Tóm tắt trạng thái các biểu đồ">
+          <span data-state="live"><i aria-hidden="true" />{statusCounts.live ?? 0} Live</span>
+          <span data-state="stale"><i aria-hidden="true" />{statusCounts.stale ?? 0} Stale</span>
+          <span data-state="unavailable"><i aria-hidden="true" />{statusCounts.unavailable ?? 0} Unavailable</span>
+          {statusCounts.connecting ? <span data-state="syncing"><i aria-hidden="true" />{statusCounts.connecting} Syncing</span> : null}
+          {statusCounts.paused ? <span data-state="paused"><i aria-hidden="true" />{statusCounts.paused} Paused</span> : null}
         </div>
         <dl className={styles.telemetry}>
           <div><dt>Nguồn dữ liệu</dt><dd>{dataMode === "mock" ? dataSourceLabel(dataMode) : providerLabel(selectedMarket.provider)}</dd></div>
-          <div><dt>Độ trễ (Latency)</dt><dd>{latencyMs == null ? "—" : `${latencyMs} ms`}</dd></div>
-          <div><dt>Dữ liệu cuối</dt><dd>{lastFrameAt ? formatUtcTime(lastFrameAt) : "—"}</dd></div>
+          <div><dt>Số biểu đồ</dt><dd>{visiblePanels.length}</dd></div>
           <div><dt>Kết nối</dt><dd>{marketStatusState === "loading" ? "Đang kiểm tra" : reconnectCount === 0 ? "Ổn định" : `${reconnectCount} lần kết nối lại`}</dd></div>
         </dl>
       </section>
@@ -90,22 +93,6 @@ function CardTitle({ icon, title }: { icon: "info" | "activity" | "chart"; title
   return <h2 className={styles.infoTitle}><Icon name={icon} />{title}</h2>;
 }
 
-function GuideRow({ variant, title, action, text }: { variant: "update" | "append"; title: string; action: string; text: string }) {
-  return (
-    <div className={styles.guideRow}>
-      <div className={styles.guideCopy}>
-        <strong>{title} <span>→ {action}</span></strong>
-        <div className={styles.candleFlow} data-variant={variant} aria-hidden="true">
-          <span className={styles.candleGroup}><i /><i /><i /><i /></span>
-          <b />
-          <span className={styles.candleGroup}><i /><i /><i /><i /></span>
-        </div>
-        <p>{text}</p>
-      </div>
-    </div>
-  );
-}
-
 function statusTone(label: ConnectionLabel) {
   if (label === "Live" || label === "Mock") return "live" as const;
   if (label === "Syncing") return "syncing" as const;
@@ -113,9 +100,21 @@ function statusTone(label: ConnectionLabel) {
   return "error" as const;
 }
 
+function connectionStateLabel(label: ConnectionLabel, dataMode: "live" | "mock") {
+  if (dataMode === "mock") return "Mock data";
+  switch (label) {
+    case "Live": return "Đã kết nối";
+    case "Degraded": return "Stale / gián đoạn";
+    case "Unavailable": return "Không khả dụng";
+    case "Syncing": return "Đang đồng bộ";
+    case "Paused": return "Đã tạm dừng";
+    default: return label;
+  }
+}
+
 function formatUtcTime(value: string, milliseconds = false) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "—";
-  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" });
-  return milliseconds ? `${time}.${String(date.getUTCMilliseconds()).padStart(3, "0")}` : time;
+  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Ho_Chi_Minh" });
+  return milliseconds ? `${time}.${String(date.getMilliseconds()).padStart(3, "0")}` : time;
 }

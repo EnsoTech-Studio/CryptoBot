@@ -1,8 +1,9 @@
 "use client";
 
 import { formatPrice } from "../../../lib/format";
+import { REALTIME_TIMEFRAME_OPTIONS } from "../../../lib/market";
 import type { OverlayMarker, OverlaySeries } from "../../../lib/api";
-import { useWorkspace, type Panel } from "../../providers/workspace";
+import { useWorkspace, type LiveState, type Panel } from "../../providers/workspace";
 import { ChartCanvas } from "../charts/ChartCanvas";
 import { Icon } from "../ui/Icon";
 import styles from "./realtime.module.css";
@@ -30,7 +31,7 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
   const chartSummary = lastCandle
     ? `${selectedMarket.symbol} ${panel.timeframe}, giá đóng cửa ${formatPrice(lastCandle.close)}, ${signalLabel}${dataMode === "mock" ? ", dữ liệu mô phỏng" : ""}`
     : `${selectedMarket.symbol} ${panel.timeframe}, chưa có dữ liệu thị trường`;
-  const timeframeOptions = ["1m", "5m", "15m", "1h", "4h", "1d"]
+  const timeframeOptions = REALTIME_TIMEFRAME_OPTIONS
     .filter((timeframe) => availableTimeframes.includes(timeframe));
   const onTimeframe = panelHandlers(index).onTimeframe;
 
@@ -48,7 +49,7 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
             <span className={styles.symbol}>{selectedMarket.symbol}</span>
             <span className={styles.liveState} data-state={panel.liveState}>
               <i aria-hidden="true" />
-              <span className={styles.srStatus}>{panel.liveState === "live" ? "Live" : panel.liveState === "connecting" ? "Syncing" : panel.liveState === "paused" ? "Paused" : "Stale"}</span>
+              <span className={styles.statusLabel}>{liveStateLabel(panel.liveState)}</span>
             </span>
           </button>
           <span className={styles.chartSeparator} aria-hidden="true">·</span>
@@ -66,24 +67,28 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
       <div className={styles.chartMeta}>
         <div className={styles.chartTimeframeControl}>
           <span className={styles.chartControlLabel}>Khung</span>
-          <div className={styles.chartTimeframes} role="tablist" aria-label={`Khung thời gian cho biểu đồ ${selectedMarket.symbol}`}>
+          <select
+            className={styles.chartTimeframeSelect}
+            value={panel.timeframe}
+            aria-label={`Khung thời gian cho biểu đồ ${selectedMarket.symbol}`}
+            onChange={(event) => onTimeframe(event.target.value)}
+          >
             {timeframeOptions.map((timeframe) => (
-              <button
+              <option
                 key={timeframe}
-                type="button"
-                className={panel.timeframe === timeframe ? styles.timeframeActive : undefined}
-                role="tab"
-                aria-selected={panel.timeframe === timeframe}
-                onClick={() => onTimeframe(timeframe)}
               >
                 {timeframe}
-              </button>
+              </option>
             ))}
-          </div>
+          </select>
         </div>
         <span className={styles.overlayValue}>
           {overlay ? `${overlay.name} ${formatPrice(overlay.value)}` : "Overlay chưa có dữ liệu"}
         </span>
+        <div className={styles.chartTelemetry} aria-label={`Telemetry ${selectedMarket.symbol} ${panel.timeframe}`}>
+          <span><b>Latency</b> {panel.latencyMs == null ? "—" : `${panel.latencyMs} ms`}</span>
+          <span><b>Last</b> {panel.lastFrameAt ? formatUtcTime(panel.lastFrameAt) : "—"}</span>
+        </div>
       </div>
 
       <div className={styles.chartViewport} aria-busy={!panel.loaded}>
@@ -114,12 +119,28 @@ export function RealtimeChartCard({ panel, index }: { panel: Panel; index: numbe
         </button>
         <span className={styles.footerStatus}>
           <Icon name="refresh" aria-hidden="true" />
-          {!realtimeEnabled ? "Realtime đang tạm dừng" : "Cập nhật realtime"}
+          {panel.liveState === "stale" ? "Dữ liệu stale" : panel.liveState === "unavailable" ? "Dữ liệu unavailable" : panel.liveState === "connecting" ? "Đang đồng bộ" : !realtimeEnabled ? "Realtime đang tạm dừng" : "Cập nhật realtime"}
           <i data-state={panel.liveState} aria-hidden="true" />
         </span>
       </footer>
     </article>
   );
+}
+
+function liveStateLabel(state: LiveState) {
+  switch (state) {
+    case "live": return "Live";
+    case "connecting": return "Syncing";
+    case "stale": return "Stale";
+    case "unavailable": return "Unavailable";
+    case "paused": return "Paused";
+  }
+}
+
+function formatUtcTime(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "—";
+  return `${date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Ho_Chi_Minh" })} ICT`;
 }
 
 function latestSignal(markers: OverlayMarker[]) {
