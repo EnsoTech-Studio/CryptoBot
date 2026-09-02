@@ -389,6 +389,7 @@
 .historyStatus > span { width: 7px; height: 7px; }
 .historyActions { display: flex; gap: 6px; }
 .historyActions button { min-height: 28px; padding: 0 8px; font-size: 11px; }
+.historyFoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--ink-3); font-size: 11px; }
 .compareHint { color: var(--ink-3); font-size: 11px; }
 .compareTable th:not(:first-child), .compareTable td:not(:first-child) { text-align: right; font-family: var(--font-mono); }
 .detailGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

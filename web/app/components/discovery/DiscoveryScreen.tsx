@@ -192,6 +192,7 @@ export function DiscoveryScreen() {
         <div className={styles.rightColumn}>
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
+            key={`${search?.search_run_id ?? "no-run"}:${selectedMarket.provider}:${selectedMarket.symbol}:${activeTimeframe}`}
             entries={discoveryLeaderboard}
             archive={discoveryArchive}
             run={search}

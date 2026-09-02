@@ -46,7 +46,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def fixture_version(info: DatasetInfo) -> str:
-    return f"fixture:{info.dataset_version}:v1"
+    # v1 stored every raw 1m row as the requested timeframe. v2 records the
+    # corrected OHLCV aggregation while keeping immutable v1 datasets intact.
+    revision = "v1" if info.timeframe == "1m" else "v2"
+    return f"fixture:{info.dataset_version}:{revision}"
 
 
 def import_fixture(

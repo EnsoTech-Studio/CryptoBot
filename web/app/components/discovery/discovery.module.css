@@ -449,6 +449,7 @@
 .profitCell { color: var(--data-up); font-weight: var(--weight-semibold); }
 .profitNegative { color: var(--data-down); }
 .leaderEmpty { height: 88px; color: var(--ink-3); text-align: center; }
+.paginationFoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--ink-3); font-size: 11px; }
 
 .methodProgressRow {
   display: grid;

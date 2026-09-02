@@ -1,58 +1,62 @@
-## 12. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)
+## 12. Component Boundaries: 6 Module Cốt Lõi (Anti-God Service)
 
 <div class="columns">
 <div>
 
-### 5 Miền Nghiệp Vụ Chuyên Biệt (High Cohesion)
-1. **Market Realtime (Go):** Thu nạp Binance WSS candles, BBO, tự bù nến (Gap Backfill).
-2. **Strategy Engine (Python):** Thực thi single & composite strategies (v1 IDs).
-3. **Backtest & Discovery (Python):** Kiểm thử test set, Job Queue & Leased Worker.
-4. **News Crawler (Python):** Thu thập tin RSS/HTML, kiểm soát an toàn SSRF.
-5. **News Intelligence (AI):** LLM trích xuất & scoring sentiment độc lập.
-
-* **Loose Coupling:** Giao tiếp qua standardized DTOs, PostgreSQL Outbox và Event Worker Dispatcher.
+### 6 Bounded Contexts (High Cohesion)
+1. **Market Realtime (Go Edge):** WSS candles/BBO, gap backfill.
+2. **Strategy Engine (Python):** Single/composite runtime.
+3. **Backtest (Python Worker):** Candle+BBO replay, execution facts.
+4. **Discovery (Python):** Search Loop, validation, stop conditions.
+5. **News Crawler (Python):** RSS/HTML, SSRF guard, quality gate.
+6. **News Intelligence (Python + AI adapter):** Extraction & async sentiment.
+* **Loose Coupling:** Giao tiếp qua versioned DTOs & Outbox events.
 
 </div>
 <div>
 
-### Phân Định Trách Nhiệm Ngôn Ngữ
+### Trách Nhiệm Công Nghệ (Go vs Python)
 
-| Tiêu chí | Go Edge Gateway | Python Research Engine |
+| Tiêu chí | Go Edge & Market Gateway | Python Strategy Platform |
 | :--- | :--- | :--- |
-| **Miền sở hữu** | Market Ingestion & API Edge | Backtest, Strategy, Search, AI |
-| **Thế mạnh** | Goroutines non-blocking, Low RAM | Toán học định lượng, AST sandbox, AI |
-| **Giao thức** | REST CQRS, WSS, SSE | Worker Queue Leases, Internal DTOs |
-| **Rủi ro cô lập** | Lỗi mạng sàn không làm chết Worker | Crash strategy không làm sập API |
+| **Ownership** | Market Ingestion, API Edge & Fan-out | Strategy, Backtest, Discovery, News/Agents/Ranking |
+| **Strengths** | Goroutines, Low RAM, high concurrency | Quantitative math, AST, AI/ML |
+| **Protocols** | Public REST/WSS, signed events | Internal HTTP, DTOs, Job/Outbox |
+| **Isolation** | Network drops không crash Worker | Crash strategy không sập API |
 
 </div>
 </div>
 
 ---
 
-## 13. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)
+## 13. Đặc Tả Ranh Giới & Phạm Vi 6 Module (Component Specs)
 
 <div class="columns">
 <div>
 
 ### 1. Market Realtime & 2. Strategy Engine
 * **Market Realtime:**
-  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; lưu nến vào Postgres, phát trực tiếp `CandleClosed` qua SSE/WebSocket.
-  * **Invariant:** Time-series liên tục, không duplicate candle.
+  * **Input/Output:** Raw Binance WSS → Normalized `Candle` & `BBO`; persist vào Postgres, broadcast `CandleClosed` event qua SSE/WebSocket.
+  * **Invariant:** Continuous time-series, zero-duplicate candle.
 * **Strategy Engine:**
-  * **Thêm/Bớt:** Single strategy (Handcraft/AI) qua `IStrategy`.
-  * **Discovery:** UI backtest trên historical data + Auto Search Loop.
-  * **Invariant:** Parity đồng nhất 100% giữa Live Trading và Backtest.
+  * **Pluggable:** Single strategy (Handcrafted/AI) qua `IStrategy`.
+  * **Scope:** Strategy Registry, indicators và single/composite runtime.
+  * **Invariant:** 100% execution parity giữa Live Trading và Backtest.
 
 </div>
 <div>
 
-### 3. Backtest, 4. Crawler & 5. Intelligence
+### 3. Backtest & 4. Discovery
 * **Backtest Subsystem (Event-Driven):**
-  * Chạy strategy trên test set (historical data), tối ưu hóa strategy kết hợp AI sentiment qua Job Queue & Worker.
+  * Replay immutable Candle+BBO với cùng `StrategyRuntime`, simulate execution và emit trade/evaluation facts qua Worker/Outbox.
+* **Discovery Subsystem:**
+  * Generate candidates, orchestrate Search Loop và backtest jobs qua Train/Validation/Sealed Test; enforce lineage và stop conditions.
+
+### 5. News Crawler & 6. News Intelligence
 * **News Crawler Subsystem:**
-  * Thu thập tin từ `ApprovedSource` (RSS/HTML), kiểm soát SSRF, chốt chặn Quality Gate.
-* **News Intelligence & Agent:**
-  * LLM/Agent trích xuất khi DOM đổi và scoring sentiment [-1.0, 1.0] bất đồng bộ không nghẽn crawl.
+  * Fetch news từ `ApprovedSource` (RSS/HTML), SSRF protection, Quality Gate validation.
+* **News Intelligence Subsystem:**
+  * Orchestrate LLM/Agent extraction khi DOM thay đổi và scoring sentiment [-1.0, 1.0] async (non-blocking crawl).
 
 </div>
 </div>

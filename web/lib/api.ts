@@ -800,13 +800,13 @@ export const api = {
       body: JSON.stringify({ action, command_id: `${action}-${Date.now()}` }),
     });
   },
-  leaderboard(marketOrSortBy: MarketSelection | string = DEFAULT_MARKET, timeframe = "5m", sortBy = "score") {
+  leaderboard(marketOrSortBy: MarketSelection | string = DEFAULT_MARKET, timeframe = "5m", sortBy = "score", limit = 50) {
     const market = typeof marketOrSortBy === "string" ? DEFAULT_MARKET : marketOrSortBy;
     const requestedTimeframe = typeof marketOrSortBy === "string" ? "5m" : timeframe;
     const requestedSort = typeof marketOrSortBy === "string" ? marketOrSortBy : sortBy;
     const path = marketRequestPath("/api/v1/leaderboard", market, {
       timeframe: requestedTimeframe,
-      limit: 10,
+      limit,
       sort_by: requestedSort,
     });
     return request<{ entries: ResearchLeaderboardEntry[] }>(path).then(

@@ -5,7 +5,10 @@ import { useState } from "react";
 import type { Metrics } from "../../../lib/api";
 import { canCancelBacktest } from "../../../lib/backtest";
 import { Button, Dialog, Panel, StatusDot } from "../ui/Foundation";
+import { Pagination } from "../ui/Pagination";
 import styles from "./backtest.module.css";
+
+const HISTORY_PAGE_SIZE = 5;
 
 export type ExperimentHistoryRecord = {
   id: string;
@@ -37,8 +40,13 @@ export function ExperimentHistory({
   onVisualize: (id: string) => void;
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const detail = records.find((record) => record.id === detailId) ?? null;
   const selected = records.filter((record) => selectedIds.includes(record.id));
+  const totalPages = Math.max(1, Math.ceil(records.length / HISTORY_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * HISTORY_PAGE_SIZE;
+  const visibleRecords = records.slice(pageStart, pageStart + HISTORY_PAGE_SIZE);
 
   return (
     <>
@@ -65,7 +73,7 @@ export function ExperimentHistory({
                 </tr>
               </thead>
               <tbody>
-                {records.map((record) => (
+                {visibleRecords.map((record) => (
                   <tr key={record.id}>
                     <td>
                       <input
@@ -97,6 +105,12 @@ export function ExperimentHistory({
             </table>
           </div>
         )}
+        {records.length > 0 ? (
+          <div className={styles.historyFoot}>
+            <span>{pageStart + 1}–{Math.min(pageStart + HISTORY_PAGE_SIZE, records.length)} của {records.length} experiment</span>
+            <Pagination page={currentPage} totalPages={totalPages} onPage={setPage} ariaLabel="Phân trang experiment history" />
+          </div>
+        ) : null}
       </Panel>
 
       {selected.length > 1 ? <Comparison records={selected} /> : null}

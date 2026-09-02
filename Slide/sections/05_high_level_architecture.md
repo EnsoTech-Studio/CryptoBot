@@ -3,10 +3,10 @@
 <div class="columns">
 <div>
 
-### Kết Nối Kiến Trúc Toàn Cục & Kỹ Thuật
-* **Frontend (Next.js):** SPA / JAMstack, Event Streaming (SSE/WS) cho biểu đồ realtime.
-* **Middleware (Go API Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Ingestion.
-* **Backend Research (Python):** Strategy Plugin Architecture, Event-Driven Job Queue, Backtest Worker pool.
+### Global Architecture & Technology Stack
+* **Frontend (Next.js):** React SPA, Event Streaming (SSE/WS) cho realtime chart & telemetry.
+* **API Gateway (Go Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Ingestion & Broadcaster.
+* **Backend Research (Python):** Strategy Plugin Architecture, Event-Driven Job Queue, Backtest Worker Pool.
 * **Database:** PostgreSQL (ACID Outbox, Candles, Experiments, News) & In-memory Ring Buffers (Go API Edge).
 * **Agent & External:** Strategy AI Agent, Crawling Agent, Binance API, OpenAI/Groq.
 
@@ -25,15 +25,15 @@
 <div class="columns">
 <div>
 
-### Các Pattern Cốt Lõi Áp Dụng
+### Core Architectural & Design Patterns
 * **CQRS (Go API):**
-  * Tách biệt Command (tạo experiment) và Query (đọc candles, leaderboard) tối ưu latency.
+  * Tách biệt Command (tạo experiment) và Query (đọc candles, leaderboard), optimize latency.
 * **Dual-Channel Market Engine with Parity:**
-  * Đồng nhất data model cho cả luồng Realtime (WSS) và Historical Backfill (REST).
+  * Schema & execution parity cho cả luồng Realtime (WSS) và Historical Backfill (REST).
 * **Transactional Outbox Pattern:**
-  * Đảm bảo tính nguyên tử (Atomic) khi tạo Experiment và đẩy Job, loại bỏ rủi ro Dual-write.
+  * Atomic consistency khi tạo Experiment và dispatch Job, eliminate dual-write risk.
 * **Plugin Architecture:**
-  * Tách rời hoàn toàn Core Engine khỏi strategy logic và search algorithms.
+  * Decouple hoàn toàn Core Engine khỏi strategy logic và search algorithms (Open-Closed Principle).
 
 </div>
 <div>
@@ -50,14 +50,14 @@
 <div class="columns">
 <div>
 
-### Hệ Thống Multi-Agent & Vòng Lặp Tự Sửa Lỗi
-* **Strategy Designer Agent:** Nhận natural language prompt / URL → sinh đặc tả Draft dạng JSON.
-* **Implementation Agent:** Chuyển đổi JSON Draft thành Python code tuân thủ `IStrategy`.
+### Multi-Agent System & Self-Repair Loop
+* **Strategy Designer Agent:** Nhận natural language prompt / URL → generate Draft spec (JSON).
+* **Implementation Agent:** Transform JSON Draft thành Python code tuân thủ `IStrategy` protocol.
 * **Self-Repair Loop (AST + Sandbox):**
-  * Kiểm tra cú pháp và dry-run trong execution sandbox.
-  * Phản hồi runtime errors về LLM để tự sửa code (tối đa 3 lần).
+  * Static AST syntax validation & isolated dry-run trong Sandbox.
+  * Feed runtime traceback về LLM để auto self-repair code (tối đa 3 retry cycles).
 * **Candidate Discovery & Crawling Agent:**
-  * Tự động kết hợp hyperparameters và crawl tin tức đa nguồn.
+  * Automated hyperparameter sampling & multi-source news crawling.
 
 </div>
 <div>

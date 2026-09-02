@@ -1,0 +1,25 @@
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pager button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: var(--surface-1);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pager button:hover:not(:disabled) { border-color: var(--line-3); color: var(--ink-1); }
+.pager button:disabled { color: var(--ink-3); cursor: not-allowed; opacity: 0.55; }
+.pager button > svg { width: 14px; height: 14px; }
+.pager button.pageActive { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
+.pager button.pageActive:hover { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
+.pageGap { width: 18px; color: var(--ink-3); text-align: center; }

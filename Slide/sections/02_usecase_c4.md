@@ -3,17 +3,17 @@
 <div class="columns">
 <div>
 
-### Tác tử (Actors) & Nhóm Chức năng
+### Actors & Chức Năng Chính
 * **Quant Researcher / Trader:**
   * Xem realtime candlestick chart đa timeframe (1m, 5m, 1h, 1d).
   * Thử nghiệm single strategy và composite strategy.
   * Chạy Backtest, phân tích equity curve, max drawdown, win rate.
-  * Nhập prompt tự nhiên hoặc URL để AI sinh & sửa strategy code.
+  * Nhập natural language prompt hoặc URL để AI generate & self-repair strategy code.
 * **Autonomous AI Agent:**
-  * Crawl financial news, trích xuất text & scoring sentiment.
-  * Tự động chạy Auto Search Loop (Loop Discovery).
+  * Crawl financial news, extract text & scoring sentiment.
+  * Tự động trigger Auto Search Loop (Loop Discovery).
 * **System Worker:**
-  * Nạp candle định kỳ, xử lý ngầm Backtest Job Queue.
+  * Ingest candle định kỳ, process async Backtest Job Queue.
 
 </div>
 <div>
@@ -30,12 +30,12 @@
 <div class="columns">
 <div>
 
-### Ranh Giới & Hệ Thống Bên Ngoài
-* **CryptoBot Core Platform:** Nền tảng trung tâm thu nạp market data, research strategy và chấm điểm portfolio.
+### System Boundaries & External Systems
+* **CryptoBot Core Platform:** Platform trung tâm cho market data ingestion, strategy research và portfolio ranking.
 * **External Systems:**
   * **Binance Exchange:** Historical candle data (REST) và BBO price stream (WebSocket).
   * **News Sources / RSS Feeds:** Cung cấp thông tin thị trường crypto đa nguồn.
-  * **LLM Providers (OpenAI / Groq):** Suy luận ngôn ngữ, sentiment analysis & strategy self-repair.
+  * **LLM Providers (OpenAI / Groq):** LLM reasoning, sentiment analysis & strategy self-repair.
 
 </div>
 <div>
@@ -52,13 +52,13 @@
 <div class="columns">
 <div>
 
-### Phân Rã Các Container Chính
-* **Next.js Web (SPA):** UI biểu đồ realtime, cấu hình strategy & Leaderboard.
-* **Go Edge Gateway (`api`):** CQRS, RBAC, Binance WSS ingestion & SSE/WS stream.
-* **Python Research (`research`):** Strategy Registry, Backtest Engine & Search Loop.
-* **Async Workers (`worker` pool):** Xử lý Job Queue, Outbox Events, News Crawl & AI Agent.
-* **AI Service (`ai`):** Cổng LLM (Groq/OpenAI) phân tích sentiment & sinh strategy code.
-* **PostgreSQL (Storage & Outbox):** Lưu trữ ACID candle data, experiments và Outbox table.
+### Container Architecture (C4 Level 2)
+* **Next.js Dashboard:** Render-only UI: chart, authoring, search, backtest, trade detail & news.
+* **Go Edge & Market Gateway:** Public REST/WSS, auth/quota, Candle/BBO normalization & realtime fan-out.
+* **Python Research API:** Strategy/Agent runtime, experiment/search, news/sentiment orchestration & queries.
+* **Python Research Worker × N:** Leased backtest/agent jobs; immutable Candle+BBO; execution; facts/outbox.
+* **PostgreSQL:** Source of truth: market, strategies, jobs/results, news/sentiment & outbox.
+* **Object Storage / Broker (optional):** Raw HTML by hash; replaceable queue/stream adapter.
 
 </div>
 <div>
@@ -75,12 +75,11 @@
 <div class="columns">
 <div>
 
-### Cấu Trúc Nội Bộ Python Platform
-* **Strategy Registry:** Quản lý lifecycle và metadata của các strategy plugins.
-* **Deterministic Backtest Engine:** Mô phỏng order execution chính xác (BBO, Slippage, Fee).
-* **Search & Loop Manager:** Điều phối search algorithms (Random, Genetic, Bayesian, LLM).
-* **Worker Lease Manager:** Phân phối jobs không khóa (Optimistic Lock) và tự phục hồi.
-* **AST Sandbox:** Kiểm tra an toàn syntax strategy code do AI tạo ra trước khi thực thi.
+### Component Breakdown: Python Research Platform
+* **Application services:** `Research API`, `Experiment/Search/Ranking`, `News/Sentiment` & `AgentOrchestrator`.
+* **Domain runtime:** `StrategyRegistry + StrategyRuntime`; `Backtest Engine + Execution Simulator`; news rules; agent state/artifacts.
+* **Python-owned ports:** `MarketDataPort`, `ModelGatewayPort`, `Artifact/Sandbox/Approval` & `Repository/Job/Outbox` ports.
+* **Infrastructure adapters:** Go Market adapter, internal AI/LLM adapter, isolated Sandbox Runner, SafeFetcher/Readability & PostgreSQL repositories.
 
 </div>
 <div>
@@ -97,11 +96,12 @@
 <div class="columns">
 <div>
 
-### Cấu Trúc Nội Bộ Go Gateway
-* **Binance Adapter:** Duy trì kết nối WSS liên tục, tự động reconnect và REST Gap Backfill.
-* **Candle Aggregator & BBO Streamer:** Tổng hợp provisional candle và lưu candle đóng vào CSDL.
-* **CQRS Request Handler:** Phân tách rõ ràng luồng Command (tạo experiment) và Query (đọc candle, leaderboard).
-* **Security & Auth Middleware:** Kiểm tra JWT token, phân quyền RBAC và rate limiting.
+### Component Breakdown: Go Edge & Market Gateway
+* **REST API + Auth and Ownership Guard:** Request validation/DTO mapping, JWT, RBAC & quota.
+* **Public WebSocket Hub:** Subscription fan-out theo panel key.
+* **MarketProviderRegistry + BinanceAdapter:** Resolve provider, REST history & WSS kline/BBO.
+* **MarketNormalizer + MarketService:** Validate symbol/timeframe/decimal/timestamp/sequence; checkpoint, de-dup, persistence, reconnect & backfill.
+* **Python Research Client + Internal Event Ingress:** Signed commands, queries và progress/result events.
 
 </div>
 <div>

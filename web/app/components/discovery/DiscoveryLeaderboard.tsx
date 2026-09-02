@@ -1,11 +1,16 @@
 "use client";
 
+import { useState } from "react";
+
 import { LEADERBOARD_MOCK, type MockLeaderRow } from "../../../lib/discovery-mock";
 import { shortLabel } from "../../../lib/discovery";
 import type { DiscoveryArchive, LeaderboardEntry, SearchRun } from "../../../lib/api";
 import { Button, Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
+import { Pagination } from "../ui/Pagination";
 import styles from "./discovery.module.css";
+
+const LEADERBOARD_PAGE_SIZE = 5;
 
 /* Column 3, middle. Real entries win whenever the API returns any; the mock
    rows only fill the reference layout on a cold database.
@@ -32,6 +37,8 @@ export function DiscoveryLeaderboard({
   onTrace: (id: string) => void;
   onOpenExperiment: (id: string) => void;
 }) {
+  const [leaderboardPage, setLeaderboardPage] = useState(1);
+  const [archivePage, setArchivePage] = useState(1);
   const archiveRows = archive
     ? [...archive.candidates]
         .sort((left, right) => (right.score ?? -Infinity) - (left.score ?? -Infinity))
@@ -40,6 +47,16 @@ export function DiscoveryLeaderboard({
   const live = !discoveryRun && entries.length > 0;
   const hasLiveLeaderboard = entries.length > 0;
   const showMock = referenceMode && !discoveryRun && !live;
+  const archiveTotalPages = Math.max(1, Math.ceil(archiveRows.length / LEADERBOARD_PAGE_SIZE));
+  const currentArchivePage = Math.min(archivePage, archiveTotalPages);
+  const archiveStart = (currentArchivePage - 1) * LEADERBOARD_PAGE_SIZE;
+  const visibleArchiveRows = archiveRows.slice(archiveStart, archiveStart + LEADERBOARD_PAGE_SIZE);
+  const leaderboardCount = showMock ? LEADERBOARD_MOCK.length : entries.length;
+  const leaderboardTotalPages = Math.max(1, Math.ceil(leaderboardCount / LEADERBOARD_PAGE_SIZE));
+  const currentLeaderboardPage = Math.min(leaderboardPage, leaderboardTotalPages);
+  const leaderboardStart = (currentLeaderboardPage - 1) * LEADERBOARD_PAGE_SIZE;
+  const visibleMockRows = LEADERBOARD_MOCK.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE);
+  const visibleLiveRows = entries.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE);
   const archiveMessage = archiveState === "unavailable"
     ? "Không tải được Discovery archive."
     : archiveState === "loading"
@@ -68,9 +85,9 @@ export function DiscoveryLeaderboard({
         <tbody>
           {discoveryRun
             ? archiveRows.length > 0
-              ? archiveRows.slice(0, 5).map((candidate, index) => (
+              ? visibleArchiveRows.map((candidate, index) => (
                   <tr key={candidate.candidate_id}>
-                    <RankCell rank={index + 1} />
+                    <RankCell rank={archiveStart + index + 1} />
                     <td><PartList parts={candidateParts(candidate.candidate_definition)} /></td>
                     <td className={`${styles.profitCell} ${(candidate.score ?? 0) < 0 ? styles.profitNegative : ""}`}>
                       {candidate.score === null ? "—" : `${candidate.score >= 0 ? "+" : ""}${candidate.score.toFixed(4)}`}
@@ -83,7 +100,7 @@ export function DiscoveryLeaderboard({
                 ))
               : <tr><td className={styles.leaderEmpty} colSpan={4}>{archiveMessage}</td></tr>
             : live
-              ? entries.slice(0, 5).map((entry) => (
+              ? visibleLiveRows.map((entry) => (
                   <tr key={entry.id}>
                     <RankCell rank={entry.rank} />
                     <td>
@@ -96,11 +113,22 @@ export function DiscoveryLeaderboard({
                     <td className={styles.winrateCell}>{entry.win_rate_pct.toFixed(2)}%</td>
                   </tr>
                 ))
-              : showMock
-                ? LEADERBOARD_MOCK.map((row) => <MockRow key={row.rank} row={row} />)
+                : showMock
+                ? visibleMockRows.map((row) => <MockRow key={row.rank} row={row} />)
                 : <tr><td className={styles.leaderEmpty} colSpan={4}>Chưa có kết quả Discovery.</td></tr>}
         </tbody>
       </table>
+      {discoveryRun && archiveRows.length > 0 ? (
+        <div className={styles.paginationFoot}>
+          <span>{archiveStart + 1}–{Math.min(archiveStart + LEADERBOARD_PAGE_SIZE, archiveRows.length)} của {archiveRows.length} candidates</span>
+          <Pagination page={currentArchivePage} totalPages={archiveTotalPages} onPage={setArchivePage} ariaLabel="Phân trang Discovery archive" />
+        </div>
+      ) : !discoveryRun && (live || showMock) ? (
+        <div className={styles.paginationFoot}>
+          <span>{leaderboardStart + 1}–{Math.min(leaderboardStart + LEADERBOARD_PAGE_SIZE, leaderboardCount)} của {leaderboardCount} strategies</span>
+          <Pagination page={currentLeaderboardPage} totalPages={leaderboardTotalPages} onPage={setLeaderboardPage} ariaLabel="Phân trang leaderboard" />
+        </div>
+      ) : null}
       {live ? (
         <div className={styles.runActions}>
           <Button variant="ghost" onClick={() => onTrace(entries[0].id)}>
@@ -121,7 +149,7 @@ export function DiscoveryLeaderboard({
             </tr>
           </thead>
           <tbody>
-            {entries.slice(0, 5).map((entry) => (
+            {entries.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE).map((entry) => (
               <tr key={entry.id}>
                 <RankCell rank={entry.rank} />
                 <td><StrategyLink entry={entry} onOpenExperiment={onOpenExperiment} /></td>
@@ -134,6 +162,10 @@ export function DiscoveryLeaderboard({
             ))}
           </tbody>
         </table>
+        <div className={styles.paginationFoot}>
+          <span>{leaderboardStart + 1}–{Math.min(leaderboardStart + LEADERBOARD_PAGE_SIZE, entries.length)} của {entries.length} strategies</span>
+          <Pagination page={currentLeaderboardPage} totalPages={leaderboardTotalPages} onPage={setLeaderboardPage} ariaLabel="Phân trang leaderboard" />
+        </div>
         <div className={styles.runActions}>
           <Button variant="ghost" onClick={() => onTrace(entries[0].id)}>
             Provenance top 1
