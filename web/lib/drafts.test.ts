@@ -81,11 +81,11 @@ test("backtest run action stays enabled after a result is loaded", () => {
 test("backtest configuration builds single and composite children from the selected registry entries", () => {
   const registry = [strategy("ma_cross"), strategy("rsi"), strategy("bollinger")];
   assert.deepEqual(buildBacktestChildren("single", "rsi", [], registry), [
-    { strategy_id: "rsi", strategy_version: "v1", parameters: {}, weight: 1 },
+    { strategy_id: "rsi", strategy_version: "v1", parameters: { period: 14, oversold: 30, overbought: 70 }, weight: 1 },
   ]);
   assert.deepEqual(buildBacktestChildren("composite", "", ["ma_cross", "rsi", "missing"], registry), [
-    { strategy_id: "ma_cross", strategy_version: "v1", parameters: {}, weight: 0.5 },
-    { strategy_id: "rsi", strategy_version: "v1", parameters: {}, weight: 0.5 },
+    { strategy_id: "ma_cross", strategy_version: "v1", parameters: { fast: 20, slow: 50 }, weight: 0.5 },
+    { strategy_id: "rsi", strategy_version: "v1", parameters: { period: 14, oversold: 30, overbought: 70 }, weight: 0.5 },
   ]);
 });
 
@@ -131,6 +131,13 @@ test("mock execution markers keep a ledger sequence for chart selection", () => 
   const markers = mockExecutionMarkers(candles);
   assert.ok(markers.some((marker) => isExecutionMarkerSelected(marker, 1)));
   assert.ok(markers.some((marker) => isExecutionMarkerSelected(marker, 2)));
+  const maxPrice = Math.max(...candles.map((candle) => candle.high));
+  const minPrice = Math.min(...candles.map((candle) => candle.low));
+  assert.ok(markers.every((marker) => (
+    marker.price === undefined
+      || marker.price >= minPrice - (maxPrice - minPrice) * 0.1
+      && marker.price <= maxPrice + (maxPrice - minPrice) * 0.1
+  )));
 });
 
 test("trade pager fetches a cursor page only when the selected page is not loaded", () => {

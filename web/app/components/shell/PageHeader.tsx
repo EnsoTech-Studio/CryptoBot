@@ -11,7 +11,7 @@ import styles from "./shell.module.css";
 
 export function PageHeader({ navigationOpen, onOpenNavigation, menuButtonRef }: { navigationOpen: boolean; onOpenNavigation: () => void; menuButtonRef: RefObject<HTMLButtonElement | null> }) {
   const pathname = usePathname();
-  const { streamLabel, dataMode } = useWorkspace();
+  const { streamLabel, dataMode, inspectorOpen, inspectorTab, openInspector, closeInspector } = useWorkspace();
   const meta = pageMeta(pathname);
 
   return (
@@ -38,6 +38,18 @@ export function PageHeader({ navigationOpen, onOpenNavigation, menuButtonRef }: 
       </div>
 
       <div className={styles.headerActions}>
+        <button
+          type="button"
+          className={styles.inspectorToggle}
+          onClick={() => (inspectorOpen ? closeInspector() : openInspector(inspectorTab))}
+          aria-label={inspectorOpen ? "Ẩn Inspector" : "Mở Inspector"}
+          aria-controls="workspace-inspector"
+          aria-expanded={inspectorOpen}
+          title={inspectorOpen ? "Ẩn Inspector" : "Mở Inspector"}
+        >
+          <Icon name={inspectorOpen ? "close" : "expand"} />
+          <span>{inspectorOpen ? "Ẩn Inspector" : "Mở Inspector"}</span>
+        </button>
         <details className={styles.helpMenu}>
           <summary aria-label="Trợ giúp"><Icon name="help" /></summary>
           <div>

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from .config import Settings
 from .domain.common import ERR_UNKNOWN_STRATEGY, DomainError, hash_canonical_json
+from .domain.strategy.defaults import effective_parameters
 from .domain.strategy import Definition
 from .domain.strategy.plugins import default_registry
 from .errors import ApplicationError
@@ -81,6 +82,11 @@ def _definition_payload(definition: Definition) -> dict[str, Any]:
     }
     fingerprint = hashlib.sha256(source + hash_canonical_json(metadata).encode("ascii")).hexdigest()
     warm_up = definition.warm_up_candles({}) if callable(definition.warm_up_candles) else 0
+    default_params = effective_parameters(
+        definition.strategy_id,
+        definition.version,
+        schema=definition.parameters_schema or {},
+    )
     return {
         **metadata,
         "display_name": definition.display_name,
@@ -88,7 +94,7 @@ def _definition_payload(definition: Definition) -> dict[str, Any]:
         "warm_up_candles": int(warm_up or 0),
         "is_composite": definition.is_composite,
         "code_fingerprint": fingerprint,
-        "default_params": {},
+        "default_params": default_params,
     }
 
 
@@ -438,7 +444,7 @@ def list_strategy_drafts(
     _auth: Internal,
     owner_id: OwnerID,
     request: Request,
-    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+    limit: Annotated[int | None, Query(ge=1, le=1_000)] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     return {"drafts": _store(request).list_strategy_drafts(owner_id, limit)}
 
@@ -476,6 +482,16 @@ def create_experiment(body: ExperimentCreateIn, _auth: Internal, request: Reques
         status_code=status.HTTP_200_OK if result["reused"] else status.HTTP_202_ACCEPTED,
         content=jsonable_encoder(result),
     )
+
+
+@app.get("/api/v1/experiments", response_model=dict[str, list[ExperimentSummaryOut]])
+def list_experiments(
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
+    limit: Annotated[int | None, Query(ge=1, le=1_000)] = None,
+) -> dict[str, list[dict[str, Any]]]:
+    return {"experiments": _store(request).list_experiments(owner_id, limit)}
 
 
 @app.get("/api/v1/experiments/{experiment_id}", response_model=ExperimentSummaryOut)

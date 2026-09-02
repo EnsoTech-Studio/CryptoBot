@@ -125,8 +125,8 @@ export type Metrics = {
   wins: number;
   losses: number;
   net_profit: number;
-  profit_factor: number;
-  sharpe_ratio: number;
+  profit_factor: number | null;
+  sharpe_ratio: number | null;
   score: number | null;
   evaluator_version: string;
 };
@@ -187,6 +187,7 @@ export type EquityPoint = { t: string; equity: number; drawdown_pct: number };
 
 export type LeaderboardEntry = {
   id: string;
+  experiment_id: string;
   rank: number;
   score: number;
   strategy_id: string;
@@ -533,8 +534,9 @@ export const api = {
       }),
     });
   },
-  strategyDrafts(limit = 10) {
-    return request<{ drafts: StrategyDraft[] }>(`/api/v1/strategy-drafts?limit=${Math.min(20, Math.max(1, limit))}`);
+  strategyDrafts(limit?: number) {
+    const query = limit === undefined ? "" : `?limit=${Math.max(1, Math.floor(limit))}`;
+    return request<{ drafts: StrategyDraft[] }>(`/api/v1/strategy-drafts${query}`);
   },
   strategyDraft(draftId: string) {
     return request<StrategyDraft>(`/api/v1/strategy-drafts/${encodeURIComponent(draftId)}`);
@@ -603,7 +605,11 @@ export const api = {
       { signal },
     );
   },
-  createDataset(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
+  createDataset(
+    market: MarketSelection = DEFAULT_MARKET,
+    timeframe = "5m",
+    range?: { from: string; to: string },
+  ) {
     return request<MarketDataset>("/api/v1/markets/datasets", {
       method: "POST",
       body: JSON.stringify({
@@ -611,6 +617,7 @@ export const api = {
         symbol: market.symbol,
         timeframe,
         revision_no: 1,
+        ...(range ? { range_from: utcStart(range.from), range_to: utcEndExclusive(range.to) } : {}),
       }),
     }, 30_000);
   },
@@ -666,6 +673,10 @@ export const api = {
   },
   experiment(id: string) {
     return request<ExperimentSummary>(`/api/v1/experiments/${id}`);
+  },
+  experiments(limit?: number) {
+    const query = limit === undefined ? "" : `?limit=${Math.max(1, Math.floor(limit))}`;
+    return request<{ experiments: ExperimentSummary[] }>(`/api/v1/experiments${query}`);
   },
   experimentCandles(id: string, market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
     return request<{ candles: Omit<Candle, "provider" | "symbol" | "timeframe">[] }>(
@@ -805,13 +816,13 @@ export const api = {
       body: JSON.stringify({ action, command_id: `${action}-${Date.now()}` }),
     });
   },
-  leaderboard(marketOrSortBy: MarketSelection | string = DEFAULT_MARKET, timeframe = "5m", sortBy = "score") {
+  leaderboard(marketOrSortBy: MarketSelection | string = DEFAULT_MARKET, timeframe = "5m", sortBy = "score", limit = 50) {
     const market = typeof marketOrSortBy === "string" ? DEFAULT_MARKET : marketOrSortBy;
     const requestedTimeframe = typeof marketOrSortBy === "string" ? "5m" : timeframe;
     const requestedSort = typeof marketOrSortBy === "string" ? marketOrSortBy : sortBy;
     const path = marketRequestPath("/api/v1/leaderboard", market, {
       timeframe: requestedTimeframe,
-      limit: 10,
+      limit,
       sort_by: requestedSort,
     });
     return request<{ entries: ResearchLeaderboardEntry[] }>(path).then(

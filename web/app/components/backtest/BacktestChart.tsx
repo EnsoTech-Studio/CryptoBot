@@ -46,9 +46,9 @@ export function BacktestChart({
 }) {
   const mock = isMock ? createMockPanelData(draft.market, draft.timeframe, 180) : null;
   const shownCandles = mock ? mock.candles : candles;
-  const shownSeries = mock
-    ? [alignSeriesLast(mock.series[0], 69_135.45), createMockMa50(mock.candles, 68_912.73)]
-    : series;
+  /* Keep mock overlays on same price scale as selected market. The former
+     fixed BTC values flattened non-BTC candles into what looked like dots. */
+  const shownSeries = mock ? [mock.series[0], createMockMa50(mock.candles)] : series;
   const shownMarkers = mock ? mock.markers : markers;
   const shownExecutionMarkers = (mock ? mockExecutionMarkers(mock.candles) : executionMarkers).map((marker) => ({
     ...marker,
@@ -56,10 +56,10 @@ export function BacktestChart({
   }));
   const windowKey = `${shownCandles.length}:${shownCandles[0]?.open_time ?? ""}:${shownCandles.at(-1)?.open_time ?? ""}`;
   const maximum = Math.max(0, shownCandles.length - 1);
-  const [savedWindow, setSavedWindow] = useState({ key: windowKey, start: 0, end: maximum });
-  /* A new run is a new visual context. Derive the full window until the user
-     moves a thumb, rather than resetting state in an effect. */
-  const activeWindow = savedWindow.key === windowKey ? savedWindow : { key: windowKey, start: 0, end: maximum };
+  const [savedWindow, setSavedWindow] = useState(() => defaultWindow(windowKey, maximum));
+  /* A new run is a new visual context. Start on a readable trailing candle
+     window until the user moves a thumb, rather than resetting in an effect. */
+  const activeWindow = savedWindow.key === windowKey ? savedWindow : defaultWindow(windowKey, maximum);
   const start = Math.min(activeWindow.start, maximum);
   const end = Math.max(start, Math.min(activeWindow.end, maximum));
   const windowCandles = shownCandles.slice(start, end + 1);
@@ -68,10 +68,15 @@ export function BacktestChart({
   const windowExecutionMarkers = shownExecutionMarkers.filter((marker) => isWithinWindow(marker.t, windowFrom, windowTo));
   const last = windowCandles.at(-1)?.close ?? 0;
   const windowCount = windowCandles.length;
+  const ma20 = lastSeriesValue(shownSeries[0]) ?? last;
+  const ma50 = lastSeriesValue(shownSeries[1]) ?? last;
+  const support = Math.min(...windowCandles.map((candle) => candle.low), last);
+  const resistance = Math.max(...windowCandles.map((candle) => candle.high), last);
+  const chartTitle = `Biểu đồ Backtest (${experiment?.symbol ?? draft.market.symbol} · ${experiment?.timeframe ?? draft.timeframe})`;
 
   if (empty) {
     return (
-      <Panel title={`Biểu đồ Backtest (${draft.market.symbol} · ${draft.timeframe})`}>
+      <Panel title={chartTitle}>
         <div className={styles.chartEmpty}>
           <span>Chạy backtest để xem nến, tín hiệu và các lệnh đã khớp.</span>
           <Button variant="primary" disabled={runDisabled} onClick={onRun}>
@@ -85,7 +90,7 @@ export function BacktestChart({
 
   return (
     <Panel
-      title={`Biểu đồ Backtest (${draft.market.symbol} · ${draft.timeframe})`}
+      title={chartTitle}
       action={
         <span className={styles.chartActions}>
           <Button variant="primary" disabled={runDisabled} onClick={onRun}>
@@ -100,18 +105,18 @@ export function BacktestChart({
     >
       <div className={styles.legendRow}>
         <span className={styles.legendMa20}>MA(20)</span>
-        <b className={styles.legendMa20}>{fmt(mock ? 69_135.45 : last * 0.9971)}</b>
+        <b className={styles.legendMa20}>{fmt(ma20)}</b>
         <span className={styles.legendMa50}>MA(50)</span>
-        <b className={styles.legendMa50}>{fmt(mock ? 68_912.73 : last * 0.9939)}</b>
+        <b className={styles.legendMa50}>{fmt(ma50)}</b>
         <span>
           <i className={`${styles.legendSwatch} ${styles.swatchSupport}`} aria-hidden="true" />
           <span className={styles.legendLabel}>Hỗ trợ</span>
-          <b className={styles.legendSupport}>{fmt(mock ? 67_800 : last * 0.978)}</b>
+          <b className={styles.legendSupport}>{fmt(support)}</b>
         </span>
         <span>
           <i className={`${styles.legendSwatch} ${styles.swatchResistance}`} aria-hidden="true" />
           <span className={styles.legendLabel}>Kháng cự</span>
-          <b className={styles.legendResistance}>{fmt(mock ? 70_200 : last * 1.012)}</b>
+          <b className={styles.legendResistance}>{fmt(resistance)}</b>
         </span>
       </div>
 
@@ -175,26 +180,27 @@ export function BacktestChart({
   );
 }
 
-function createMockMa50(candles: Candle[], target = 68_912.73): OverlaySeries {
+function createMockMa50(candles: Candle[]): OverlaySeries {
   const windowSize = 50;
   const points: OverlayPoint[] = candles.map((candle, index) => {
     if (index < windowSize - 1) return { t: candle.open_time, v: null };
     const window = candles.slice(index - windowSize + 1, index + 1);
     return { t: candle.open_time, v: Number((window.reduce((sum, item) => sum + item.close, 0) / window.length).toFixed(2)) };
   });
-  return { name: "MA(50)", overlay_type: "moving_average_50", pane: "main", points: alignPointsLast(points, target), style: "solid" };
+  return { name: "MA(50)", overlay_type: "moving_average_50", pane: "main", points, style: "solid" };
 }
 
-function alignSeriesLast(series: OverlaySeries | undefined, target: number): OverlaySeries {
-  if (!series) return { name: "MA(20)", overlay_type: "moving_average", pane: "main", points: [] };
-  return { ...series, points: alignPointsLast(series.points ?? [], target) };
+function defaultWindow(key: string, maximum: number) {
+  const defaultVisibleCandles = 80;
+  return { key, start: Math.max(0, maximum - defaultVisibleCandles + 1), end: maximum };
 }
 
-function alignPointsLast(points: OverlayPoint[], target: number): OverlayPoint[] {
-  const last = points.at(-1)?.v;
-  if (last == null) return points;
-  const offset = target - last;
-  return points.map((point) => ({ ...point, v: point.v == null ? null : Number((point.v + offset).toFixed(2)) }));
+function lastSeriesValue(series: OverlaySeries | undefined) {
+  const points = series?.points ?? [];
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (points[index].v != null) return points[index].v;
+  }
+  return null;
 }
 
 function fmt(value: number) {

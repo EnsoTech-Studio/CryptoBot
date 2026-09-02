@@ -956,6 +956,9 @@ td span {
   display: block;
   width: 100%;
   border: 1px solid var(--line-1);
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
   border-radius: var(--radius-inner);
   background: var(--chart-bg);
 }
@@ -1110,6 +1113,23 @@ td span {
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: var(--weight-bold);
+}
+
+/* Result chart is shown in a narrower backtest column. Larger SVG labels keep
+   price, time, and trade markers readable after responsive scaling. */
+.chart-svg--result .axis-label,
+.chart-svg--result .price-label {
+  font-size: 12px;
+}
+
+.chart-svg--result .signal-text {
+  font-size: 8px;
+  letter-spacing: -0.35px;
+}
+
+.chart-svg--result .risk-label,
+.chart-svg--result .exec-label {
+  font-size: 11px;
 }
 
 .risk-line {

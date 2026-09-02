@@ -1,13 +1,13 @@
-## 22. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng
+## 24. Security Architecture: Defense-in-Depth
 
 <div class="columns">
 <div>
 
-### Các Lớp Bảo Vệ Hệ Thống (Defense-in-Depth)
-* **Authentication & RBAC:** Xác thực JWT, phân quyền tài nguyên theo người dùng (cô lập dữ liệu thí nghiệm).
-* **Crawler SSRF Prevention:** Chặn IP nội bộ (`127.0.0.1`, `10.0.0.0/8`, cloud metadata), chỉ duyệt domain trong `ApprovedSource`.
-* **AST Sandbox & Safe Execution:** Phân tích AST mã AI sinh ra; nghiêm cấm lệnh nguy hiểm (`eval`, `subprocess`, socket).
-* **Tool Invocation Boundary:** Giới hạn quyền hạn AI Agent qua DTO chặt chẽ.
+### Multi-Layer Security Architecture (Defense-in-Depth)
+* **Authentication & RBAC:** JWT authentication, role-based access control, tenant/user experiment isolation.
+* **Crawler SSRF Prevention:** Block private IP ranges (`127.0.0.1`, `10.0.0.0/8`, cloud metadata), domain whitelisting qua `ApprovedSource`.
+* **AST Sandbox & Safe Execution:** AST static analysis trên AI-generated code; ban dangerous builtins/modules (`eval`, `subprocess`, `socket`, `os.system`).
+* **Tool Invocation Boundary:** Schema-validated DTOs, strict input boundaries cho AI Agents.
 
 </div>
 <div>
@@ -19,19 +19,19 @@
 
 ---
 
-## 23. Khả Năng Mở Rộng (Scalability) & Benchmark
+## 25. Scalability Architecture & Benchmark
 
 <div class="columns">
 <div>
 
-### Scale-Out & Chiến Lược Chịu Tải 100,000 Backtests
-* **Mở Rộng Ngang Không Trạng Thái (Scale-Out):**
-  * Nhân bản số lượng Python Worker độc lập tùy theo tải CPU.
-  * Phân phối công việc qua hàng đợi PostgreSQL có chỉ mục B-Tree.
-* **Kịch Bản Kiểm Thử Tải (k6 / Locust Benchmark):**
-  * Mô phỏng 10,000 user gửi lệnh Backtest và truy vấn nến đồng thời.
-  * Tốc độ xử lý hàng đợi đạt > 1,500 backtests/phút trên 4 worker.
-  * Độ trễ API nến và leaderboard luôn duy trì ≤ 120ms (p95).
+### Scale-Out Strategy & 100,000 Backtests Benchmark
+* **Stateless Horizontal Scale-Out:**
+  * Spin up N Python Worker instances độc lập dựa trên CPU load / queue backlog.
+  * Distribute jobs qua PostgreSQL B-Tree indexed Leased Job Queue.
+* **Load Testing & Benchmarking (k6 / Locust):**
+  * Simulate 10,000 concurrent users dispatch Backtest jobs và query candle data.
+  * Queue throughput đạt > 1,500 backtests/phút trên 4 workers.
+  * Candle & Leaderboard API latency duy trì ≤ 120ms (p95).
 
 </div>
 <div>
@@ -43,19 +43,19 @@
 
 ---
 
-## 24. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục
+## 26. Fault Tolerance & Self-Healing Architecture
 
 <div class="columns">
 <div>
 
-### Cơ Chế Phục Hồi & Mô Phỏng Sự Cố
-* **Chiếm Quyền Xử Lý (Worker Lease Takeover):**
-  * Worker gửi heartbeat 10s/lần. Nếu worker crash, sau 30s hết hạn lease, worker khác tự động tiếp quản job.
+### Resilient Recovery & Chaos Simulation
+* **Worker Lease Takeover & Heartbeat:**
+  * Worker gửi heartbeat 10s/lần. Nếu worker crash, lease timeout sau 30s, worker khác auto-takeover job.
 * **Idempotency & Retry:**
-  * Khóa duy nhất `idempotency_key`, loại bỏ rủi ro chạy trùng lặp.
+  * Unique `idempotency_key` constraint, eliminate duplicate execution risk.
 * **Failure Isolation & Reconnect:**
-  * Lỗi 1 plugin không làm sập Worker; WSS tự reconnect sàn.
-* **Kịch Bản Test Mô Phỏng:** Chủ động tắt module worker/database để kiểm chứng khả năng tự phục hồi.
+  * Plugin failure isolation (lỗi 1 strategy không crash Worker); WSS auto-reconnect & backfill.
+* **Chaos Engineering Simulation:** Kill worker process / inject network drops để verify self-healing behavior.
 
 </div>
 <div>
@@ -67,19 +67,19 @@
 
 ---
 
-## 25. Triển Khai Thực Tế & MLOps
+## 27. Deployment Topology & MLOps Infrastructure
 
 <div class="columns">
 <div>
 
-### Mô Hình Triển Khai Docker & Kubernetes Readiness
-* **Container Hóa Toàn Diện (Docker Compose):**
-  * Đóng gói độc lập: Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.
-* **Health Checks Khi Triển Khai:**
-  * `/healthz` và `/readyz` tự động khởi động lại container khi lỗi.
-* **MLOps & Prompt Management:**
-  * System prompt và API key LLM tách biệt qua biến môi trường `.env`.
-* **Kubernetes Note:** Hỗ trợ replicas, scheduling, rolling update và HPA khi mở rộng quy mô lớn (MVP dùng Docker Compose).
+### Containerized Deployment (Docker Compose) & K8s Readiness
+* **Full-Stack Containerization:**
+  * Isolated container services: Next.js Web Dashboard, Go Edge Gateway, Python Research API, Python Research Worker × N, Internal AI Inference Adapter, PostgreSQL.
+* **Health Checks & Liveness Probes:**
+  * `/healthz` và `/readyz` endpoints cho container auto-restart & traffic routing.
+* **MLOps & Configuration:**
+  * Versioned system prompts và LLM API keys tách biệt qua environment variables (`.env`).
+* **Kubernetes-Ready Architecture:** Hỗ trợ Deployment Replicas, Rolling Updates, Horizontal Pod Autoscaling (HPA) khi scale production.
 
 </div>
 <div>

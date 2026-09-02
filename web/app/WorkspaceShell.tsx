@@ -24,9 +24,25 @@ function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { inspectorOpen, notice } = useWorkspace();
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const navigationWasOpen = useRef(false);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try { setSidebarCollapsed(window.localStorage.getItem("csl.sidebar-collapsed") === "true"); } catch { /* best effort */ }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try { window.localStorage.setItem("csl.sidebar-collapsed", String(next)); } catch { /* best effort */ }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!navigationOpen) {
@@ -66,9 +82,15 @@ function Shell({ children }: { children: ReactNode }) {
   }, [navigationOpen]);
 
   return (
-    <div className={`${styles.shell} ${inspectorOpen ? styles.withInspector : ""}`} data-route={pathname}>
+    <div className={`${styles.shell} ${inspectorOpen ? styles.withInspector : ""} ${sidebarCollapsed ? styles.sidebarCollapsed : ""}`} data-route={pathname}>
       <a className="skip-link" href="#workspace-main">Đi đến nội dung chính</a>
-      <AppSidebar open={navigationOpen} onClose={() => setNavigationOpen(false)} closeButtonRef={closeButtonRef} />
+      <AppSidebar
+        open={navigationOpen}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
+        onClose={() => setNavigationOpen(false)}
+        closeButtonRef={closeButtonRef}
+      />
       {navigationOpen ? <button type="button" className={styles.drawerBackdrop} onClick={() => setNavigationOpen(false)} aria-label="Đóng menu" /> : null}
       <section className={styles.main} id="workspace-main" tabIndex={-1} inert={navigationOpen ? true : undefined}>
         <PageHeader navigationOpen={navigationOpen} onOpenNavigation={() => setNavigationOpen(true)} menuButtonRef={menuButtonRef} />

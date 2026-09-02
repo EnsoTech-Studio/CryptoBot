@@ -152,6 +152,7 @@ type WorkspaceValue = {
   marketStatus: MarketStatus | null;
   marketStatusState: LoadState;
   loadHistory: (index: number) => Promise<void>;
+  openExperiment: (id: string) => Promise<boolean>;
   experiment: ExperimentSummary | null;
   result: ResultBundle | null;
   search: SearchRun | null;
@@ -350,6 +351,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   function report(text: string, tone: NoticeTone = "info") {
     setNotice({ text, tone });
+  }
+
+  function restorePersistedDiscoverySession(ownerId: string) {
+    const session = readPersistedDiscoverySession(ownerId);
+    if (!session) return;
+    setSearchId(session.searchId);
+    setSubmittedDraft(session.submittedDraft);
+    setDiscoveryArchiveState("loading");
   }
 
   function openInspector(tab: InspectorTab) {
@@ -625,7 +634,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function refreshExperiment(id: string) {
+  /* A login changes both auth cookie and account whose runs may be shown.
+     Fetch after React commits new user instead of racing the login handler. */
+  useEffect(() => {
+    if (!user || referenceModeEnabled) return;
+    const timer = window.setTimeout(() => void refreshDiscoverySessions(), 0);
+    return () => window.clearTimeout(timer);
+    // Deliberately keyed only by account identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  async function refreshExperiment(id: string): Promise<boolean> {
     try {
       const summary = await api.experiment(id);
       setExperiment(summary);
@@ -652,8 +671,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
         void refreshStaticData();
       }
+      return true;
     } catch (error) {
       report(messageFromError(error), "error");
+      return false;
     }
   }
 
@@ -680,14 +701,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     api.me()
       .then((payload) => {
         setUser(payload.user);
-        const session = readPersistedDiscoverySession(payload.user.id);
-        if (session) {
-          setSearchId(session.searchId);
-          setSubmittedDraft(session.submittedDraft);
-          setDiscoveryArchiveState("loading");
-        }
+        restorePersistedDiscoverySession(payload.user.id);
         void refreshStaticData();
-        void refreshDiscoverySessions();
       })
       .catch(() => report("Sign in to run experiments and search loops.", "warn"));
     api.strategies().then((payload) => setStrategies(payload.strategies ?? [])).catch(() => undefined);
@@ -1081,6 +1096,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     loadHistory(index) {
       return loadPanel(index, {}, PANEL_BOOTSTRAP_CANDLE_LIMIT);
     },
+    async openExperiment(id) {
+      autoOpened.current = null;
+      setActiveExperimentId(id);
+      setExperiment(null);
+      setResult(null);
+      return refreshExperiment(id);
+    },
     experiment,
     result,
     search,
@@ -1112,7 +1134,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const payload = await api.register(email, password, displayName);
         setUser(payload.user);
-        await Promise.all([refreshStaticData(), refreshDiscoverySessions()]);
+        await refreshStaticData();
         report(`Registered as ${payload.user.email}`);
       } catch (error) {
         report(messageFromError(error), "error");
@@ -1122,7 +1144,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const payload = await api.login(email, password);
         setUser(payload.user);
-        await Promise.all([refreshStaticData(), refreshDiscoverySessions()]);
+        restorePersistedDiscoverySession(payload.user.id);
+        await refreshStaticData();
         report(`Signed in as ${payload.user.email}`);
       } catch (error) {
         report(messageFromError(error), "error");

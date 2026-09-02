@@ -1,13 +1,13 @@
-## 12. UML Class Diagram: Strategy Plugin Model
+## 14. UML Class Diagram: Strategy Plugin Model
 
 <div class="columns">
 <div>
 
-### Thiết Kế Plugin Architecture (IStrategy)
-* **Contract `IStrategy` Protocol:** Phương thức `evaluate(context) -> Signal` chuẩn (`BUY`, `SELL`, `HOLD`).
+### Strategy Plugin Architecture (IStrategy Contract)
+* **Contract `IStrategy` Protocol:** Method `evaluate(context) -> Signal` (`BUY`, `SELL`, `HOLD`).
 * **5 Single Strategies (v1 IDs):** `ma_crossover`, `bollinger_bands`, `rsi_threshold`, `smc_structure`, `news_sentiment`.
-* **Composite Strategy:** Tổ hợp 2-5 chiến lược con theo `CombinationPolicy` (`majority` hoặc `weighted`).
-* **Strategy Registry:** Thêm file Python mới tự động nạp; triệt tiêu God Service và giảm coupling tuyệt đối.
+* **Composite Strategy:** Combine 2-5 child strategies theo `CombinationPolicy` (`majority` hoặc `weighted`).
+* **Strategy Registry:** Dynamic loading file Python mới; loại bỏ God Service, loose coupling.
 
 </div>
 <div>
@@ -19,18 +19,18 @@
 
 ---
 
-## 13. UML Class Diagram: Search Algorithm & Discovery Loop
+## 15. UML Class Diagram: Search Algorithm & Discovery Loop
 
 <div class="columns">
 <div>
 
-### Thiết Kế Search Algorithm & 3 Phân Vùng
-* **Contract `ISearchAlgorithm`:** Phương thức `sample(space, rng)` triển khai qua `RandomSearch`, `GeneticAlgorithm`, `BayesianOptimization`.
-* **Vòng Lặp Discovery Chống Overfitting:**
-  * **Train (30d):** Tìm kiếm và huấn luyện biến thể.
-  * **Validation (15d):** Đánh giá tính tổng quát (Gate check).
-  * **Sealed Test (15d):** Chấm điểm độc lập cho Leaderboard.
-* **Chống Nghẽn Job:** `DiscoveryTrialReservation` (reserved_jobs=4).
+### Search Algorithms & 3-Split Dataset Partitioning
+* **Contract `ISearchAlgorithm`:** Method `sample(space, rng)` implement qua `RandomSearch`, `GeneticAlgorithm`, `BayesianOptimization`.
+* **Discovery Loop chống Overfitting (Data Leakage):**
+  * **Train (30d):** Search & optimize strategy variants.
+  * **Validation (15d):** Generalization evaluation (Gate check).
+  * **Sealed Test (15d):** Out-of-sample benchmark cho Leaderboard.
+* **Job Throttling & Fair Scheduling:** `DiscoveryTrialReservation` (reserved_jobs=4).
 
 </div>
 <div>
@@ -42,17 +42,17 @@
 
 ---
 
-## 14. UML Class Diagram: Resilient News Crawler Model
+## 16. UML Class Diagram: Resilient News Crawler Model
 
 <div class="columns">
 <div>
 
-### Thiết Kế Bộ Thu Thập & Phân Tích Tin Tức
-* **Contract `NewsProvider` Protocol:** Kế thừa qua `RssNewsProvider` và `HtmlNewsProvider` (`ApprovedSource`).
-* **Chốt Chặn An Toàn SSRF & Quality Gate:**
-  * `Resolver` & `Fetcher` kiểm tra DNS, IP nội bộ, redirect.
-  * `HtmlQualityGateFailed`: Kích hoạt `NewsExtractionHTTPAdapter` (LLM) khi web đổi DOM.
-* **Tách Biệt Sentiment:** Chấm điểm batch độc lập, lỗi AI không làm sập luồng crawl.
+### Resilient News Crawler & Sentiment Architecture
+* **Contract `NewsProvider` Protocol:** Implemented by `RssNewsProvider` và `HtmlNewsProvider` (`ApprovedSource`).
+* **SSRF Guard & Quality Gate Pipeline:**
+  * `Resolver` & `Fetcher` validate DNS, private IP blocking, safe redirect.
+  * `HtmlQualityGateFailed`: Trigger `NewsExtractionHTTPAdapter` (LLM fallback) khi DOM thay đổi.
+* **Decoupled Sentiment Scoring:** Async batch scoring, AI errors không block crawl pipeline.
 
 </div>
 <div>

@@ -27,7 +27,11 @@
   background: var(--surface-1);
   box-shadow: var(--elev-1);
   padding: 18px 17px;
-  overflow-x: auto;
+  /* The composite selector opens outside the strip. A horizontal overflow
+     container also clips the dropdown vertically, leaving only a thin sliver
+     of strategy options visible. Responsive grid breakpoints below already
+     remove the need for horizontal scrolling. */
+  overflow: visible;
 }
 
 .coinControl { position: relative; display: block; min-width: 0; }
@@ -68,6 +72,35 @@
 
 .dateField input { padding-left: 34px; font-family: var(--font-mono); }
 
+.datasetControl { display: grid; min-width: 0; gap: 4px; }
+.datasetMeta {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.datasetCreateButton {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--brand);
+  font-size: 9px;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+.datasetCreateButton:hover:not(:disabled) { color: var(--brand-hover); text-decoration: underline; }
+.datasetCreateButton:disabled { color: var(--ink-3); cursor: wait; }
+.datasetCreateButton svg { width: 12px; height: 12px; }
+.datasetError { color: var(--status-stale); font-size: 9px; line-height: 1.2; }
+
 .strategyPicker { position: relative; min-width: 0; }
 .strategyPicker > summary {
   display: flex;
@@ -89,12 +122,14 @@
 .strategyPicker[open] > summary::after { content: "−"; }
 .strategyChecks {
   position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
   z-index: 4;
   display: grid;
   width: max-content;
   min-width: 100%;
   max-width: min(360px, calc(100vw - 48px));
-  max-height: 228px;
+  max-height: min(360px, calc(100vh - 180px));
   gap: 2px;
   overflow-y: auto;
   border: 1px solid var(--line-2);
@@ -382,17 +417,21 @@
 .historyTable th, .compareTable th { color: var(--ink-2); font-size: 10px; font-weight: var(--weight-semibold); }
 .historyTable tbody tr:hover, .compareTable tbody tr:hover { background: var(--surface-2); }
 .historyId, .historyDataset { max-width: 170px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.historyOpen { min-height: auto; overflow: hidden; border: 0; background: transparent; padding: 0; color: var(--brand); font-family: inherit; font-size: inherit; font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.historyOpen:hover { color: var(--brand-hover); text-decoration: underline; }
 .historyTable td small { display: block; margin-top: 2px; color: var(--ink-3); font-family: var(--font-mono); }
 .historyStatus { display: inline-flex; align-items: center; gap: 5px; text-transform: capitalize; }
 .historyStatus > span { width: 7px; height: 7px; }
 .historyActions { display: flex; gap: 6px; }
 .historyActions button { min-height: 28px; padding: 0 8px; font-size: 11px; }
+.historyFoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--ink-3); font-size: 11px; }
 .compareHint { color: var(--ink-3); font-size: 11px; }
 .compareTable th:not(:first-child), .compareTable td:not(:first-child) { text-align: right; font-family: var(--font-mono); }
 .detailGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .detailItem { display: grid; min-width: 0; gap: 4px; }
 .detailItem > span { color: var(--ink-3); font-size: 11px; }
 .detailItem > strong { overflow-wrap: anywhere; color: var(--ink-1); font-family: var(--font-mono); font-size: 12px; font-weight: var(--weight-semibold); }
+.detailJson { max-height: 180px; margin: 0; padding: 10px 12px; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface-3); color: var(--ink-1); font-family: var(--font-mono); font-size: 11px; font-weight: var(--weight-regular); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .detailWide { grid-column: 1 / -1; }
 
 /* --- responsive ----------------------------------------------------------- */

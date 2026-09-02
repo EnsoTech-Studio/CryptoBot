@@ -104,6 +104,7 @@ from ..domain.strategy import (
     ResolvedSignal,
     Signal,
 )
+from ..domain.strategy.defaults import effective_parameters
 from ..domain.strategy.composite import MajorityVoteCombiner, WeightedVoteCombiner
 
 MAX_CANDLES = 20_000  # specs/backtest.md — hiệu năng bound
@@ -552,11 +553,18 @@ class DeterministicEngine:
         self._library = library if library is not None else DeterministicLibrary()
 
     def with_runtime_spec(self, spec: dict[str, Any]) -> "DeterministicEngine":
+        return self.with_runtime_specs([spec])
+
+    def with_runtime_specs(self, specs: list[dict[str, Any]]) -> "DeterministicEngine":
+        """Return an engine with every approved declarative child installed."""
         from ..domain.strategy.generated import DeclarativeStrategy
         from ..domain.strategy.plugins.catalog import default_registry
 
         registry = default_registry()
-        registry.register(lambda: DeclarativeStrategy(spec))
+        for spec in specs:
+            # Bind the current spec. A late-bound loop variable would make all
+            # factories resolve to the last generated child.
+            registry.register(lambda spec=spec: DeclarativeStrategy(spec))
         return DeterministicEngine(registry, self._library)
 
     def run(
@@ -632,7 +640,12 @@ class DeterministicEngine:
                 strategy = self._registry.resolve(child.strategy_id, child.version)
                 if strategy.definition().is_composite:
                     raise DomainError(ERR_VALIDATION, "nested composite children are not allowed")
-                params = dict(child.parameters or {})
+                params = effective_parameters(
+                    child.strategy_id,
+                    child.version,
+                    child.parameters,
+                    schema=strategy.definition().parameters_schema or {},
+                )
                 requirements.update(self._safe_requirements(strategy, params))
                 warm_up = max(warm_up, self._safe_warm_up(strategy, params))
                 children.append(
@@ -655,8 +668,26 @@ class DeterministicEngine:
                 combiner=combiner_cls(),
                 combination=policy,
             )
-        params = dict(candidate) if isinstance(candidate, dict) else {}
         strategy = self._registry.resolve(snapshot.strategy.strategy_id, snapshot.strategy.version)
+        if isinstance(candidate, dict):
+            raw_params = candidate.get("parameters")
+            if isinstance(raw_params, dict):
+                params = dict(raw_params)
+            else:
+                # Accept the legacy flat candidate shape while ignoring
+                # provenance metadata keys that are not strategy parameters.
+                params = {
+                    key: value for key, value in candidate.items()
+                    if key not in {"strategy_id", "version"}
+                }
+        else:
+            params = {}
+        params = effective_parameters(
+            snapshot.strategy.strategy_id,
+            snapshot.strategy.version,
+            params,
+            schema=strategy.definition().parameters_schema or {},
+        )
         return _Plan(
             params=params,
             requirements=self._safe_requirements(strategy, params),

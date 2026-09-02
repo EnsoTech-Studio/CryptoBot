@@ -44,82 +44,100 @@
 
 \title[CryptoBot Architecture]{\textbf{CRYPTO STRATEGY LAB (CryptoBot)}}
 \subtitle{Báo Cáo Thiết Kế Kiến Trúc Phần Mềm (Software Architecture)}
-\author[HCMUS - KTPM]{Nền tảng Nghiên cứu, Khám phá \& Đánh giá Chiến lược Tự động}
+\author[HCMUS - KTPM]{Nền tảng Research, Auto-Discovery \& Đánh giá Trading Strategy Tự động}
 \institute[HCMUS]{Trường Đại học Khoa học Tự nhiên - ĐHQG-HCM \\ Bộ môn Kỹ thuật Phần mềm}
 \date{\today}
 
 \begin{document}
 
-% Slide 1: Title
+% Title Slide
 \begin{frame}
   \titlepage
 \end{frame}
 
-% Slide 2: Drivers
-\begin{frame}{1. Bối cảnh \& 4 Nhóm Architectural Drivers Cốt lõi}
+% Slide 1: Business Domain
+\begin{frame}{1. Miền Nghiệp Vụ \& Bối Cảnh (Business Domain)}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[Vấn đề \& Động lực]}}
+\begin{block}{\textbf{[Binance USDT-M Futures \& Algo-Trading]}}
 \begin{itemize}
-  \item \textbf{Realtime Market Ingestion:} Dữ liệu biến động mili-giây, cần stream liên tục \& tự phục hồi gap nến.
-  \item \textbf{High Modifiability:} Bổ sung chiến lược mới (Handcraft/AI) không sửa core engine.
-  \item \textbf{Massive Scalability:} Chạy hàng nghìn backtests song song không nghẽn UI.
-  \item \textbf{Unstructured Intelligence:} Crawl tin tức đa nguồn, tự phục hồi khi HTML đổi cấu trúc.
+  \item \textbf{Perpetual Futures Market (USDT-M):} Leverage 2 chiều Long/Short 24/7; Order execution theo BBO realtime.
+  \item \textbf{Đặc tính tài chính:} Funding Rate (8h), Fee Maker/Taker, Slippage \& Rủi ro Liquidation.
 \end{itemize}
 \end{block}
 \end{column}
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[Quyết định Kiến trúc Tương ứng]}}
+\begin{block}{\textbf{[Đối Tượng Sử Dụng \& Nhu Cầu Cốt Lõi]}}
 \begin{itemize}
-  \item \textbf{Driver 1 $\rightarrow$ Kappa / Streaming:} Tách biệt luồng Realtime WSS và Offline Backfill.
-  \item \textbf{Driver 2 $\rightarrow$ Plugin \& AST Sandbox:} Chuẩn hóa contract \texttt{IStrategy}.
-  \item \textbf{Driver 3 $\rightarrow$ Distributed Job Queue:} Phân tán tải qua Postgres Outbox \& Worker Leases.
-  \item \textbf{Driver 4 $\rightarrow$ Multi-Agent Crawler:} Tự động nhận diện cấu trúc DOM \& chấm sentiment.
+  \item \textbf{Quant Researcher / Trader:} Ingest candle low-latency ($<200$ms) đa timeframe (1m, 5m, 1h, 1d); Backtest chính xác (Sharpe, Drawdown, Win Rate).
+  \item \textbf{Autonomous AI Agents:} Crawl multi-source news, scoring sentiment; Generate strategy code \& scan hyperparameter space.
 \end{itemize}
 \end{block}
 \end{column}
 \end{columns}
 \end{frame}
 
-% Slide 3: Quality Attributes
-\begin{frame}{2. Hệ Thống Quality Attributes (ASRs Taxonomy)}
+% Slide 2: Problem Statement
+\begin{frame}{2. Bài Toán Thực Tế \& Thách Thức (Problem Statement)}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\begin{block}{\textbf{[Market Data \& Order Execution]}}
+\begin{itemize}
+  \item \textbf{Realtime Data Jitter \& Packet Drop:} WSS rớt kết nối làm mất nến $\rightarrow$ Auto-detect candle gap \& Gap Backfill tự động.
+  \item \textbf{Lookahead Bias \& Parity Mismatch:} Giả lập thiếu slippage/phí $\rightarrow$ Deterministic Replay Engine mô phỏng sát thực tế.
+\end{itemize}
+\end{block}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{block}{\textbf{[Scalability \& Architecture]}}
+\begin{itemize}
+  \item \textbf{Combinatorial Explosion:} Quét hàng ngàn tham số gây block UI nếu chạy sync $\rightarrow$ Async Outbox Job Queue \& Worker Pool.
+  \item \textbf{Tightly Coupled \& Vendor Lock-in:} Code gắn chặt vào 1 sàn $\rightarrow$ Strategy Plugin Architecture \& AST Sandbox.
+\end{itemize}
+\end{block}
+\end{column}
+\end{columns}
+\end{frame}
+
+% Slide 3: Quality Attributes Taxonomy
+\begin{frame}{3. Bối Cảnh \& Hệ Thống Quality Attributes (ASRs Taxonomy)}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{lp{5.2cm}p{6.8cm}}
+\begin{tabular}{lp{6.5cm}p{7.5cm}}
 \toprule
-\textbf{Thuộc tính (QA)} & \textbf{Trọng tâm Thiết kế} & \textbf{Kỹ thuật / Tactic Kiến trúc áp dụng} \\
+\textbf{Thuộc tính (QA)} & \textbf{Trọng tâm Thiết kế} & \textbf{Tactic / Kỹ thuật Kiến trúc Áp dụng} \\
 \midrule
-\textbf{Modifiability} & Thêm Strategy, Search, Data Provider không sửa Core & Plugin Architecture, Open-Closed Principle, Dynamic Registry \\
-\textbf{Scalability} & Xử lý đồng thời $>100,000$ backtests \& stream nến realtime & Scale-out Python Worker pool, Job Queue, Redis Caching, Postgres B-Tree \\
-\textbf{Realtime / Perf} & Độ trễ cập nhật nến $<200$ms, Backtest throughput cao & Go Edge Gateway, WebSocket Streaming, Vectorized Engine \\
-\textbf{Reliability} & Lỗi crawl/search không làm sập API; reconnect sàn & Failure Isolation, Transactional Outbox, Lease Takeover, Idempotency \\
-\textbf{Observability} & Theo dõi Worker, tiến độ Search Loop \& nến realtime & Structured Logging, State Machine tracking, Loop Run Metrics \\
-\textbf{Reproducibility} & Kết quả Backtest \& Leaderboard bất biến & Immutable Market Dataset snapshots, SHA-256 Run Hash, Seed Lock \\
+\textbf{Modifiability} & Thêm mới Strategy, Search Algorithm, Market Provider không sửa Core & Strategy Plugin Architecture, Open-Closed Principle, Dynamic Registry \\
+\textbf{Scalability} & Xử lý workload $>100,000$ backtests \& stream candle realtime & Scale-out Python Worker pool, Postgres Leased Job Queue, In-memory Broadcaster \\
+\textbf{Realtime / Perf} & Latency cập nhật candle $<200$ms, high throughput Backtest & Go Edge Gateway, WebSocket Streaming, Deterministic Replay Engine \\
+\textbf{Reliability} & Fault isolation (lỗi crawl/search không crash API); auto-reconnect sàn & Failure Isolation, Transactional Outbox, Lease Takeover \\
+\textbf{Observability} & Monitor Worker health, tiến độ Search Loop \& telemetry metrics & Structured Logging, State Machine tracking, Run Metrics \\
+\textbf{Reproducibility} & Kết quả Backtest \& Leaderboard đảm bảo tính Deterministic \& Immutable & Immutable Dataset snapshots, Run Config Hash, Seed Lock \\
 \bottomrule
 \end{tabular}}
 \end{frame}
 
 % Slide 4: ASR 1 & 2
-\begin{frame}{3. Kịch Bản ASR Chi Tiết (Modifiability \& Scalability)}
+\begin{frame}{4. Kịch Bản ASR Chi Tiết (Modifiability \& Scalability)}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[ASR-1: Modifiability (Thêm Strategy)]}}
+\begin{block}{\textbf{[ASR-1: Modifiability (Thêm Strategy mới)]}}
 \begin{itemize}
   \item \textbf{Source:} Quant Researcher / AI Agent.
-  \item \textbf{Stimulus:} Thêm class chiến lược mới (\texttt{MACDStrategy}).
+  \item \textbf{Stimulus:} Thêm strategy class mới (\texttt{MACDStrategy}).
   \item \textbf{Artifact:} Strategy Subsystem \& UI Registry.
-  \item \textbf{Response:} Tự động nạp metadata lên UI, không cần compile lại Go Gateway.
-  \item \textbf{Measure:} 1 file Python độc lập, 0 downtime.
+  \item \textbf{Response:} Auto-discovery, load metadata lên UI không cần compile lại Go Gateway hay sửa Core.
+  \item \textbf{Measure:} Thao tác trên 1 file Python độc lập, 0 downtime.
 \end{itemize}
 \end{block}
 \end{column}
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[ASR-2: Scalability (Tải Backtest lớn)]}}
+\begin{block}{\textbf{[ASR-2: Scalability (High Backtest Workload)]}}
 \begin{itemize}
-  \item \textbf{Source:} Người dùng kích hoạt Auto Search Loop.
-  \item \textbf{Stimulus:} 10,000 công việc backtest vào hàng đợi.
+  \item \textbf{Source:} User trigger Auto Search Loop.
+  \item \textbf{Stimulus:} 10,000 backtest jobs vào Job Queue đồng thời.
   \item \textbf{Artifact:} Job Queue \& Python Worker Pool.
-  \item \textbf{Response:} Phân phối qua Lease Heartbeat, worker tự scale-out.
-  \item \textbf{Measure:} Tỷ lệ hoàn thành 100\%, CPU/RAM ổn định.
+  \item \textbf{Response:} Phân phối jobs qua Lease Heartbeat, worker scale-out, zero OOM / memory leak.
+  \item \textbf{Measure:} Completion rate 100\%, 0 dropped job, stable CPU.
 \end{itemize}
 \end{block}
 \end{column}
@@ -127,27 +145,27 @@
 \end{frame}
 
 % Slide 5: ASR 3 & 4
-\begin{frame}{4. Kịch Bản ASR Chi Tiết (Realtime \& Reliability)}
+\begin{frame}{5. Kịch Bản ASR Chi Tiết (Realtime \& Reliability)}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
 \begin{block}{\textbf{[ASR-3: Realtime \& Data Parity]}}
 \begin{itemize}
-  \item \textbf{Source:} Sàn Binance (WSS drop/reconnect).
+  \item \textbf{Source:} Binance Exchange (WSS drop / network jitter).
   \item \textbf{Stimulus:} Mất kết nối mạng trong 30 giây.
-  \item \textbf{Artifact:} Go Market Gateway \& Postgres Storage.
-  \item \textbf{Response:} Tự reconnect, REST Backfill bù nến thiếu, deduplicate bằng Open Time.
-  \item \textbf{Measure:} Biểu đồ liên tục, độ trễ bắt kịp $<2$s.
+  \item \textbf{Artifact:} Go Market Gateway \& Postgres Candle Storage.
+  \item \textbf{Response:} Auto-reconnect, trigger REST Backfill bù missing candles, deduplicate bằng Open Time.
+  \item \textbf{Measure:} Continuous candle stream, 0 duplicate, catch-up latency $<2$s.
 \end{itemize}
 \end{block}
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{block}{\textbf{[ASR-4: Fault Tolerance (Worker Crash)]}}
 \begin{itemize}
-  \item \textbf{Source:} Python Worker bị kill đột ngột (OOM).
+  \item \textbf{Source:} Python Worker process bị kill đột ngột (OOM).
   \item \textbf{Stimulus:} Job đang ở trạng thái RUNNING.
-  \item \textbf{Artifact:} Experiment Job Queue \& Outbox Manager.
-  \item \textbf{Response:} Quá hạn Lease Heartbeat (30s), Worker khác tự động Takeover.
-  \item \textbf{Measure:} Stuck job = 0, kết quả nhất quán.
+  \item \textbf{Artifact:} Job Queue \& Outbox Manager.
+  \item \textbf{Response:} Lease Heartbeat timeout (30s), Worker khác auto-takeover và retry job.
+  \item \textbf{Measure:} Job hoàn thành thành công, 0 stuck / orphaned job.
 \end{itemize}
 \end{block}
 \end{column}
@@ -155,13 +173,13 @@
 \end{frame}
 
 % Slide 6: Use Case Diagram
-\begin{frame}{5. Tổng Quan Use Case Hệ Thống}
+\begin{frame}{6. Tổng Quan Use Case Hệ Thống}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Quant Trader:} Xem biểu đồ nến realtime, khám phá chiến lược, chạy backtest, xem leaderboard.
-  \item \textbf{AI Agent:} Tự crawl tin tức, trích xuất dữ liệu, chạy Loop Discovery tìm chiến lược tối ưu.
-  \item \textbf{System Worker:} Nạp nến định kỳ, xử lý hàng đợi backtest bất đồng bộ.
+  \item \textbf{Quant Trader:} Xem realtime candlestick chart đa timeframe, authoring strategy, chạy backtest, xem leaderboard.
+  \item \textbf{AI Agent:} Crawl financial news, extract text, scoring sentiment, trigger Loop Discovery tìm strategy tối ưu.
+  \item \textbf{System Worker:} Ingest candle định kỳ, process async Backtest Job Queue.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -172,16 +190,16 @@
 \end{frame}
 
 % Slide 7: C4 L1
-\begin{frame}{6. C4 Model (Level 1) - System Context Diagram}
+\begin{frame}{7. C4 Model (Level 1) - System Context Diagram}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{CryptoBot Platform:} Hệ thống trung tâm phân tích thị trường, nghiên cứu chiến lược và chấm điểm.
+  \item \textbf{CryptoBot Core Platform:} Platform trung tâm cho market data ingestion, strategy research và portfolio ranking.
   \item \textbf{External Systems:}
   \begin{itemize}
-    \item \textbf{Binance Exchange:} REST \& WebSocket.
-    \item \textbf{News / RSS Feeds:} Cung cấp tin thị trường.
-    \item \textbf{LLM Providers (OpenAI/Groq):} Suy luận ngôn ngữ, sentiment \& self-repair code.
+    \item \textbf{Binance Exchange:} Historical REST \& WebSocket BBO price stream.
+    \item \textbf{News / RSS Feeds:} Multi-source crypto news feeds.
+    \item \textbf{LLM Providers (OpenAI/Groq):} LLM reasoning, sentiment analysis \& strategy self-repair.
   \end{itemize}
 \end{itemize}
 \end{column}
@@ -193,14 +211,16 @@
 \end{frame}
 
 % Slide 8: C4 L2
-\begin{frame}{7. C4 Model (Level 2) - Container Diagram}
+\begin{frame}{8. C4 Model (Level 2) - Container Diagram}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Next.js Web App:} SPA tương tác, realtime chart, cấu hình chiến lược \& leaderboard.
-  \item \textbf{Go Edge Gateway:} RBAC, CQRS routing, WebSocket streaming.
-  \item \textbf{Python Research Engine:} Backtest worker, Loop discovery, Metric evaluation.
-  \item \textbf{PostgreSQL \& Redis:} ACID Outbox, Candle store \& Pub/Sub caching.
+  \item \textbf{Next.js Dashboard:} Render-only UI cho chart, authoring, search, backtest, trade detail \& news.
+  \item \textbf{Go Edge \& Market Gateway:} Public REST/WSS, Auth/Quota, Candle/BBO normalization \& realtime fan-out.
+  \item \textbf{Python Research API:} Strategy/Agent runtime, experiment/search, news/sentiment orchestration \& queries.
+  \item \textbf{Python Research Worker $\times$ N:} Leased backtest/agent jobs; immutable Candle+BBO; execution; facts/outbox.
+  \item \textbf{PostgreSQL:} Source of truth: market, strategies, jobs/results, news/sentiment \& outbox.
+  \item \textbf{Object Storage / Broker (optional):} Raw HTML by hash; replaceable queue/stream adapter.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -211,15 +231,14 @@
 \end{frame}
 
 % Slide 9: C4 L3 Python
-\begin{frame}{8. C4 Model (Level 3) - Python Research Platform}
+\begin{frame}{9. C4 Model (Level 3) - Python Research Platform}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Strategy Registry:} Quản lý lifecycle \& metadata plugin chiến lược.
-  \item \textbf{Deterministic Backtest Engine:} Khớp lệnh chính xác (BBO, Slippage, Phí).
-  \item \textbf{Search \& Loop Manager:} Genetic, Bayesian, Random search.
-  \item \textbf{Worker Lease Manager:} Phân phối optimistic lock, tự phục hồi.
-  \item \textbf{AST Sandbox:} Kiểm tra an toàn mã AI sinh.
+  \item \textbf{Application services:} Research API, Experiment/Search/Ranking, News/Sentiment \& AgentOrchestrator.
+  \item \textbf{Domain runtime:} StrategyRegistry + StrategyRuntime; Backtest Engine + Execution Simulator; news rules; agent state/artifacts.
+  \item \textbf{Python-owned ports:} MarketDataPort, ModelGatewayPort, Artifact/Sandbox/Approval \& Repository/Job/Outbox ports.
+  \item \textbf{Infrastructure adapters:} Go Market adapter, internal AI/LLM adapter, Sandbox Runner, SafeFetcher/Readability \& PostgreSQL repositories.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -230,14 +249,15 @@
 \end{frame}
 
 % Slide 10: C4 L3 Go
-\begin{frame}{9. C4 Model (Level 3) - Go Edge \& Market Gateway}
+\begin{frame}{10. C4 Model (Level 3) - Go Edge \& Market Gateway}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Binance Adapter:} WSS stream, tự động reconnect \& REST Backfill bù nến.
-  \item \textbf{Candle Aggregator \& BBO Streamer:} Tổng hợp nến tạm \& đóng nến vào CSDL.
-  \item \textbf{CQRS Request Handler:} Phân tách Command (tạo thí nghiệm) và Query (đọc nến).
-  \item \textbf{Security \& Auth Middleware:} JWT token, RBAC \& Rate Limiting.
+  \item \textbf{REST API + Auth Guard:} Request validation/DTO mapping, JWT, RBAC \& quota.
+  \item \textbf{Public WebSocket Hub:} Subscription fan-out theo panel key.
+  \item \textbf{MarketProviderRegistry + BinanceAdapter:} Resolve provider, REST history \& WSS kline/BBO.
+  \item \textbf{MarketNormalizer + MarketService:} Validate symbol/timeframe/decimal/timestamp/sequence; checkpoint, de-dup, persistence, reconnect \& backfill.
+  \item \textbf{Python Research Client + Internal Event Ingress:} Signed commands, queries \& progress/result events.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -248,30 +268,31 @@
 \end{frame}
 
 % Slide 11: Boundaries
-\begin{frame}{10. Phân Định Ranh Giới 5 Module Cốt Lõi}
+\begin{frame}{11. Component Boundaries: 6 Module Cốt Lõi (Anti-God Service)}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[5 Miền Nghiệp Vụ Chuyên Biệt]}}
+\begin{block}{\textbf{[6 Bounded Contexts (High Cohesion)]}}
 \begin{enumerate}
-  \item \textbf{Market Realtime (Go):} Ingestion nến, WSS, Auto-backfill.
-  \item \textbf{Strategy Engine (Python):} Thực thi chiến lược, Registry.
-  \item \textbf{Backtest \& Discovery (Python):} Chạy kiểm thử đa phân vùng (Train/Val/Test).
-  \item \textbf{News Crawler (Python):} Thu thập RSS/HTML, SSRF guard.
-  \item \textbf{News Intelligence (AI):} Phân tích sentiment độc lập.
+  \item \textbf{Market Realtime (Go Edge):} WSS candles/BBO, normalization, gap backfill.
+  \item \textbf{Strategy Engine (Python):} Single/composite runtime qua Registry.
+  \item \textbf{Backtest (Python Worker):} Candle+BBO replay, LONG/SHORT execution, trade facts.
+  \item \textbf{Discovery / Search Loop (Python):} Candidates, jobs, validation, lineage, stop conditions.
+  \item \textbf{News Crawler (Python):} RSS/HTML, SSRF guard, quality gate.
+  \item \textbf{News Intelligence (Python + AI adapter):} Extraction, tagging, sentiment; AI chỉ inference.
 \end{enumerate}
 \end{block}
 \end{column}
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[Language Boundary]}}
+\begin{block}{\textbf{[Trách Nhiệm Công Nghệ (Go vs Python)]}}
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{lp{2.4cm}p{2.6cm}}
 \toprule
-\textbf{Tiêu chí} & \textbf{Go Edge} & \textbf{Python Engine} \\
+\textbf{Tiêu chí} & \textbf{Go Edge \& Market} & \textbf{Python Platform} \\
 \midrule
-\textbf{Sở hữu} & Market Ingestion, API & Backtest, Strategy, AI \\
-\textbf{Thế mạnh} & Goroutines, Low RAM & Vectorization, AST, ML \\
-\textbf{Giao thức} & REST CQRS, WSS & Worker Queue Leases \\
-\textbf{Cô lập lỗi} & Sàn lỗi không chết Worker & Crash thuật toán không nghẽn API \\
+\textbf{Ownership} & Market Ingestion, Edge API, fan-out & Strategy, Backtest, Discovery, News/Agents/Ranking \\
+\textbf{Strengths} & Goroutines non-blocking, Low RAM & Quantitative math, AST, ML \\
+\textbf{Protocols} & Public REST/WSS, signed events & Internal HTTP, DTOs, Job/Outbox Ports \\
+\textbf{Isolation} & Lỗi network không crash Worker & Crash strategy không làm sập API Gateway \\
 \bottomrule
 \end{tabular}}
 \end{block}
@@ -280,21 +301,28 @@
 \end{frame}
 
 % Slide 12: Module Specs
-\begin{frame}{11. Đặc Tả Ranh Giới \& Phạm Vi Từng Module}
+\begin{frame}{12. Đặc Tả Ranh Giới \& Phạm Vi 6 Module (Component Specs)}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
 \begin{block}{\textbf{[1. Market Realtime \& 2. Strategy Engine]}}
 \begin{itemize}
-  \item \textbf{Market Realtime:} Input là raw WSS stream; Output là normalized \texttt{Candle} \& \texttt{BBO}; Invariant: không duplicate nến.
-  \item \textbf{Strategy Engine:} Input là \texttt{StrategyContext}; Output là \texttt{Signal} (\texttt{BUY/SELL/HOLD}); Độc lập hoàn toàn với nguồn dữ liệu.
+  \item \textbf{Market Realtime:} Raw Binance WSS $\rightarrow$ Normalized \texttt{Candle} \& \texttt{BBO}; persist vào Postgres, broadcast \texttt{CandleClosed} qua SSE/WS; Invariant: continuous time-series, zero-duplicate.
+  \item \textbf{Strategy Engine:} Pluggable qua \texttt{IStrategy}; Output là \texttt{Signal} (\texttt{BUY/SELL/HOLD}); 100\% execution parity Live/Backtest.
 \end{itemize}
 \end{block}
 \end{column}
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[3. Backtest, 4. Crawler \& 5. Intelligence]}}
+\begin{block}{\textbf{[3. Backtest \& 4. Discovery]}}
 \begin{itemize}
-  \item \textbf{Backtest \& Discovery:} Input là \texttt{ExperimentConfig}; Output là \texttt{BacktestResult} kèm Provenance Hash.
-  \item \textbf{News Crawler \& Intelligence:} Thu thập tin an toàn SSRF; Chấm điểm \texttt{SentimentResult} [-1.0, 1.0] bất đồng bộ.
+  \item \textbf{Backtest Subsystem:} Replay immutable \texttt{Candle+BBO} với cùng runtime; simulate execution \& emit trade facts qua Worker/Outbox.
+  \item \textbf{Discovery Subsystem:} Generate candidates, orchestrate Search Loop qua Train/Validation/Sealed Test; enforce lineage \& stop conditions.
+\end{itemize}
+\end{block}
+\vspace{0.3em}
+\begin{block}{\textbf{[5. News Crawler \& 6. News Intelligence]}}
+\begin{itemize}
+  \item \textbf{News Crawler:} Fetch news từ \texttt{ApprovedSource} (RSS/HTML), SSRF protection, Quality Gate validation.
+  \item \textbf{News Intelligence:} Orchestrate LLM/Agent extraction khi DOM thay đổi \& scoring sentiment [-1.0, 1.0] async (non-blocking crawl).
 \end{itemize}
 \end{block}
 \end{column}
@@ -302,14 +330,14 @@
 \end{frame}
 
 % Slide 13: UML Strategy
-\begin{frame}{12. UML Class Diagram: Strategy Plugin Model}
+\begin{frame}{13. UML Class Diagram: Strategy Plugin Model}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Contract \texttt{IStrategy}:} \texttt{evaluate(context) -> Signal}.
-  \item \textbf{5 Core Strategies:} \texttt{ma\_crossover}, \texttt{bollinger\_bands}, \texttt{rsi\_threshold}, \texttt{smc\_structure}, \texttt{news\_sentiment}.
-  \item \textbf{Composite Strategy:} Tổ hợp 2-5 chiến lược con với \texttt{CombinationPolicy} (majority/weighted).
-  \item \textbf{Strategy Registry:} Dynamic load plugin không cần compile lại.
+  \item \textbf{Contract \texttt{IStrategy}:} Method \texttt{evaluate(context) -> Signal} (\texttt{BUY}, \texttt{SELL}, \texttt{HOLD}).
+  \item \textbf{5 Single Strategies:} \texttt{ma\_crossover}, \texttt{bollinger\_bands}, \texttt{rsi\_threshold}, \texttt{smc\_structure}, \texttt{news\_sentiment}.
+  \item \textbf{Composite Strategy:} Combine 2-5 child strategies theo \texttt{CombinationPolicy} (majority/weighted).
+  \item \textbf{Strategy Registry:} Dynamic loading file Python mới; loại bỏ God Service, loose coupling.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -320,18 +348,18 @@
 \end{frame}
 
 % Slide 14: UML Search
-\begin{frame}{13. UML Class Diagram: Search Algorithm \& Discovery}
+\begin{frame}{14. UML Class Diagram: Search Algorithm \& Discovery Loop}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Contract \texttt{ISearchAlgorithm}:} RandomSearch, GeneticAlgorithm, BayesianOptimization.
-  \item \textbf{3-Stage Discovery (Chống Overfitting):}
+  \item \textbf{Contract \texttt{ISearchAlgorithm}:} Method \texttt{sample(space, rng)} implement qua RandomSearch, GeneticAlgorithm, BayesianOptimization.
+  \item \textbf{3-Split Dataset Partitioning (Chống Overfitting):}
   \begin{itemize}
-    \item \textbf{Train (30d):} Tìm kiếm biến thể.
-    \item \textbf{Validation (15d):} Kiểm tra tổng quát.
-    \item \textbf{Sealed Test (15d):} Đánh giá độc lập trước Leaderboard.
+    \item \textbf{Train (30d):} Search \& optimize strategy variants.
+    \item \textbf{Validation (15d):} Generalization evaluation (Gate check).
+    \item \textbf{Sealed Test (15d):} Out-of-sample benchmark cho Leaderboard.
   \end{itemize}
-  \item \textbf{Idempotency:} Trial Reservation chống tạo job tràn lan.
+  \item \textbf{Job Throttling:} \texttt{DiscoveryTrialReservation} (reserved\_jobs=4).
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -342,14 +370,14 @@
 \end{frame}
 
 % Slide 15: UML News
-\begin{frame}{14. UML Class Diagram: Resilient News Crawler}
+\begin{frame}{15. UML Class Diagram: Resilient News Crawler Model}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Contract \texttt{NewsProvider}:} \texttt{RssNewsProvider} \& \texttt{HtmlNewsProvider}.
-  \item \textbf{Chốt chặn an toàn SSRF:} Resolver \& Fetcher kiểm tra DNS, private IP, redirect limit.
-  \item \textbf{Quality Gate \& LLM Fallback:} Kích hoạt \texttt{NewsExtractionHTTPAdapter} khi HTML đổi cấu trúc.
-  \item \textbf{Tách biệt Crawler \& Sentiment:} AI lỗi không làm gián đoạn thu thập tin.
+  \item \textbf{Contract \texttt{NewsProvider}:} Implemented by \texttt{RssNewsProvider} \& \texttt{HtmlNewsProvider} (\texttt{ApprovedSource}).
+  \item \textbf{SSRF Guard \& Quality Gate Pipeline:} Resolver \& Fetcher validate DNS, private IP blocking, safe redirect.
+  \item \textbf{LLM Fallback Extraction:} Trigger \texttt{NewsExtractionHTTPAdapter} khi DOM thay đổi.
+  \item \textbf{Decoupled Sentiment Scoring:} Async batch scoring, AI errors không block crawl pipeline.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -360,14 +388,14 @@
 \end{frame}
 
 % Slide 16: High-Level Architecture
-\begin{frame}{15. High-Level Architecture: Modular Monolith + Async Workers}
+\begin{frame}{16. High-Level Architecture: Modular Monolith}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Frontend Layer:} Next.js SPA qua REST CQRS \& SSE/WebSocket.
-  \item \textbf{API \& Edge (Go):} Tiếp nhận request, RBAC, WSS Binance, Redis publisher.
-  \item \textbf{Research Core (Python):} Worker Pool xử lý Backtest, Discovery Loop, Genetic Search.
-  \item \textbf{Storage \& Bus:} PostgreSQL ACID Outbox \& Redis Pub/Sub caching.
+  \item \textbf{Frontend (Next.js):} React SPA, Event Streaming (SSE/WS) cho realtime chart \& telemetry.
+  \item \textbf{API Gateway (Go Edge):} CQRS, RBAC, Rate Limiting, Binance WSS Ingestion \& Broadcaster.
+  \item \textbf{Backend Research (Python):} Strategy Plugin Architecture, Event-Driven Job Queue, Backtest Worker Pool.
+  \item \textbf{Database:} PostgreSQL (ACID Outbox, Candles, Experiments, News) \& In-memory Ring Buffers.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -378,14 +406,14 @@
 \end{frame}
 
 % Slide 17: Design Patterns
-\begin{frame}{16. Các Design \& Architectural Patterns Trọng Yếu}
+\begin{frame}{17. Các Design \& Architectural Patterns Trọng Yếu}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{CQRS:} Phân tách luồng Command (ghi thí nghiệm) và Query (đọc nến, leaderboard).
-  \item \textbf{Transactional Outbox:} Atomic transaction đảm bảo không mất mát job thực thi.
-  \item \textbf{Event Streaming \& Kappa:} Đồng nhất schema cho Realtime WSS và Historical Dataset.
-  \item \textbf{Plugin Architecture:} Độc lập hóa thuật toán giao dịch khỏi execution core.
+  \item \textbf{CQRS (Go API):} Tách biệt Command (tạo experiment) và Query (đọc candles, leaderboard), optimize latency.
+  \item \textbf{Transactional Outbox:} Atomic consistency khi tạo Experiment và dispatch Job, eliminate dual-write risk.
+  \item \textbf{Dual-Channel Market Engine with Parity:} Schema \& execution parity cho Realtime WSS và Historical Backfill.
+  \item \textbf{Plugin Architecture:} Decouple hoàn toàn Core Engine khỏi strategy logic và search algorithms (Open-Closed Principle).
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -396,14 +424,14 @@
 \end{frame}
 
 % Slide 18: Multi-Agent
-\begin{frame}{17. Nền Tảng Multi-Agent \& Vòng Lặp AI Tự Chủ}
+\begin{frame}{18. Nền Tảng Multi-Agent \& Vòng Lặp AI Tự Chủ}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Strategy Designer Agent:} Nhận prompt tự nhiên $\rightarrow$ sinh JSON Draft.
-  \item \textbf{Implementation Agent:} Sinh Python code tuân thủ \texttt{IStrategy}.
-  \item \textbf{Self-Repair Loop (AST + Sandbox):} Chạy thử trong sandbox, tự sửa code khi lỗi (tối đa 3 lần).
-  \item \textbf{Candidate Discovery Agent:} Tự động biến đổi tham số và xếp hạng Leaderboard.
+  \item \textbf{Strategy Designer Agent:} Nhận natural language prompt / URL $\rightarrow$ generate Draft spec (JSON).
+  \item \textbf{Implementation Agent:} Transform JSON Draft thành Python code tuân thủ \texttt{IStrategy} protocol.
+  \item \textbf{Self-Repair Loop (AST + Sandbox):} Static AST syntax validation \& isolated dry-run, feed traceback về LLM auto self-repair (tối đa 3 retry cycles).
+  \item \textbf{Candidate Discovery \& Crawling Agent:} Automated hyperparameter sampling \& multi-source news crawling.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -414,14 +442,14 @@
 \end{frame}
 
 % Slide 19: Realtime Reconnect Flow
-\begin{frame}{18. Runtime Flow: Luồng Nạp Nến Realtime \& Tự Phục Hồi}
+\begin{frame}{19. Runtime Flow: Realtime Ingestion \& Gap Backfill}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{enumerate}
-  \item \textbf{Bootstrap:} Tải 1,000 nến lịch sử cho các khung 1m, 5m, 1h, 1d.
-  \item \textbf{WSS Stream:} Tiếp nhận ticker \& cập nhật nến tạm thời.
-  \item \textbf{Candle Close:} Ghi nến vào Postgres, bắn sự kiện \texttt{CandleClosed}.
-  \item \textbf{Reconnect \& Backfill:} Khi rớt mạng WSS, tự động kéo bù nến qua REST API.
+  \item \textbf{Chart Initialization:} Fetch 1,000 historical candles từ Postgres/Binance REST đa timeframe (1m, 5m, 1h, 1d).
+  \item \textbf{WSS Stream Ingestion:} Ingest ticker \& update provisional candle theo realtime ticks.
+  \item \textbf{Candle Close Event:} Persist candle vào Postgres và broadcast event \texttt{CandleClosed} qua SSE/WS.
+  \item \textbf{Gap Backfill:} Khi WSS drop, auto-reconnect và trigger REST API backfill bù missing candles.
 \end{enumerate}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -432,17 +460,18 @@
 \end{frame}
 
 % Slide 20: Strategy Flow
-\begin{frame}{19. Runtime Flow: Thực Thi Chiến Lược \& Parity}
+\begin{frame}{20. Runtime Flow: Strategy Execution \& Dynamic Registration}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Thực thi Chiến lược (\texttt{10-strategy-flow}):}
+  \item \textbf{Run Strategy Flow:}
   \begin{itemize}
-    \item Nạp \texttt{Datafeed} \& \texttt{Sentiment} vào \texttt{StrategyContext}.
-    \item \texttt{IStrategy.evaluate()} sinh tín hiệu BUY/SELL/HOLD.
-    \item \texttt{CompositeStrategy} tổng hợp tín hiệu trọng số.
+    \item Load \texttt{Datafeed} \& \texttt{Sentiment Window} vào \texttt{StrategyContext}.
+    \item \texttt{IStrategy.evaluate()} emit trading signal \texttt{BUY} / \texttt{SELL} / \texttt{HOLD}.
+    \item \texttt{CompositeStrategy} aggregate signals theo majority/weighted policy.
   \end{itemize}
-  \item \textbf{Runtime Parity:} Cùng 1 interface và schema dữ liệu trên cả Live data và Historical Backtest.
+  \item \textbf{Add Strategy Flow:} Handcrafted (drop Python file $\rightarrow$ auto-load) \& AI-Generated (LLM $\rightarrow$ AST Sandbox).
+  \item \textbf{Runtime Parity:} 100\% deterministic parity giữa Live Trading và Backtest execution.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -453,14 +482,14 @@
 \end{frame}
 
 % Slide 21: Search Pipeline Flow
-\begin{frame}{20. Runtime Flow: Pipeline Tìm Kiếm \& Chạy Backtest}
+\begin{frame}{21. Runtime Flow: Async Backtest Pipeline}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{enumerate}
-  \item \textbf{Atomic Transaction:} Ghi thí nghiệm và sự kiện Outbox cùng lúc.
-  \item \textbf{Worker Lease Acquire:} Worker nhận việc qua Optimistic Lock \& gửi heartbeat.
-  \item \textbf{Đa Phân Vùng:} Chạy tuần tự qua Train $\rightarrow$ Validation $\rightarrow$ Sealed Test.
-  \item \textbf{Provenance:} Lưu Trade List, Sharpe, Drawdown \& cập nhật Leaderboard.
+  \item \textbf{Create Experiment:} Persist metadata và job event vào Outbox trong cùng một ACID transaction.
+  \item \textbf{Worker Lease Acquire:} Worker claim job qua Optimistic Lock (FOR UPDATE SKIP LOCKED) \& gửi heartbeat.
+  \item \textbf{Multi-Split Execution:} Run backtest trên Train $\rightarrow$ Validation $\rightarrow$ Sealed Test.
+  \item \textbf{Compute Metrics \& Leaderboard:} Calculate Sharpe Ratio, Max Drawdown, Profit Factor; persist Trade logs \& update Leaderboard.
 \end{enumerate}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -471,15 +500,15 @@
 \end{frame}
 
 % Slide 22: News Pipeline Flow
-\begin{frame}{21. Runtime Flow: Pipeline Crawl Tin Tức \& LLM Healing}
+\begin{frame}{22. Runtime Flow: Resilient News Crawl \& LLM Fallback Pipeline}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{enumerate}
-  \item \textbf{SSRF Check:} Duyệt nguồn từ \texttt{ApprovedSource}, thẩm tra DNS/IP.
-  \item \textbf{Parser Extraction:} Trích xuất qua RSS/HTML parser chuẩn.
-  \item \textbf{Quality Gate:} Bật \texttt{HtmlQualityGateFailed} nếu DOM thay đổi.
-  \item \textbf{LLM Fallback:} Dùng LLM nhận diện nội dung chính xác.
-  \item \textbf{Sentiment Score:} Chấm điểm [-1.0, 1.0] bất đồng bộ.
+  \item \textbf{SSRF Validation:} Whitelist check qua \texttt{ApprovedSource}, resolve DNS \& block internal/private IPs.
+  \item \textbf{Standard Ingestion:} Fetch \& extract article content qua RSS/HTML Parser (Readability).
+  \item \textbf{Quality Gate Check:} Trigger fallback nếu DOM thay đổi hoặc extraction rỗng.
+  \item \textbf{LLM Fallback Extraction:} Dispatch raw HTML sang LLM Agent để parse structured content.
+  \item \textbf{Async Sentiment Scoring:} Background worker scoring sentiment [-1.0, 1.0] và persist vào PostgreSQL.
 \end{enumerate}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -490,14 +519,14 @@
 \end{frame}
 
 % Slide 23: Defense in Depth
-\begin{frame}{22. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng}
+\begin{frame}{23. Security Architecture: Defense-in-Depth}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Authentication \& RBAC:} Xác thực JWT, cô lập dữ liệu người dùng.
-  \item \textbf{Crawler SSRF Prevention:} Chặn private IP (127.0.0.1, 10.0.0.0/8, cloud metadata), chỉ duyệt HTTPS domain hợp lệ.
-  \item \textbf{AST Sandbox:} Chặn lệnh nguy hiểm (\texttt{os.system}, \texttt{eval}, \texttt{subprocess}, socket) trong code AI.
-  \item \textbf{Tool Boundary:} Giới hạn quyền gọi công cụ với DTO chặt chẽ.
+  \item \textbf{Authentication \& RBAC:} JWT authentication, role-based access control, tenant/user experiment isolation.
+  \item \textbf{Crawler SSRF Prevention:} Block private IP ranges (127.0.0.1, 10.0.0.0/8, cloud metadata), domain whitelisting qua \texttt{ApprovedSource}.
+  \item \textbf{AST Sandbox \& Safe Execution:} AST static analysis trên AI-generated code; ban dangerous builtins/modules (\texttt{eval}, \texttt{subprocess}, \texttt{socket}, \texttt{os.system}).
+  \item \textbf{Tool Invocation Boundary:} Schema-validated DTOs, strict input boundaries cho AI Agents.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -508,20 +537,20 @@
 \end{frame}
 
 % Slide 24: Scalability
-\begin{frame}{23. Khả Năng Mở Rộng (Scalability) \& Benchmark}
+\begin{frame}{24. Scalability Architecture \& Benchmark}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Stateless Scale-Out:}
+  \item \textbf{Stateless Horizontal Scale-Out:}
   \begin{itemize}
-    \item Nhân bản Python Worker pool theo tải CPU.
-    \item Hàng đợi Postgres Outbox có chỉ mục B-Tree \& phân đoạn.
+    \item Spin up N Python Worker instances độc lập dựa trên CPU load / queue backlog.
+    \item Distribute jobs qua PostgreSQL B-Tree indexed Leased Job Queue.
   \end{itemize}
-  \item \textbf{Kịch bản Benchmark:}
+  \item \textbf{Load Testing \& Benchmarking (k6 / Locust):}
   \begin{itemize}
-    \item Tốc độ xử lý $> 1,500$ backtests/phút trên 4 workers.
-    \item Độ trễ API nến \& leaderboard $\le 120$ms ($p95$).
-    \item Sẵn sàng chịu tải $100,000$ backtests.
+    \item Simulate 10,000 concurrent users dispatch Backtest jobs \& query candle data.
+    \item Queue throughput đạt $> 1,500$ backtests/phút trên 4 workers.
+    \item Candle \& Leaderboard API latency duy trì $\le 120$ms ($p95$).
   \end{itemize}
 \end{itemize}
 \end{column}
@@ -533,13 +562,14 @@
 \end{frame}
 
 % Slide 25: Fault Tolerance
-\begin{frame}{24. Xử Lý Sự Cố \& Khôi Phục Tự Động}
+\begin{frame}{25. Fault Tolerance \& Self-Healing Architecture}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Worker Lease Takeover:} Heartbeat 10s. Nếu worker crash, sau 30s hết hạn lease worker khác sẽ tiếp quản job.
-  \item \textbf{Tính Idempotent:} Dùng \texttt{idempotency\_key} và unique constraint trên CSDL, không bao giờ chạy trùng kết quả.
-  \item \textbf{Cô lập lỗi tuyệt đối:} 1 chiến lược lỗi chỉ fail job đó, không sập worker hay gateway.
+  \item \textbf{Worker Lease Takeover \& Heartbeat:} Heartbeat 10s/lần. Nếu worker crash, lease timeout sau 30s, worker khác auto-takeover job.
+  \item \textbf{Idempotency \& Retry:} Unique \texttt{idempotency\_key} constraint, eliminate duplicate execution risk.
+  \item \textbf{Failure Isolation \& Reconnect:} Plugin failure isolation (lỗi 1 strategy không crash Worker); WSS auto-reconnect \& backfill.
+  \item \textbf{Chaos Engineering Simulation:} Kill worker process / inject network drops để verify self-healing behavior.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -550,13 +580,14 @@
 \end{frame}
 
 % Slide 26: Deployment Topology
-\begin{frame}{25. Triển Khai Thực Tế \& MLOps}
+\begin{frame}{26. Deployment Topology \& MLOps Infrastructure}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Docker Compose Topology:} Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.
-  \item \textbf{Healthchecks:} Endpoint \texttt{/healthz} \& \texttt{/readyz} tự động restart container khi deadlock.
-  \item \textbf{MLOps Configuration:} System prompt và LLM API keys đặt trong \texttt{.env}, không hardcode.
+  \item \textbf{Full-Stack Containerization:} Isolated container services: Next.js Web Dashboard, Go Edge Gateway, Python Research API, Python Research Worker $\times$ N, Internal AI Inference Adapter, PostgreSQL.
+  \item \textbf{Health Checks \& Liveness Probes:} \texttt{/healthz} và \texttt{/readyz} endpoints cho container auto-restart \& traffic routing.
+  \item \textbf{MLOps \& Configuration:} Versioned system prompts và LLM API keys tách biệt qua environment variables (\texttt{.env}).
+  \item \textbf{Kubernetes-Ready Architecture:} Hỗ trợ Deployment Replicas, Rolling Updates, HPA khi scale production.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -567,29 +598,29 @@
 \end{frame}
 
 % Slide 27: Tradeoffs Matrix
-\begin{frame}{26. Ma Trận Đánh Giá Đánh Đổi Kiến Trúc}
+\begin{frame}{27. Architectural Tradeoffs Matrix}
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{lp{3.2cm}p{3cm}p{6cm}}
 \toprule
-\textbf{Lựa Chọn} & \textbf{Phương Án Chọn} & \textbf{Phương Án Khác} & \textbf{Lý Do \& Đánh Đổi (Rationale)} \\
+\textbf{Lựa Chọn Thiết Kế} & \textbf{Phương Án Được Chọn} & \textbf{Phương Án Thay Thế} & \textbf{Lý Do \& Đánh Đổi Kiến Trúc (Rationale)} \\
 \midrule
-\textbf{Tổng thể} & \textbf{Modular Monolith} & Microservices & Giảm độ phức tạp vận hành mạng, ranh giới rõ qua contracts. \\
-\textbf{Lưu trữ} & \textbf{Postgres + B-Tree} & ClickHouse / InfluxDB & Giữ ACID cho Outbox \& Thí nghiệm; B-Tree đủ tải hàng triệu nến. \\
-\textbf{Hàng đợi} & \textbf{Outbox + Redis} & Kafka / RabbitMQ & Loại bỏ Dual-write, đảm bảo nguyên tử, nhẹ nhàng trong Docker. \\
-\textbf{Mã AI sinh} & \textbf{AST + Sandbox} & Docker-in-Docker & Khởi tạo tức thì ($<10$ms), kiểm soát an toàn không tốn container. \\
-\textbf{Sentiment} & \textbf{Hybrid Rule+LLM} & Pure Realtime LLM & Tiết kiệm token API, tránh nghẽn luồng crawl tin. \\
+\textbf{System Architecture} & \textbf{Modular Monolith} & Microservices & Giảm overhead vận hành mạng/distributed latency; enforce module boundaries qua contracts. \\
+\textbf{Candle \& Job Storage} & \textbf{PostgreSQL + B-Tree} & ClickHouse / InfluxDB & Giữ tính ACID cho Experiments \& Outbox; B-Tree indexing đủ đáp ứng hàng triệu candles. \\
+\textbf{Job Queue \& Event Ingress} & \textbf{PostgreSQL Outbox \& Leases} & Kafka / RabbitMQ / Redis & Loại bỏ dual-write, ACID transactional guarantees, zero additional infrastructure dependencies. \\
+\textbf{AI Code Execution} & \textbf{AST Analyzer + Sandbox} & Docker-in-Docker & Low latency initialization ($<10$ms), static syntax safety check, minimal container resource overhead. \\
+\textbf{Sentiment Analysis Pipeline} & \textbf{Hybrid: Rule + LLM Batch} & Pure LLM Realtime & Optimize token cost \& API rate limits; non-blocking crawl pipeline, deep LLM scoring theo batch. \\
 \bottomrule
 \end{tabular}}
 \end{frame}
 
 % Slide 28: Replaceability
-\begin{frame}{27. Khả Năng Thay Thế \& Mở Rộng Tương Lai}
+\begin{frame}{28. Replaceability \& Extensibility Architecture}
 \begin{columns}[c]
 \begin{column}{0.45\textwidth}
 \begin{itemize}
-  \item \textbf{Thay thế Market Provider:} \texttt{MarketProviderAdapter} cho phép đổi sang OKX, Bybit, Coinbase mà không sửa Frontend hay Engine.
-  \item \textbf{Mở rộng Search Algorithm:} Tích hợp Reinforcement Learning (PPO) qua \texttt{ISearchAlgorithm}.
-  \item \textbf{Mở rộng News Sources:} Bổ sung CryptoPanic, CoinDesk API qua cấu hình nguồn.
+  \item \textbf{Pluggable Market Data Providers:} \texttt{MarketProviderAdapter} interface cho phép switch từ Binance sang OKX, Bybit, Coinbase mà \textbf{không thay đổi} Core Frontend hay Strategy Engine.
+  \item \textbf{Extensible Search Algorithms:} Sẵn sàng plug-in Reinforcement Learning (PPO) hoặc Custom Optimizers qua interface \texttt{ISearchAlgorithm}.
+  \item \textbf{Extensible News Ingestion:} Dễ dàng add new sources (CryptoPanic, CoinDesk API) qua config \texttt{ApprovedSource}.
 \end{itemize}
 \end{column}
 \begin{column}{0.53\textwidth}
@@ -600,35 +631,35 @@
 \end{frame}
 
 % Slide 29: Summary & QA
-\begin{frame}{28. Tổng Kết Đồ Án \& Giá Trị Kiến Trúc}
+\begin{frame}{29. Architectural Summary \& Project Conclusion}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[Thành Quả Đạt Được]}}
+\begin{block}{\textbf{[Architectural Highlights \& Key Takeaways]}}
 \begin{itemize}
-  \item $\checkmark$ \textbf{Chuỗi Quyết Định Rõ Ràng:} Bám sát ASRs \& Quality Attributes.
-  \item $\checkmark$ \textbf{Chống God Service:} 5 subsystem rành mạch.
-  \item $\checkmark$ \textbf{Multi-Agent \& Self-Repair:} Tự sửa code \& chống Overfitting.
-  \item $\checkmark$ \textbf{Chịu Tải \& Phục Hồi:} Hàng đợi phân tán \& Lease Takeover.
+  \item $\checkmark$ \textbf{ASR-Driven Architecture:} Bám sát 4 Architectural Drivers \& Quality Attributes taxonomy.
+  \item $\checkmark$ \textbf{Clean Boundaries \& Anti-God Service:} Phân rã 6 bounded contexts, zero tight-coupling.
+  \item $\checkmark$ \textbf{Multi-Agent \& Automation:} Self-repair loop (AST + Sandbox) \& anti-overfitting data partitioning (Train/Val/Test).
+  \item $\checkmark$ \textbf{High Scalability \& Self-Healing:} Scale-out 100,000 backtests, Lease Takeover \& Idempotent execution.
 \end{itemize}
 \end{block}
 \vspace{0.5em}
 \centering
-\textbf{[PHẦN HỎI - ĐÁP (Q \& A)]} \\
+\textbf{[Q \& A]} \\
 \textit{Cảm ơn Thầy và các bạn đã lắng nghe!}
 \end{column}
 \begin{column}{0.48\textwidth}
-\begin{block}{\textbf{[Minh Chứng Đầy Đủ]}}
+\begin{block}{\textbf{[Architecture Artifacts \& Verification]}}
 \begin{itemize}
-  \item \textbf{39 Sơ Đồ Blueprint \& Specs:} C4 (L1-L3), UML Class, State Machine, Topology.
-  \item \textbf{5 Màn Hình Sẵn Sàng:}
+  \item \textbf{39 Blueprint Diagrams \& Specs:} C4 Model (L1-L3), UML Class, State Machines, Sequence Flows, Deployment Topology.
+  \item \textbf{5 Interactive Working Dashboards:}
   \begin{enumerate}
     \item Realtime Market Chart \& Indicators
-    \item Strategy Authoring \& Registry
+    \item Strategy Authoring \& Plugin Registry
     \item Async Backtest \& Trade Visualization
-    \item Search Loop \& Leaderboard
-    \item News Crawler \& Sentiment
+    \item Search Loop \& Top-K Leaderboard
+    \item News Crawler \& Sentiment Intelligence
   \end{enumerate}
-  \item \textbf{Test Tự Động \& Benchmark Đầy Đủ.}
+  \item \textbf{Automated Test Scenarios \& Benchmark Suite.}
 \end{itemize}
 \end{block}
 \end{column}

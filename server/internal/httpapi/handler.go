@@ -681,6 +681,14 @@ func (h *Handler) strategyDraftByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		principal, ok := h.requireAuth(w, r)
+		if !ok {
+			return
+		}
+		h.callResearch(w, r, http.MethodGet, "/api/v1/experiments", nil, &principal)
+		return
+	}
 	if !allowMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -737,10 +745,25 @@ func (h *Handler) experiments(w http.ResponseWriter, r *http.Request) {
 		if req.IdempotencyKey != "" && r.Header.Get("Idempotency-Key") == "" {
 			r.Header.Set("Idempotency-Key", req.IdempotencyKey)
 		}
-		candidate := map[string]any{
-			"strategy_id": req.StrategyID,
-			"version":     req.StrategyVersion,
-			"parameters":  map[string]any{},
+		candidate := req.CandidateDefinition
+		if candidate == nil {
+			candidate = map[string]any{}
+		}
+		if len(candidate) == 0 {
+			candidate = map[string]any{
+				"strategy_id": req.StrategyID,
+				"version":     req.StrategyVersion,
+				"parameters":  map[string]any{},
+			}
+		} else {
+			// Preserve the public client's parameter snapshot. Previously this
+			// field was silently discarded and every single-strategy run was
+			// persisted with parameters: {}.
+			candidate["strategy_id"] = req.StrategyID
+			candidate["version"] = req.StrategyVersion
+			if _, ok := candidate["parameters"]; !ok {
+				candidate["parameters"] = map[string]any{}
+			}
 		}
 		if len(req.Children) > 0 {
 			for index := range req.Children {

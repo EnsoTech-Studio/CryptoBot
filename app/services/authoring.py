@@ -76,6 +76,8 @@ def validate_spec(spec: StrategySpecResponse) -> None:
         references.add(name)
         if kind == "support_resistance":
             references.update({f"{name}.support", f"{name}.resistance"})
+        elif kind == "bollinger":
+            references.update({f"{name}.lower", f"{name}.middle", f"{name}.upper"})
         elif kind == "macd":
             references.update({f"{name}.signal", f"{name}.hist"})
     encoded = _canonical(spec.model_dump())

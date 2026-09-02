@@ -93,7 +93,7 @@ class Predictor:
     @property
     def _timeout_seconds(self) -> float:
         variable = "OPENAI_TIMEOUT_SECONDS" if self.provider == "openai" else "GROQ_TIMEOUT_SECONDS"
-        return float(os.getenv(variable, "10"))
+        return float(os.getenv(variable, "30"))
 
     def _complete_json(
         self,
@@ -118,7 +118,11 @@ class Predictor:
         # Reasoning models such as the configured OpenAI model only accept
         # their default temperature. Groq supports temperature=0 for the
         # same bounded structured-output contract.
-        if self.provider != "openai":
+        if self.provider == "openai":
+            # DSL conversion is constrained extraction, not open-ended
+            # reasoning. Reserve output budget for the escaped JSON contract.
+            payload["reasoning_effort"] = os.getenv("OPENAI_REASONING_EFFORT", "low").strip() or "low"
+        else:
             payload["temperature"] = 0
         request = Request(
             f"{self._base_url}/chat/completions",
@@ -197,7 +201,7 @@ class Predictor:
                 "required": ["spec_json"],
                 "additionalProperties": False,
             },
-            max_tokens=1_200,
+            max_tokens=2_400,
         )
         raw_spec = envelope.get("spec_json")
         if not isinstance(raw_spec, str):
@@ -343,12 +347,18 @@ def _canonicalize_strategy_spec(result: dict[str, object]) -> dict[str, object]:
             kind = "support_resistance"
         if kind not in {"sma", "ema", "rsi", "bollinger", "macd", "support_resistance"}:
             raise ValueError("strategy response contains an unsupported indicator")
-        params = raw.get("params") if isinstance(raw.get("params"), dict) else raw
+        params = (
+            raw.get("params")
+            if isinstance(raw.get("params"), dict)
+            else raw.get("parameters")
+            if isinstance(raw.get("parameters"), dict)
+            else raw
+        )
         item: dict[str, object] = {"id": str(raw.get("id") or raw.get("name") or raw.get("alias") or kind), "kind": kind}
         if isinstance(params, dict):
-            for key in ("period", "deviation", "fast", "slow", "signal", "band"):
+            for key in ("period", "deviation", "deviations", "stddev", "fast", "slow", "signal", "band"):
                 if key in params and isinstance(params[key], (int, float, str)):
-                    item[key] = params[key]
+                    item["deviation" if key in {"deviations", "stddev"} else key] = params[key]
             period = params.get("period")
             if isinstance(period, (int, float)):
                 periods.append(int(period))
@@ -445,6 +455,9 @@ def _canonicalize_discovery_candidate(result: dict[str, object]) -> dict[str, ob
 def _legacy_rule(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         raw_operation = str(value.get("op") or value.get("type") or value.get("condition") or "").lower()
+        if raw_operation in {"false", "always_false", "never", "none"}:
+            # Preserve a disabled direction without extending runtime operators.
+            return {"op": "equals", "left": 0, "right": 1}
         if raw_operation in {"and", "all", "or", "any"}:
             items = value.get("items")
             if not isinstance(items, list):
@@ -456,16 +469,13 @@ def _legacy_rule(value: object) -> dict[str, object]:
         if raw_operation == "opposite_signal":
             return {"op": "opposite_signal"}
         operation = {
-            "crossover": "crosses_above", "crossunder": "crosses_below",
+            "crossover": "crosses_above", "cross_above": "crosses_above",
+            "crossunder": "crosses_below", "cross_below": "crosses_below",
             "lt": "below", "less_than": "below", "<": "below",
             "gt": "above", "greater_than": "above", ">": "above",
         }.get(raw_operation, raw_operation)
-        left, right = value.get("left"), value.get("right")
-        for key in ("indicator", "source", "value"):
-            if isinstance(left, dict) and isinstance(left.get(key), (str, int, float)):
-                left = left[key]
-            if isinstance(right, dict) and isinstance(right.get(key), (str, int, float)):
-                right = right[key]
+        left = _legacy_reference(value.get("left"))
+        right = _legacy_reference(value.get("right"))
         if left == "price":
             left = "close"
         if right == "price":
@@ -480,6 +490,24 @@ def _legacy_rule(value: object) -> dict[str, object]:
         operation = "crosses_above" if match.group(1).lower() == "crossover" else "crosses_below"
         return {"op": operation, "left": match.group(2).removesuffix(".value"), "right": match.group(3).removesuffix(".value")}
     raise ValueError("unsupported legacy condition")
+
+
+def _legacy_reference(value: object) -> object:
+    """Reduce common model reference wrappers to safe runtime references."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str):
+        return value.removesuffix(".value")
+    if not isinstance(value, dict):
+        return value
+    for key in ("indicator", "indicator_id", "source", "series", "value"):
+        reference = value.get(key)
+        if isinstance(reference, (str, int, float)):
+            band = value.get("line") or value.get("band") or value.get("component")
+            if key in {"indicator", "indicator_id"} and band in {"lower", "middle", "upper"}:
+                return f"{reference}.{band}"
+            return reference.removesuffix(".value") if isinstance(reference, str) else reference
+    return value
 
 
 def _family_for(indicators: list[dict[str, object]]) -> str:

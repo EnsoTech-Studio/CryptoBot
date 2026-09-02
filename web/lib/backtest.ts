@@ -27,6 +27,28 @@ export type BacktestDraft = {
 
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
 
+/* The research service keeps strategy versions immutable. Older database
+   rows may therefore still expose an empty default_params object; retain the
+   canonical built-in defaults at the request boundary so the experiment
+   snapshot records the values the engine actually uses. */
+const BUILTIN_DEFAULT_PARAMS: Record<string, Record<string, unknown>> = {
+  ma_cross: { fast: 20, slow: 50 },
+  ema_cross: { fast: 20, slow: 50 },
+  rsi: { period: 14, oversold: 30, overbought: 70 },
+  bollinger: { period: 20, deviation: 2 },
+  macd: { fast: 12, slow: 26, signal: 9 },
+  smc: { swing_period: 20 },
+  support_resistance: { period: 20 },
+  news_sentiment: { buy_above: 0.7, sell_below: -0.7, min_items: 3 },
+};
+
+export function effectiveStrategyParameters(strategy: Strategy): Record<string, unknown> {
+  return {
+    ...(strategy.version === "v1" ? BUILTIN_DEFAULT_PARAMS[strategy.strategy_id] ?? {} : {}),
+    ...(strategy.default_params ?? {}),
+  };
+}
+
 export function isExecutionMarkerSelected(marker: ExecutionMarker, sequenceNo: number | null): boolean {
   return sequenceNo !== null && marker.sequence_no === sequenceNo;
 }
@@ -59,7 +81,7 @@ export function buildBacktestChildren(
     return {
       strategy_id: strategyId,
       strategy_version: definition?.version ?? "v1",
-      parameters: definition?.default_params ?? {},
+      parameters: definition ? effectiveStrategyParameters(definition) : {},
       weight: mode === "single" ? 1 : Number(weight.toFixed(6)),
     };
   });

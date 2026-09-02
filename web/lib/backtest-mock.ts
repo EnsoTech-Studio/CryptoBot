@@ -72,13 +72,20 @@ export function mockExecutionMarkers(candles: Candle[]): ExecutionMarker[] {
   const shortEntry = candles[116];
   const exit = candles[166];
   if (!longEntry || !shortEntry || !exit) return [];
+  const chartRange = Math.max(1, Math.max(...candles.map((candle) => candle.high)) - Math.min(...candles.map((candle) => candle.low)));
+  const stopLoss = roundMarkerPrice(longEntry.low - chartRange * 0.02);
+  const takeProfit = roundMarkerPrice(shortEntry.low - chartRange * 0.02);
   return [
     { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "long_entry", price: longEntry.close },
-    { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "stop_loss", price: 67_800 },
+    { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "stop_loss", price: stopLoss },
     { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "short_entry", price: shortEntry.close },
-    { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "take_profit", price: 70_200 },
+    { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "take_profit", price: takeProfit },
     { sequence_no: 2, t: exit.open_time, overlay_type: "exit", price: exit.close, exit_reason: "take_profit" },
   ];
+}
+
+function roundMarkerPrice(value: number) {
+  return Number(value.toFixed(2));
 }
 
 export const PROFIT_FORMULA: Array<{ icon: "dollar" | "percent" | "sliders"; tone: "green" | "brand" | "amber"; label: string; caption: string; operator: "−" | "=" | null }> = [

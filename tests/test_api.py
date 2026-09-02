@@ -30,6 +30,7 @@ class FakeStore:
             {
                 "entry_id": uuid4(),
                 "evaluation_id": uuid4(),
+                "experiment_id": uuid4(),
                 "score": 72.5,
                 "rank": 1,
                 "score_policy_version": "v1",
@@ -294,6 +295,44 @@ def test_strategy_draft_list_is_owned_and_bounded() -> None:
     assert response.json()["drafts"][0]["owner_id"] == str(owner_id)
     assert app.state.store.listed_strategy_owner == owner_id
     assert app.state.store.listed_strategy_limit == 3
+
+
+def test_strategy_draft_list_loads_all_owned_drafts_by_default() -> None:
+    owner_id = uuid4()
+    response = client.get(
+        "/api/v1/strategy-drafts",
+        headers={**TOKEN_HEADERS, "X-User-ID": str(owner_id)},
+    )
+
+    assert response.status_code == 200
+    assert app.state.store.listed_strategy_owner == owner_id
+    assert app.state.store.listed_strategy_limit is None
+
+
+def test_experiment_history_is_owned_and_loads_without_a_default_limit() -> None:
+    owner_id = uuid4()
+
+    class ExperimentHistoryStore(FakeStore):
+        def list_experiments(self, received_owner, limit):
+            self.received_owner = received_owner
+            self.received_limit = limit
+            return []
+
+    previous = app.state.store
+    history_store = ExperimentHistoryStore()
+    app.state.store = history_store
+    try:
+        response = client.get(
+            "/api/v1/experiments",
+            headers={**TOKEN_HEADERS, "X-User-ID": str(owner_id)},
+        )
+    finally:
+        app.state.store = previous
+
+    assert response.status_code == 200
+    assert response.json() == {"experiments": []}
+    assert history_store.received_owner == owner_id
+    assert history_store.received_limit is None
 
 
 def test_discovery_session_history_is_owned_and_bounded() -> None:

@@ -1,13 +1,13 @@
-## 18. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill
+## 20. Runtime Flow: Realtime Ingestion & Gap Backfill
 
 <div class="columns">
 <div>
 
-### Xử Lý Nến & Khôi Phục Khoảng Trống (Gap Backfill)
-1. **Khởi Tạo Biểu Đồ:** Tải 1,000 nến lịch sử từ Postgres/Binance REST cho đa khung thời gian (1m, 5m, 1h, 1d).
-2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật nến tạm thời (provisional candle).
-3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán sự kiện `CandleClosed` qua Redis.
-4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các nến bị khuyết, đảm bảo chuỗi thời gian liên tục.
+### Realtime Ingestion & Gap Backfill Flow
+1. **Chart Initialization:** Fetch 1,000 historical candles từ Postgres/Binance REST đa timeframe (1m, 5m, 1h, 1d).
+2. **WSS Stream Ingestion:** Ingest ticker & update provisional candle theo realtime ticks.
+3. **Candle Close Event:** Persist candle vào Postgres và broadcast event `CandleClosed` qua SSE/WebSocket broadcaster.
+4. **Gap Backfill:** Khi WSS connection drop, auto-reconnect và trigger REST API backfill bù missing candles, đảm bảo continuous time-series.
 
 </div>
 <div>
@@ -19,20 +19,20 @@
 
 ---
 
-## 19. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
+## 21. Runtime Flow: Strategy Execution & Dynamic Registration
 
 <div class="columns">
 <div>
 
-### Run Strategy (Handcraft & Auto) & Add Strategy
+### Strategy Execution (Handcrafted / AI) & Dynamic Add Flow
 * **Run Strategy Flow:**
-  * Nạp `Datafeed` & `Sentiment Window` vào `StrategyContext`.
-  * `IStrategy.evaluate()` sinh tín hiệu `BUY` / `SELL` / `HOLD`.
-  * `CompositeStrategy` tổng hợp theo trọng số hoặc đa số.
-* **Add Strategy Flow (Handcraft & AI):**
-  * Handcraft: Thêm file Python vào Registry tự động load.
-  * AI: LLM Agent sinh code qua AST Sandbox xác thực.
-* **Runtime Parity:** Logic chạy đồng nhất 100% trên cả Live và Backtest.
+  * Load `Datafeed` & `Sentiment Window` vào `StrategyContext`.
+  * `IStrategy.evaluate()` emit trading signal `BUY` / `SELL` / `HOLD`.
+  * `CompositeStrategy` aggregate signals theo majority hoặc weighted policy.
+* **Add Strategy Flow (Handcrafted & AI-Generated):**
+  * Handcrafted: Drop Python file vào Strategy Registry → auto-discovery & dynamic load.
+  * AI-Generated: LLM Agent generate strategy code → AST validator & Sandbox verification.
+* **Runtime Parity:** 100% deterministic parity giữa Live Trading và Backtest execution.
 
 </div>
 <div>
@@ -44,16 +44,16 @@
 
 ---
 
-## 20. Runtime Flow: Pipeline Backtest Bất Đồng Bộ
+## 22. Runtime Flow: Async Backtest Pipeline
 
 <div class="columns">
 <div>
 
-### Quy Trình Thực Thi Thí Nghiệm & Khám Phá
-1. **Tạo Thí Nghiệm:** Ghi thông tin thí nghiệm và sự kiện vào Outbox cùng một ACID transaction.
-2. **Chiếm Quyền (Worker Lease Acquire):** Worker nhận job qua khóa lạc quan (Optimistic Lock) và gửi heartbeat.
-3. **Thực Thi Đa Phân Vùng:** Chạy kiểm thử trên `Train` (30d) → `Validation` (15d) → `Sealed Test` (15d).
-4. **Ghi Nhận Kết Quả:** Tính Sharpe, Drawdown, lưu Trade list và cập nhật Top-K Leaderboard.
+### Async Experiment & Discovery Execution Pipeline
+1. **Create Experiment:** Persist experiment metadata và job event vào Outbox trong cùng một ACID transaction.
+2. **Worker Lease Acquire:** Worker claim job qua Optimistic Lock (FOR UPDATE SKIP LOCKED) và duy trì heartbeat.
+3. **Multi-Split Execution:** Run backtest trên `Train` (30d) → `Validation` (15d) → `Sealed Test` (15d).
+4. **Compute Metrics & Leaderboard:** Calculate Sharpe Ratio, Max Drawdown, Profit Factor; persist Trade logs và update Top-K Leaderboard.
 
 </div>
 <div>
@@ -65,17 +65,17 @@
 
 ---
 
-## 21. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback
+## 23. Runtime Flow: Resilient News Crawl & LLM Fallback Pipeline
 
 <div class="columns">
 <div>
 
-### Thu Thập & Phân Tích Tin Tức Tự Phục Hồi
-1. **Kiểm Tra An Toàn SSRF:** Duyệt nguồn từ `ApprovedSource`, thẩm tra DNS và IP đích.
-2. **Thu Thập Chuẩn:** Trích xuất văn bản qua RSS/HTML Parser.
-3. **Cổng Kiểm Tra Chất Lượng (Quality Gate):** Nếu độ dài bài viết quá ngắn hoặc web đổi DOM → Kích hoạt fallback.
-4. **LLM Fallback Extraction:** Chuyển HTML sang LLM Extractor để tự động nhận diện nội dung.
-5. **Chấm Điểm Sentiment:** Chạy ngầm phân tích ngữ nghĩa và cập nhật điểm [-1.0, 1.0] vào cơ sở dữ liệu.
+### Self-Healing News Crawl & Sentiment Pipeline
+1. **SSRF Validation:** Whitelist check qua `ApprovedSource`, resolve DNS và block internal/private IPs.
+2. **Standard Ingestion:** Fetch & extract article content qua RSS/HTML Parser (Readability).
+3. **Quality Gate Check:** Nếu DOM structure thay đổi hoặc text extraction rỗng → trigger fallback.
+4. **LLM Fallback Extraction:** Dispatch raw HTML sang LLM Agent để parse structured content.
+5. **Async Sentiment Scoring:** Background worker scoring sentiment [-1.0, 1.0] và persist vào PostgreSQL.
 
 </div>
 <div>

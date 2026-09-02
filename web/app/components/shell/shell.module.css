@@ -5,6 +5,9 @@
   background: var(--bg);
 }
 
+.sidebarCollapsed { grid-template-columns: 78px minmax(0, 1fr); }
+.sidebarCollapsed.withInspector { grid-template-columns: 78px minmax(0, 1fr) var(--inspector-w); }
+
 .withInspector {
   grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--inspector-w);
 }
@@ -23,12 +26,31 @@
 }
 
 .sidebarHead {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   padding: 0 4px;
 }
+
+.collapseToggle {
+  position: absolute;
+  top: 38px;
+  right: -15px;
+  z-index: 1;
+  display: grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--ink-3);
+}
+.collapseToggle:hover { border-color: var(--line-2); color: var(--brand); background: var(--surface-3); }
+.collapseToggle svg { width: 16px; height: 16px; }
 
 .brand {
   display: flex;
@@ -412,6 +434,24 @@
   color: var(--ink-3);
 }
 
+.inspectorToggle {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line-1);
+  border-radius: 9px;
+  background: var(--surface-1);
+  padding: 0 10px;
+  color: var(--ink-3);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.inspectorToggle:hover { border-color: var(--line-2); color: var(--ink-1); }
+.inspectorToggle svg { width: 16px; height: 16px; }
+
 .headerIcon { position: relative; }
 .headerIcon::after {
   position: absolute;
@@ -469,10 +509,38 @@
 
 .content > * { min-width: 0; }
 
+/* Desktop-only compact rail. The main grid gains the released width, so
+   realtime cards and their responsive chart grid grow without hard-coded
+   chart dimensions. */
+.sidebarCollapsed .sidebar { padding-right: 8px; padding-left: 8px; }
+.sidebarCollapsed .sidebarHead { justify-content: center; padding: 0; }
+.sidebarCollapsed .sidebarHead { flex-direction: column; gap: 8px; }
+.sidebarCollapsed .brand { justify-content: center; }
+.sidebarCollapsed .brand > span:last-child,
+.sidebarCollapsed .navigation a span,
+.sidebarCollapsed .navigation .disabledNav span,
+.sidebarCollapsed .navigation a small,
+.sidebarCollapsed .planCard > div,
+.sidebarCollapsed .userIdentity,
+.sidebarCollapsed .userMenu .chevron { display: none; }
+.sidebarCollapsed .brandMark { width: 46px; height: 46px; }
+.sidebarCollapsed .brandMark svg { width: 24px; height: 24px; }
+.sidebarCollapsed .collapseToggle { position: static; align-self: flex-end; width: 30px; height: 30px; margin-right: 0; border-radius: 8px; background: var(--surface-1); box-shadow: var(--elev-1); }
+.sidebarCollapsed .navigation { width: 62px; gap: 10px; margin: 20px auto 0; }
+.sidebarCollapsed .navigation a,
+.sidebarCollapsed .disabledNav { width: 62px; min-width: 62px; max-width: 62px; justify-content: center; gap: 0; padding: 0; }
+.sidebarCollapsed .navigation svg { width: 20px; height: 20px; }
+.sidebarCollapsed .sidebarFooter { width: 62px; margin-right: auto; margin-left: auto; }
+.sidebarCollapsed .planCard { width: 62px; justify-content: center; min-height: 48px; padding: 9px 0; }
+.sidebarCollapsed .userMenu,
+.sidebarCollapsed .userMenu > summary { width: 62px; }
+.sidebarCollapsed .userMenu > summary { justify-content: center; padding: 7px 0; }
+
 .drawerBackdrop { display: none; }
 
 @media (max-width: 1500px) {
   .withInspector { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+  .sidebarCollapsed.withInspector { grid-template-columns: 78px minmax(0, 1fr); }
 }
 
 @media (max-width: 1260px) {
@@ -486,6 +554,9 @@
 
   .shell,
   .withInspector { grid-template-columns: minmax(0, 1fr); }
+
+  .shell.sidebarCollapsed,
+  .sidebarCollapsed.withInspector { grid-template-columns: minmax(0, 1fr); }
 
   .sidebar {
     position: fixed;
@@ -521,6 +592,8 @@
     padding: 0;
   }
 
+  .collapseToggle { display: none; }
+
   .drawerBackdrop {
     position: fixed;
     inset: 0;
@@ -546,6 +619,8 @@
   .pageTitle p { display: none; }
   .headerActions { gap: 6px; }
   .headerIcon { display: none; }
+  .inspectorToggle span { display: none; }
+  .inspectorToggle { width: 34px; justify-content: center; padding: 0; }
   .noticeSlot { padding-top: var(--space-2); }
   .content { padding-top: var(--space-2); }
 }

@@ -9,10 +9,12 @@ export function RecentImports({
   drafts,
   referenceMode,
   onRun,
+  onReview,
 }: {
   drafts: RecentImportDraft[];
   referenceMode: boolean;
   onRun: (strategyId: string) => void;
+  onReview: (draftId: string) => void;
 }) {
   const rows = recentImportRows(drafts, referenceMode);
   return (
@@ -20,13 +22,13 @@ export function RecentImports({
       title="Chiến lược đã import gần đây"
       className={styles.importsPanel}
       action={
-        <button type="button" className={styles.allLink}>
+        <a href="#strategy-imports" className={styles.allLink}>
           Xem tất cả
           <Icon name="chevron-right" aria-hidden="true" />
-        </button>
+        </a>
       }
     >
-      <div className={styles.importsWrap}>
+      <div id="strategy-imports" className={styles.importsWrap}>
         <table className={styles.importsTable}>
           <thead>
             <tr>
@@ -41,7 +43,12 @@ export function RecentImports({
           </thead>
           <tbody>
             {rows.length > 0 ? rows.map((row) => (
-              <ImportTableRow key={`${row.draftId ?? row.strategyId ?? row.name}-${row.version}`} row={row} onRun={onRun} />
+              <ImportTableRow
+                key={`${row.draftId ?? row.strategyId ?? row.name}-${row.version}`}
+                row={row}
+                onRun={onRun}
+                onReview={onReview}
+              />
             )) : (
               <tr><td className={styles.emptyImports} colSpan={7}>Chưa có strategy nào được import.</td></tr>
             )}
@@ -52,9 +59,26 @@ export function RecentImports({
   );
 }
 
-function ImportTableRow({ row, onRun }: { row: ImportRow; onRun: (strategyId: string) => void }) {
+function ImportTableRow({
+  row,
+  onRun,
+  onReview,
+}: {
+  row: ImportRow;
+  onRun: (strategyId: string) => void;
+  onReview: (draftId: string) => void;
+}) {
   const canRun = row.status === "approved" && row.strategyId !== null;
-  const statusLabel = row.status === "approved" ? "Hợp lệ" : row.status === "review" ? "Chờ duyệt" : row.status === "rejected" ? "Từ chối" : "Lỗi";
+  const statusLabel = row.status === "approved"
+    ? "Hợp lệ"
+    : row.status === "processing"
+      ? "Đang xử lý"
+      : row.status === "review"
+        ? "Chờ duyệt"
+        : row.status === "rejected"
+          ? "Từ chối"
+          : "Lỗi";
+  const canReview = row.status === "review" && row.draftId !== undefined;
   return (
     <tr>
       <td className={styles.strategyName}>{row.name}</td>
@@ -83,7 +107,13 @@ function ImportTableRow({ row, onRun }: { row: ImportRow; onRun: (strategyId: st
           <button type="button" aria-label={`Chạy backtest ${row.name}`} disabled={!canRun} onClick={() => row.strategyId && onRun(row.strategyId)}>
             <Icon name="play" />
           </button>
-          <button type="button" aria-label={`Tuỳ chọn khác cho ${row.name}`} disabled>
+          <button
+            type="button"
+            aria-label={`Mở review ${row.name}`}
+            title="Mở review"
+            disabled={!canReview}
+            onClick={() => row.draftId && onReview(row.draftId)}
+          >
             <Icon name="more-vertical" />
           </button>
         </span>

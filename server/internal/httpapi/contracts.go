@@ -31,25 +31,26 @@ type combinationInput struct {
 }
 
 type experimentRequest struct {
-	DatasetVersion   string           `json:"dataset_version"`
-	Provider         string           `json:"provider"`
-	Symbol           string           `json:"symbol"`
-	Timeframe        string           `json:"timeframe"`
-	StrategyID       string           `json:"strategy_id"`
-	StrategyVersion  string           `json:"strategy_version"`
-	Children         []strategyChild  `json:"children"`
-	Combination      combinationInput `json:"combination"`
-	RangeFrom        *time.Time       `json:"range_from,omitempty"`
-	RangeTo          *time.Time       `json:"range_to,omitempty"`
-	InitialEquity    float64          `json:"initial_equity"`
-	FixedNotional    float64          `json:"fixed_notional"`
-	Leverage         float64          `json:"leverage"`
-	FeeBps           int              `json:"fee_bps"`
-	SlippageBps      int              `json:"slippage_bps"`
-	StopLossPct      *float64         `json:"stop_loss_pct,omitempty"`
-	TakeProfitPct    *float64         `json:"take_profit_pct,omitempty"`
-	IntrabarPriority string           `json:"intrabar_priority"`
-	IdempotencyKey   string           `json:"idempotency_key,omitempty"`
+	DatasetVersion      string           `json:"dataset_version"`
+	Provider            string           `json:"provider"`
+	Symbol              string           `json:"symbol"`
+	Timeframe           string           `json:"timeframe"`
+	StrategyID          string           `json:"strategy_id"`
+	StrategyVersion     string           `json:"strategy_version"`
+	CandidateDefinition map[string]any  `json:"candidate_definition"`
+	Children            []strategyChild  `json:"children"`
+	Combination         combinationInput `json:"combination"`
+	RangeFrom           *time.Time       `json:"range_from,omitempty"`
+	RangeTo             *time.Time       `json:"range_to,omitempty"`
+	InitialEquity       float64          `json:"initial_equity"`
+	FixedNotional       float64          `json:"fixed_notional"`
+	Leverage            float64          `json:"leverage"`
+	FeeBps              int              `json:"fee_bps"`
+	SlippageBps         int              `json:"slippage_bps"`
+	StopLossPct         *float64         `json:"stop_loss_pct,omitempty"`
+	TakeProfitPct       *float64         `json:"take_profit_pct,omitempty"`
+	IntrabarPriority    string           `json:"intrabar_priority"`
+	IdempotencyKey      string           `json:"idempotency_key,omitempty"`
 }
 
 type searchSpaceInput struct {

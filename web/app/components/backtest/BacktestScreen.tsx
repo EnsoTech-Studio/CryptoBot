@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, apiUrl, type MarketDataset } from "../../../lib/api";
 import { MOCK_DATASETS, MOCK_TRADES } from "../../../lib/backtest-mock";
@@ -27,9 +27,18 @@ import { ExperimentHistory, type ExperimentHistoryRecord } from "./ExperimentHis
 import { TradeLedger } from "./TradeLedger";
 import styles from "./backtest.module.css";
 
+const EXPERIMENT_HISTORY_KEY = "crypto-lab-experiment-history";
+
 type DatasetLoadState = "loading" | "ready" | "empty" | "error";
 
 export function BacktestScreen() {
+  const { user } = useWorkspace();
+  /* Login changes the owner boundary. Remounting keeps account-scoped draft,
+     ledger, and comparison state from ever leaking across accounts. */
+  return <BacktestContent key={user?.id ?? "anonymous"} />;
+}
+
+function BacktestContent() {
   const {
     marketPairs,
     availableTimeframes,
@@ -37,11 +46,13 @@ export function BacktestScreen() {
     strategies,
     experiment,
     result,
+    openExperiment,
     runBacktest,
     openInspector,
     user,
     dataMode,
   } = useWorkspace();
+  const userId = user?.id;
 
   const [draft, setDraft] = useState<BacktestDraft>(() =>
     createBacktestDraft(selectedMarket, "5m"),
@@ -52,10 +63,15 @@ export function BacktestScreen() {
   const [datasets, setDatasets] = useState<MarketDataset[]>([]);
   const [datasetLoadState, setDatasetLoadState] = useState<DatasetLoadState>("loading");
   const [selectedTradeSequence, setSelectedTradeSequence] = useState<number | null>(null);
-  const [history, setHistory] = useState<ExperimentHistoryRecord[]>([]);
+  const [history, setHistory] = useState<ExperimentHistoryRecord[]>(() => user ? readExperimentHistory(user.id) : []);
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [uiCancelled, setUiCancelled] = useState(false);
   const [mockRunState, setMockRunState] = useState<"idle" | "running" | "completed">("idle");
+  const [submitPending, setSubmitPending] = useState(false);
+  const submitLock = useRef(false);
+  const submitOriginExperimentId = useRef<string | null>(null);
+  const [datasetAction, setDatasetAction] = useState<"idle" | "creating">("idle");
+  const [datasetActionError, setDatasetActionError] = useState("");
   const backtestStrategies = useMemo(
     () => (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter((strategy) => !strategy.is_composite),
     [dataMode, strategies],
@@ -129,7 +145,7 @@ export function BacktestScreen() {
   }, [dataMode, effectiveTimeframe, market]);
 
   const issues = backtestIssues(effectiveDraft);
-  const running = !uiCancelled && (experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
+  const running = !uiCancelled && (submitPending || experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
   const completed = !uiCancelled && experiment?.status === "completed" && result !== null;
   const visibleExperimentStatus = uiCancelled ? "cancelled" : experiment?.status;
   const isMock = dataMode === "mock" && !completed;
@@ -147,6 +163,43 @@ export function BacktestScreen() {
   const kpis = useMemo(() => deriveKpis(trades), [trades]);
   const shownDraft = submitted ?? effectiveDraft;
 
+  /* Lock synchronously on the first click. React state alone is not enough:
+     two clicks in the same event loop can both observe the old false value
+     before the disabled prop re-renders. Release once the newly accepted run
+     replaces the previous experiment, or immediately when submission fails. */
+  useEffect(() => {
+    if (!submitPending || !experiment || experiment.id === submitOriginExperimentId.current) return;
+    submitLock.current = false;
+    submitOriginExperimentId.current = null;
+    setSubmitPending(false);
+  }, [experiment, submitPending]);
+
+  /* The API exposes individual experiments but no owner-scoped collection.
+     Keep the rendered experiment ledger per signed-in user so it survives
+     sign-out, reload, and a later login on this browser. */
+  useEffect(() => {
+    if (!user) return;
+    try {
+      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history.slice(0, 20)));
+    } catch {
+      // Private-mode storage failures must not block a backtest.
+    }
+  }, [history, user]);
+
+  useEffect(() => {
+    if (!userId || dataMode === "mock") return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api.experiments().then(({ experiments }) => {
+        if (!cancelled) setHistory(experiments.map(summaryToHistory));
+      }).catch(() => undefined);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [dataMode, userId]);
+
   useEffect(() => {
     if (!experiment) return;
     const frame = window.requestAnimationFrame(() => {
@@ -160,10 +213,39 @@ export function BacktestScreen() {
 
   function patch(next: Partial<BacktestDraft>) {
     setDraft((current) => ({ ...current, ...next }));
+    if (next.datasetVersion !== undefined || next.market !== undefined || next.timeframe !== undefined) {
+      setDatasetActionError("");
+    }
+  }
+
+  async function createHistoricalDataset() {
+    if (!user || datasetAction === "creating" || !effectiveDraft.rangeFrom || !effectiveDraft.rangeTo) return;
+    setDatasetAction("creating");
+    setDatasetActionError("");
+    try {
+      const dataset = await api.createDataset(effectiveDraft.market, effectiveDraft.timeframe, {
+        from: effectiveDraft.rangeFrom,
+        to: effectiveDraft.rangeTo,
+      });
+      setDatasets((current) => [dataset, ...current.filter((item) => item.dataset_version !== dataset.dataset_version)]);
+      setDraft((current) => ({
+        ...current,
+        datasetVersion: dataset.dataset_version,
+        rangeFrom: dataset.range_from.slice(0, 10),
+        rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+      }));
+    } catch (error) {
+      setDatasetActionError(error instanceof Error ? error.message : "Không tạo được dataset cho khoảng ngày này.");
+    } finally {
+      setDatasetAction("idle");
+    }
   }
 
   function submit() {
-    if (noStrategies) return;
+    if (submitLock.current || noStrategies) return;
+    submitLock.current = true;
+    submitOriginExperimentId.current = experiment?.id ?? null;
+    setSubmitPending(true);
     setUiCancelled(false);
     setSubmitted(effectiveDraft);
     const selectedNames = selectedChildren.map((child) => backtestStrategies.find((strategy) => strategy.strategy_id === child.strategy_id)?.display_name ?? child.strategy_id);
@@ -187,6 +269,9 @@ export function BacktestScreen() {
           execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
           metrics: null,
         }, ...current].slice(0, 20));
+        submitLock.current = false;
+        submitOriginExperimentId.current = null;
+        setSubmitPending(false);
       }, 700);
       return;
     }
@@ -215,6 +300,9 @@ export function BacktestScreen() {
       effectiveDraft.datasetVersion,
     ).then((accepted) => {
       if (accepted) return;
+      submitLock.current = false;
+      submitOriginExperimentId.current = null;
+      setSubmitPending(false);
       setHistory((current) => current.map((record) => record.id === draftId ? { ...record, status: "failed" } : record));
     });
   }
@@ -250,6 +338,10 @@ export function BacktestScreen() {
           strategies={backtestStrategies}
           datasets={datasets}
           datasetLoadState={datasetLoadState}
+          canCreateDataset={Boolean(user) && !running}
+          creatingDataset={datasetAction === "creating"}
+          datasetActionError={datasetActionError}
+          onCreateDataset={createHistoricalDataset}
           disabled={running}
           onChange={patch}
         />
@@ -294,6 +386,7 @@ export function BacktestScreen() {
           selectedIds={comparisonIds}
           onToggle={toggleComparison}
           onCancel={cancelHistory}
+          onVisualize={(id) => void openExperiment(id)}
         />
       </div>
     </section>
@@ -331,4 +424,37 @@ function statusText(status: string) {
     default:
       return "";
   }
+}
+
+function experimentHistoryStorageKey(ownerId: string) {
+  return `${EXPERIMENT_HISTORY_KEY}:${ownerId}`;
+}
+
+function readExperimentHistory(ownerId: string): ExperimentHistoryRecord[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(experimentHistoryStorageKey(ownerId)) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter(isExperimentHistoryRecord).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function isExperimentHistoryRecord(value: unknown): value is ExperimentHistoryRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<ExperimentHistoryRecord>;
+  return typeof record.id === "string"
+    && typeof record.status === "string"
+    && typeof record.createdAt === "string"
+    && typeof record.symbol === "string"
+    && typeof record.timeframe === "string"
+    && typeof record.strategy === "string"
+    && typeof record.strategyVersion === "string"
+    && typeof record.datasetVersion === "string"
+    && typeof record.rangeFrom === "string"
+    && typeof record.rangeTo === "string"
+    && typeof record.parameters === "object"
+    && record.parameters !== null
+    && typeof record.execution === "object"
+    && record.execution !== null;
 }

@@ -16,8 +16,6 @@
 
 @media (min-width: 1200px) {
   .workspace { grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; }
-  .workspace[data-chart-count="1"] { grid-template-columns: minmax(0, 1fr); }
-  .workspace[data-chart-count="1"] .infoRail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .marketColumn {
@@ -266,7 +264,7 @@
 .overlayValue { overflow: hidden; color: var(--data-series-1); font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
 .chartViewport { min-height: 0; flex: 1 1 auto; border-top: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); background: var(--chart-bg); }
-.chartViewport :global(.chart-svg) { width: 100%; height: 100%; border: 0; border-radius: 0; }
+.chartViewport :global(.chart-svg) { width: 100%; height: 100%; border: 0; border-radius: 0; overscroll-behavior: contain; }
 
 .chartSkeleton { position: relative; display: grid; min-height: 246px; align-content: end; gap: 13px; overflow: hidden; padding: 24px; background: repeating-linear-gradient(to bottom, transparent 0 48px, var(--chart-grid) 49px 50px); }
 .chartSkeleton::after { position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.82), transparent); content: ""; transform: translateX(-100%); animation: shimmer 1.4s infinite; }
@@ -332,11 +330,12 @@
 .legend .signalBadge { min-width: 34px; min-height: 18px; border: 0; padding: 0 5px; font-size: 8px; }
 .legend i { display: inline-block; flex: 0 0 auto; }
 .legend b { flex: 0 0 auto; }
-.legend span:nth-child(5), .legend span:nth-child(6) { grid-column: 1 / -1; }
+.legend span:nth-child(5), .legend span:nth-child(6), .legend span:nth-child(7) { grid-column: 1 / -1; }
 .candleUp, .candleDown { width: 7px; height: 15px; border: 1px solid currentColor; }
 .candleUp { color: var(--data-up); background: color-mix(in srgb, var(--data-up) 12%, transparent); }
 .candleDown { color: var(--data-down); background: color-mix(in srgb, var(--data-down) 12%, transparent); }
 .maLine { width: 18px; height: 2px; background: var(--data-series-1); }
+.maLine50 { width: 18px; height: 2px; background: var(--data-series-4); }
 .volumeBar { width: 18px; height: 7px; background: color-mix(in srgb, var(--brand) 28%, transparent); }
 .buyMark, .sellMark { width: 0; height: 0; border-right: 5px solid transparent; border-left: 5px solid transparent; }
 .buyMark { border-bottom: 9px solid var(--data-up); }

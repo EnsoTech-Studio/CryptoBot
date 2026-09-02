@@ -113,122 +113,181 @@ style: |
 <!-- _class: lead -->
 # CRYPTO STRATEGY LAB (CryptoBot)
 ## Báo Cáo Thiết Kế Kiến Trúc Phần Mềm (Software Architecture)
-**Đề tài:** Nền tảng Nghiên cứu, Khám phá & Đánh giá Chiến lược Giao dịch Tiền mã hóa Tự động
+**Đề tài:** Nền tảng Research, Auto-Discovery & Đánh giá Trading Strategy Tự động
 
 ---
 
-## 1. Bối cảnh & 4 Nhóm Architectural Drivers
+## 1. Miền Nghiệp Vụ & Bối Cảnh (Business Domain)
 
 <div class="columns">
 <div>
 
-### Động lực Nghiệp vụ (ASRs Drivers)
-* **Realtime Market Ingestion:** Dữ liệu biến động mili-giây, stream liên tục và tự bù khoảng trống nến (gap backfill).
-* **High Modifiability:** Thêm/bớt chiến lược đơn và composite (Handcraft/LLM Agent) không sửa Core.
-* **Massive Search Scalability:** Khám phá hàng ngàn tham số (Loop Discovery) không nghẽn UI.
-* **Unstructured News Intelligence:** Crawl tin đa nguồn, tự phục hồi khi đổi DOM và định lượng sentiment.
+### Binance USDT-M Futures & Algo-Trading
+* **Perpetual Futures Market (USDT-M):**
+  * Giao dịch leverage 2 chiều **Long / Short** 24/7/365.
+  * Order execution theo **BBO (Best Bid / Best Offer)** realtime.
+* **Đặc tính Tài chính Khắt khe:**
+  * **Funding Rate:** Cân bằng giá Index & Mark Price mỗi 8h.
+  * **Trading Fee & Slippage:** Phí Maker/Taker (0.02% / 0.05%), Slippage khi thị trường biến động mạnh.
+  * **Rủi ro Liquidation:** Quản trị Margin, Stop-Loss & Take-Profit nghiêm ngặt.
+
+</div>
+<div>
+
+### Đối Tượng Sử Dụng & Nhu Cầu Cốt Lõi
+* **Quant Researcher / Algorithmic Trader:**
+  * Cần môi trường ingest candle low-latency (<200ms) đa timeframe (1m, 5m, 1h, 1d).
+  * Backtest strategy chính xác, đo lường Sharpe Ratio, Max Drawdown, Profit Factor, Win Rate.
+* **Autonomous AI Agents (LLM Multi-Agent):**
+  * Tự động crawl financial news, scoring sentiment.
+  * Tự generate strategy code, debug và scan hyperparameter space.
+
+</div>
+</div>
+
+---
+
+## 2. Bài Toán Thực Tế & Thách Thức (Problem Statement)
+
+<div class="columns-equal">
+<div>
+
+### Thách Thức Về Market Data & Order Execution
+* **Realtime Data Jitter & Packet Drop:**
+  * WebSocket bị drop/jitter làm mất candle → Sai lệch entry/exit signals.
+  * *Yêu cầu:* Auto-detect candle gap & bù dữ liệu tự động (Gap Backfill).
+* **Bẫy "Lookahead Bias" & Parity Mismatch:**
+  * Backtest giả lập phi thực tế (nhìn trước tương lai, bỏ qua slippage/phí) → Khi chạy Live bị lỗ.
+  * *Yêu cầu:* Deterministic Replay Engine simulate sát sao slippage, BBO limit fill và trading fees.
+
+</div>
+<div>
+
+### Thách Thức Về Scalability & Architecture
+* **Combinatorial Explosion (Bùng nổ không gian tìm kiếm):**
+  * Quét hàng ngàn parameter combinations / technical indicators gây block UI nếu chạy sync.
+  * *Yêu cầu:* Async Outbox Job Queue & Worker Pool.
+* **Tightly Coupled & Vendor Lock-in:**
+  * Source code bị trói chặt vào một sàn/thư viện duy nhất, khó scale/add strategy.
+  * *Yêu cầu:* Strategy Plugin Architecture & AST Sandbox an toàn.
+
+</div>
+</div>
+
+---
+
+## 3. Bối cảnh & 4 Nhóm Architectural Drivers
+
+<div class="columns">
+<div>
+
+### Architectural Drivers (ASRs)
+* **Realtime Market Ingestion:** Dữ liệu biến động mili-giây, stream liên tục và tự bù candle gap (Gap Backfill).
+* **High Modifiability:** Thêm/bớt single strategy và composite strategy (Handcrafted / LLM Agent) không sửa Core.
+* **Massive Search Scalability:** Auto-discovery hàng ngàn parameters (Loop Discovery) non-blocking UI.
+* **Unstructured News Intelligence:** Crawl multi-source news, self-healing khi DOM thay đổi và scoring sentiment.
 
 </div>
 <div>
 
 ### Quyết định Kiến trúc Tương ứng
-* **Driver 1 → Streaming & Kappa Architecture:** Tách biệt luồng WSS trực tiếp và Historical Backfill.
-* **Driver 2 → Plugin Architecture & AST Sandbox:** Chuẩn hóa IStrategy contract, nạp plugin động.
-* **Driver 3 → Event-Driven Job Queue & Worker:** Phân tán tải Backtest qua PostgreSQL Outbox & Worker pool.
-* **Driver 4 → Multi-Agent & LLM Fallback:** Tự phát hiện cấu trúc HTML và chấm điểm sentiment.
+* **Driver 1 → Dual-Channel Ingestion & Gap Repair:** Tách biệt stream WSS realtime và Historical REST Backfill, data parity.
+* **Driver 2 → Strategy Plugin Architecture & AST Sandbox:** Chuẩn hóa IStrategy contract, dynamic plugin loading.
+* **Driver 3 → Event-Driven Job Queue & Leased Worker:** Phân tán workload Backtest qua PostgreSQL Outbox & Worker pool.
+* **Driver 4 → Multi-Agent & LLM Fallback:** Auto-detect cấu trúc HTML, LLM fallback parsing và scoring sentiment.
 
 </div>
 </div>
 
 ---
 
-## 2. Hệ Thống Quality Attributes (ASRs Taxonomy)
+## 4. Hệ Thống Quality Attributes (ASRs Taxonomy)
 
 | Thuộc tính (QA) | Trọng tâm Thiết kế | Tactic / Kỹ thuật Kiến trúc Áp dụng |
 | :--- | :--- | :--- |
-| **Modifiability** | Thêm mới Strategy, Search, Data Provider không sửa Core | Plugin Architecture, Open-Closed Principle, Dynamic Registry |
-| **Scalability** | Xử lý tải >100,000 backtests và stream nến realtime | Scale-out Python Worker pool, Job Queue, Redis Caching |
-| **Realtime / Perf** | Độ trễ cập nhật nến < 200ms, thông lượng Backtest cao | Go Edge Gateway, WebSocket Streaming, Vectorized Engine |
-| **Reliability** | Lỗi crawl/search không sập API; tự reconnect sàn | Failure Isolation, Transactional Outbox, Lease Takeover |
-| **Observability** | Theo dõi trạng thái Worker, tiến độ Search Loop | Structured Logging, State Machine tracking, Run Metrics |
-| **Reproducibility** | Kết quả Backtest và Leaderboard phải có nguồn gốc bất biến | Immutable Dataset snapshots, Run Config Hash, Seed Lock |
+| **Modifiability** | Thêm mới Strategy, Search Algorithm, Market Provider không sửa Core | Strategy Plugin Architecture, Open-Closed Principle, Dynamic Registry |
+| **Scalability** | Xử lý workload >100,000 backtests và stream candle realtime | Scale-out Python Worker pool, PostgreSQL Leased Job Queue, In-memory Broadcaster |
+| **Realtime / Perf** | Latency cập nhật candle < 200ms, high throughput Backtest | Go Edge Gateway, WebSocket Streaming, Deterministic Replay Engine |
+| **Reliability** | Fault isolation (lỗi crawl/search không crash API); auto-reconnect sàn | Failure Isolation, Transactional Outbox, Lease Takeover |
+| **Observability** | Monitor Worker health, tiến độ Search Loop & telemetry metrics | Structured Logging, State Machine tracking, Run Metrics |
+| **Reproducibility** | Kết quả Backtest và Leaderboard đảm bảo tính Deterministic & Immutable | Immutable Dataset snapshots, Run Config Hash, Seed Lock |
 
 ---
 
-## 3. Kịch Bản ASR Chi Tiết (Modifiability & Scalability)
+## 5. Kịch Bản ASR Chi Tiết (Modifiability & Scalability)
 
 <div class="columns">
 <div>
 
 ### ASR-1: Modifiability (Thêm Strategy mới)
 * **Source:** Quant Researcher / AI Agent.
-* **Stimulus:** Thêm class chiến lược mới (`MACDStrategy`).
+* **Stimulus:** Thêm strategy class mới (`MACDStrategy`).
 * **Artifact:** Strategy Subsystem & UI Registry.
 * **Environment:** Hệ thống đang chạy (Runtime).
-* **Response:** Tự phát hiện, nạp metadata lên UI không cần compile lại Go Gateway hay sửa Core.
+* **Response:** Auto-discovery, load metadata lên UI không cần compile lại Go Gateway hay sửa Core.
 * **Measure:** Thao tác trên 1 file Python độc lập, 0 downtime.
 
 </div>
 <div>
 
-### ASR-2: Scalability (Tải Backtest lớn)
-* **Source:** Người dùng kích hoạt Auto Search Loop.
-* **Stimulus:** 10,000 công việc backtest vào hàng đợi cùng lúc.
+### ASR-2: Scalability (High Backtest Workload)
+* **Source:** User trigger Auto Search Loop.
+* **Stimulus:** 10,000 backtest jobs vào Job Queue đồng thời.
 * **Artifact:** Job Queue & Python Worker Pool.
-* **Environment:** Tải hệ thống cao điểm.
-* **Response:** Phân phối đều qua Lease Heartbeat, worker scale-out, không tràn RAM.
-* **Measure:** Tỷ lệ hoàn thành 100%, 0 dropped job, CPU ổn định.
+* **Environment:** Peak workload (tải cao điểm).
+* **Response:** Phân phối jobs qua Lease Heartbeat, worker scale-out, zero OOM / memory leak.
+* **Measure:** Completion rate 100%, 0 dropped job, stable CPU.
 
 </div>
 </div>
 
 ---
 
-## 4. Kịch Bản ASR Chi Tiết (Realtime & Reliability)
+## 6. Kịch Bản ASR Chi Tiết (Realtime & Reliability)
 
 <div class="columns">
 <div>
 
 ### ASR-3: Realtime & Data Parity
-* **Source:** Sàn Binance (WSS drop / network jitter).
+* **Source:** Binance Exchange (WSS drop / network jitter).
 * **Stimulus:** Mất kết nối mạng trong 30 giây.
 * **Artifact:** Go Market Gateway & Postgres Candle Storage.
 * **Environment:** Production Trading Hours.
-* **Response:** Tự Reconnect, kích hoạt REST Backfill bù nến thiếu, deduplicate bằng Open Time.
-* **Measure:** Chuỗi nến liên tục, không trùng lặp, độ trễ bắt kịp < 2s.
+* **Response:** Auto-reconnect, trigger REST Backfill bù missing candles, deduplicate bằng Open Time.
+* **Measure:** Continuous candle stream, 0 duplicate, catch-up latency < 2s.
 
 </div>
 <div>
 
 ### ASR-4: Fault Tolerance (Worker Crash)
-* **Source:** Python Worker tiến trình backtest bị kill đột ngột (OOM).
+* **Source:** Python Worker process bị kill đột ngột (OOM).
 * **Stimulus:** Job đang xử lý dở dang (RUNNING).
 * **Artifact:** Job Queue & Outbox Manager.
-* **Environment:** Đang chạy tác vụ tính toán nặng.
-* **Response:** Hết hạn Lease Heartbeat (30s), Worker khác tự động chiếm quyền (Takeover) và chạy lại.
-* **Measure:** Job hoàn thành thành công, 0 stuck job.
+* **Environment:** Heavy computation workload.
+* **Response:** Lease Heartbeat timeout (30s), Worker khác auto-takeover và retry job.
+* **Measure:** Job hoàn thành thành công, 0 stuck / orphaned job.
 
 </div>
 </div>
 
 ---
 
-## 5. Tổng Quan Use Case Hệ Thống
+## 7. Tổng Quan Use Case Hệ Thống
 
 <div class="columns">
 <div>
 
-### Tác tử (Actors) & Nhóm Chức năng
+### Actors & Chức Năng Chính
 * **Quant Researcher / Trader:**
-  * Xem biểu đồ nến realtime đa khung thời gian (1m, 5m, 1h, 1d).
-  * Thử nghiệm chiến lược đơn và composite.
-  * Chạy Backtest, xem equity curve, drawdown.
-  * Nhập prompt tự nhiên để sinh & sửa mã chiến lược.
+  * Xem realtime candlestick chart đa timeframe (1m, 5m, 1h, 1d).
+  * Thử nghiệm single strategy và composite strategy.
+  * Chạy Backtest, phân tích equity curve, max drawdown, win rate.
+  * Nhập natural language prompt hoặc URL để AI generate & self-repair strategy code.
 * **Autonomous AI Agent:**
-  * Crawl tin tức, trích xuất text & chấm điểm sentiment.
-  * Tự động chạy vòng lặp tìm kiếm (Loop Discovery).
+  * Crawl financial news, extract text & scoring sentiment.
+  * Tự động trigger Auto Search Loop (Loop Discovery).
 * **System Worker:**
-  * Nạp nến định kỳ, xử lý hàng đợi Backtest ngầm.
+  * Ingest candle định kỳ, process async Backtest Job Queue.
 
 </div>
 <div>
@@ -240,17 +299,17 @@ style: |
 
 ---
 
-## 6. C4 Model (Level 1) - System Context Diagram
+## 8. C4 Model (Level 1) - System Context Diagram
 
 <div class="columns">
 <div>
 
-### Ranh Giới & Hệ Thống Bên Ngoài
-* **CryptoBot Core Platform:** Hệ thống trung tâm thu nạp nến, nghiên cứu chiến lược và chấm điểm danh mục.
+### System Boundaries & External Systems
+* **CryptoBot Core Platform:** Platform trung tâm cho market data ingestion, strategy research và portfolio ranking.
 * **External Systems:**
-  * **Binance Exchange:** Dữ liệu nến lịch sử (REST) và giá biến động trực tiếp (WebSocket).
+  * **Binance Exchange:** Historical candle data (REST) và BBO price stream (WebSocket).
   * **News Sources / RSS Feeds:** Cung cấp thông tin thị trường crypto đa nguồn.
-  * **LLM Providers (OpenAI / Groq):** Suy luận ngôn ngữ, phân tích sentiment & tự sửa mã (Self-repair).
+  * **LLM Providers (OpenAI / Groq):** LLM reasoning, sentiment analysis & strategy self-repair.
 
 </div>
 <div>
@@ -262,17 +321,18 @@ style: |
 
 ---
 
-## 7. C4 Model (Level 2) - Container Diagram
+## 9. C4 Model (Level 2) - Container Diagram
 
 <div class="columns">
 <div>
 
-### Phân Rã Các Container Chính
-* **Next.js Web App (SPA):** Giao diện tương tác, biểu đồ nến realtime, cấu hình chiến lược & xem Leaderboard.
-* **Go Edge Gateway:** Xác thực RBAC, định tuyến CQRS, duy trì WebSocket Binance và stream nến qua SSE/WS.
-* **Python Research Engine:** Xử lý tính toán nặng (Backtest Worker, Loop Discovery, Metric Evaluation).
-* **PostgreSQL (Storage):** Lưu trữ nến, chiến lược, thí nghiệm và Outbox table.
-* **Redis (Cache & Bus):** In-memory Pub/Sub và caching realtime indicators.
+### Container Architecture (C4 Level 2)
+* **Next.js Dashboard:** Render-only UI: chart, authoring, search, backtest, trade detail & news.
+* **Go Edge & Market Gateway:** Public REST/WSS, auth/quota, Candle/BBO normalization & realtime fan-out.
+* **Python Research API:** Strategy/Agent runtime, experiment/search, news/sentiment orchestration & queries.
+* **Python Research Worker × N:** Leased backtest/agent jobs; immutable Candle+BBO; execution; facts/outbox.
+* **PostgreSQL:** Source of truth: market, strategies, jobs/results, news/sentiment & outbox.
+* **Object Storage / Broker (optional):** Raw HTML by hash; replaceable queue/stream adapter.
 
 </div>
 <div>
@@ -284,17 +344,16 @@ style: |
 
 ---
 
-## 8. C4 Model (Level 3) - Python Research Platform
+## 10. C4 Model (Level 3) - Python Research Platform
 
 <div class="columns">
 <div>
 
-### Cấu Trúc Nội Bộ Python Platform
-* **Strategy Registry:** Quản lý lifecycle và metadata của các plugin chiến lược.
-* **Deterministic Backtest Engine:** Mô phỏng khớp lệnh chính xác (BBO, Slippage, Fee).
-* **Search & Loop Manager:** Điều phối thuật toán tìm kiếm (Random, Genetic, Bayesian, LLM).
-* **Worker Lease Manager:** Phân phối công việc không khóa (Optimistic Lock) và tự phục hồi.
-* **AST Sandbox:** Kiểm tra an toàn cú pháp mã nguồn do AI tạo ra trước khi thực thi.
+### Component Breakdown: Python Research Platform
+* **Application services:** `Research API`, `Experiment/Search/Ranking`, `News/Sentiment` & `AgentOrchestrator`.
+* **Domain runtime:** `StrategyRegistry + StrategyRuntime`; `Backtest Engine + Execution Simulator`; news rules; agent state/artifacts.
+* **Python-owned ports:** `MarketDataPort`, `ModelGatewayPort`, `Artifact/Sandbox/Approval` & `Repository/Job/Outbox` ports.
+* **Infrastructure adapters:** Go Market adapter, internal AI/LLM adapter, isolated Sandbox Runner, SafeFetcher/Readability & PostgreSQL repositories.
 
 </div>
 <div>
@@ -306,16 +365,17 @@ style: |
 
 ---
 
-## 9. C4 Model (Level 3) - Go Edge & Market Gateway
+## 11. C4 Model (Level 3) - Go Edge & Market Gateway
 
 <div class="columns">
 <div>
 
-### Cấu Trúc Nội Bộ Go Gateway
-* **Binance Adapter:** Duy trì kết nối WSS liên tục, tự động reconnect và gọi REST Backfill khi rớt mạng.
-* **Candle Aggregator & BBO Streamer:** Tổng hợp nến tạm thời (provisional candle) và đóng nến vào CSDL.
-* **CQRS Request Handler:** Phân tách rõ ràng luồng Command (tạo thí nghiệm) và Query (đọc nến, leaderboard).
-* **Security & Auth Middleware:** Kiểm tra JWT token, phân quyền RBAC và giới hạn tần suất gọi API.
+### Component Breakdown: Go Edge & Market Gateway
+* **REST API + Auth and Ownership Guard:** Request validation/DTO mapping, JWT, RBAC & quota.
+* **Public WebSocket Hub:** Subscription fan-out theo panel key.
+* **MarketProviderRegistry + BinanceAdapter:** Resolve provider, REST history & WSS kline/BBO.
+* **MarketNormalizer + MarketService:** Validate symbol/timeframe/decimal/timestamp/sequence; checkpoint, de-dup, persistence, reconnect & backfill.
+* **Python Research Client + Internal Event Ingress:** Signed commands, queries và progress/result events.
 
 </div>
 <div>
@@ -327,77 +387,81 @@ style: |
 
 ---
 
-## 10. Phân Định Ranh Giới 5 Module Cốt Lõi (Tránh God Service)
+## 12. Component Boundaries: 6 Module Cốt Lõi (Anti-God Service)
 
 <div class="columns">
 <div>
 
-### 5 Miền Nghiệp Vụ Chuyên Biệt (High Cohesion)
-1. **Market Realtime (Go):** Thu nạp nến Binance WSS, BBO, tự bù nến (Backfill).
-2. **Strategy Engine (Python):** Thực thi chiến lược đơn / composite (v1 IDs).
-3. **Backtest & Discovery (Python):** Kiểm thử test set, Job Queue & Worker.
-4. **News Crawler (Python):** Thu thập tin RSS/HTML, kiểm soát an toàn SSRF.
-5. **News Intelligence (AI):** LLM trích xuất & chấm điểm sentiment độc lập.
-
-* **Loose Coupling:** Giao tiếp qua DTO chuẩn hóa, PostgreSQL Outbox và Redis Event Bus.
+### 6 Bounded Contexts (High Cohesion)
+1. **Market Realtime (Go Edge):** WSS candles/BBO, gap backfill.
+2. **Strategy Engine (Python):** Single/composite runtime.
+3. **Backtest (Python Worker):** Candle+BBO replay, execution facts.
+4. **Discovery (Python):** Search Loop, validation, stop conditions.
+5. **News Crawler (Python):** RSS/HTML, SSRF guard, quality gate.
+6. **News Intelligence (Python + AI adapter):** Extraction & async sentiment.
+* **Loose Coupling:** Giao tiếp qua versioned DTOs & Outbox events.
 
 </div>
 <div>
 
-### Phân Định Trách Nhiệm Ngôn Ngữ
+### Trách Nhiệm Công Nghệ (Go vs Python)
 
-| Tiêu chí | Go Edge Gateway | Python Research Engine |
+| Tiêu chí | Go Edge & Market Gateway | Python Strategy Platform |
 | :--- | :--- | :--- |
-| **Miền sở hữu** | Market Ingestion & API Edge | Backtest, Strategy, Search, AI |
-| **Thế mạnh** | Goroutines non-blocking, Low RAM | Toán học, Vectorization, AST parsing |
-| **Giao thức** | REST CQRS, WSS, SSE | Worker Queue Leases, Internal DTOs |
-| **Rủi ro cô lập** | Lỗi mạng sàn không làm chết Worker | Crash thuật toán không làm sập API |
+| **Ownership** | Market Ingestion, API Edge & Fan-out | Strategy, Backtest, Discovery, News/Agents/Ranking |
+| **Strengths** | Goroutines, Low RAM, high concurrency | Quantitative math, AST, AI/ML |
+| **Protocols** | Public REST/WSS, signed events | Internal HTTP, DTOs, Job/Outbox |
+| **Isolation** | Network drops không crash Worker | Crash strategy không sập API |
 
 </div>
 </div>
 
 ---
 
-## 11. Đặc Tả Ranh Giới & Phạm Vi 5 Module (Component Specs)
+## 13. Đặc Tả Ranh Giới & Phạm Vi 6 Module (Component Specs)
 
 <div class="columns">
 <div>
 
 ### 1. Market Realtime & 2. Strategy Engine
 * **Market Realtime:**
-  * **Input/Output:** Raw Binance WSS → `Candle` & `BBO` chuẩn hóa; đóng nến vào Postgres, bắn `CandleClosed` qua Redis.
-  * **Invariant:** Chuỗi thời gian liên tục, không duplicate.
+  * **Input/Output:** Raw Binance WSS → Normalized `Candle` & `BBO`; persist vào Postgres, broadcast `CandleClosed` event qua SSE/WebSocket.
+  * **Invariant:** Continuous time-series, zero-duplicate candle.
 * **Strategy Engine:**
-  * **Thêm/Bớt:** Chiến lược đơn (Handcraft/AI) qua `IStrategy`.
-  * **Discovery:** UI chạy trên data quá khứ + Auto Search.
-  * **Invariant:** Logic chạy đồng nhất trên Live và Backtest.
+  * **Pluggable:** Single strategy (Handcrafted/AI) qua `IStrategy`.
+  * **Scope:** Strategy Registry, indicators và single/composite runtime.
+  * **Invariant:** 100% execution parity giữa Live Trading và Backtest.
 
 </div>
 <div>
 
-### 3. Backtest, 4. Crawler & 5. Intelligence
+### 3. Backtest & 4. Discovery
 * **Backtest Subsystem (Event-Driven):**
-  * Chạy strategy trên test set (dữ liệu đầu tư), tìm kiếm chiến lược kết hợp AI sentiment qua Job Queue & Worker.
+  * Replay immutable Candle+BBO với cùng `StrategyRuntime`, simulate execution và emit trade/evaluation facts qua Worker/Outbox.
+* **Discovery Subsystem:**
+  * Generate candidates, orchestrate Search Loop và backtest jobs qua Train/Validation/Sealed Test; enforce lineage và stop conditions.
+
+### 5. News Crawler & 6. News Intelligence
 * **News Crawler Subsystem:**
-  * Thu thập tin từ `ApprovedSource` (RSS/HTML), kiểm soát SSRF, chốt chặn Quality Gate.
-* **News Intelligence & Agent:**
-  * LLMs/Agents trích xuất khi DOM đổi và chấm điểm sentiment [-1.0, 1.0] bất đồng bộ không nghẽn crawl.
+  * Fetch news từ `ApprovedSource` (RSS/HTML), SSRF protection, Quality Gate validation.
+* **News Intelligence Subsystem:**
+  * Orchestrate LLM/Agent extraction khi DOM thay đổi và scoring sentiment [-1.0, 1.0] async (non-blocking crawl).
 
 </div>
 </div>
 
 ---
 
-## 12. UML Class Diagram: Strategy Plugin Model
+## 14. UML Class Diagram: Strategy Plugin Model
 
 <div class="columns">
 <div>
 
-### Thiết Kế Plugin Architecture (IStrategy)
-* **Contract `IStrategy` Protocol:** Phương thức `evaluate(context) -> Signal` chuẩn (`BUY`, `SELL`, `HOLD`).
+### Strategy Plugin Architecture (IStrategy Contract)
+* **Contract `IStrategy` Protocol:** Method `evaluate(context) -> Signal` (`BUY`, `SELL`, `HOLD`).
 * **5 Single Strategies (v1 IDs):** `ma_crossover`, `bollinger_bands`, `rsi_threshold`, `smc_structure`, `news_sentiment`.
-* **Composite Strategy:** Tổ hợp 2-5 chiến lược con theo `CombinationPolicy` (`majority` hoặc `weighted`).
-* **Strategy Registry:** Thêm file Python mới tự động nạp; triệt tiêu God Service và giảm coupling tuyệt đối.
+* **Composite Strategy:** Combine 2-5 child strategies theo `CombinationPolicy` (`majority` hoặc `weighted`).
+* **Strategy Registry:** Dynamic loading file Python mới; loại bỏ God Service, loose coupling.
 
 </div>
 <div>
@@ -409,18 +473,18 @@ style: |
 
 ---
 
-## 13. UML Class Diagram: Search Algorithm & Discovery Loop
+## 15. UML Class Diagram: Search Algorithm & Discovery Loop
 
 <div class="columns">
 <div>
 
-### Thiết Kế Search Algorithm & 3 Phân Vùng
-* **Contract `ISearchAlgorithm`:** Phương thức `sample(space, rng)` triển khai qua `RandomSearch`, `GeneticAlgorithm`, `BayesianOptimization`.
-* **Vòng Lặp Discovery Chống Overfitting:**
-  * **Train (30d):** Tìm kiếm và huấn luyện biến thể.
-  * **Validation (15d):** Đánh giá tính tổng quát (Gate check).
-  * **Sealed Test (15d):** Chấm điểm độc lập cho Leaderboard.
-* **Chống Nghẽn Job:** `DiscoveryTrialReservation` (reserved_jobs=4).
+### Search Algorithms & 3-Split Dataset Partitioning
+* **Contract `ISearchAlgorithm`:** Method `sample(space, rng)` implement qua `RandomSearch`, `GeneticAlgorithm`, `BayesianOptimization`.
+* **Discovery Loop chống Overfitting (Data Leakage):**
+  * **Train (30d):** Search & optimize strategy variants.
+  * **Validation (15d):** Generalization evaluation (Gate check).
+  * **Sealed Test (15d):** Out-of-sample benchmark cho Leaderboard.
+* **Job Throttling & Fair Scheduling:** `DiscoveryTrialReservation` (reserved_jobs=4).
 
 </div>
 <div>
@@ -432,17 +496,17 @@ style: |
 
 ---
 
-## 14. UML Class Diagram: Resilient News Crawler Model
+## 16. UML Class Diagram: Resilient News Crawler Model
 
 <div class="columns">
 <div>
 
-### Thiết Kế Bộ Thu Thập & Phân Tích Tin Tức
-* **Contract `NewsProvider` Protocol:** Kế thừa qua `RssNewsProvider` và `HtmlNewsProvider` (`ApprovedSource`).
-* **Chốt Chặn An Toàn SSRF & Quality Gate:**
-  * `Resolver` & `Fetcher` kiểm tra DNS, IP nội bộ, redirect.
-  * `HtmlQualityGateFailed`: Kích hoạt `NewsExtractionHTTPAdapter` (LLM) khi web đổi DOM.
-* **Tách Biệt Sentiment:** Chấm điểm batch độc lập, lỗi AI không làm sập luồng crawl.
+### Resilient News Crawler & Sentiment Architecture
+* **Contract `NewsProvider` Protocol:** Implemented by `RssNewsProvider` và `HtmlNewsProvider` (`ApprovedSource`).
+* **SSRF Guard & Quality Gate Pipeline:**
+  * `Resolver` & `Fetcher` validate DNS, private IP blocking, safe redirect.
+  * `HtmlQualityGateFailed`: Trigger `NewsExtractionHTTPAdapter` (LLM fallback) khi DOM thay đổi.
+* **Decoupled Sentiment Scoring:** Async batch scoring, AI errors không block crawl pipeline.
 
 </div>
 <div>
@@ -454,16 +518,16 @@ style: |
 
 ---
 
-## 15. High-Level Architecture: Modular Monolith
+## 17. High-Level Architecture: Modular Monolith
 
 <div class="columns">
 <div>
 
-### Kết Nối Kiến Trúc Toàn Cục & Kỹ Thuật
-* **Frontend (Next.js):** SPA / JAMstack, Event Streaming (SSE/WS) cho biểu đồ realtime.
-* **Middleware (Go API Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Adapter.
-* **Backend Research (Python):** Plugin Architecture, Event-Driven Job Queue, Backtest Worker pool.
-* **Database (Tách nhóm data):** PostgreSQL (ACID Outbox, Candles, Experiments) & Redis (Pub/Sub, Indicator cache).
+### Global Architecture & Technology Stack
+* **Frontend (Next.js):** React SPA, Event Streaming (SSE/WS) cho realtime chart & telemetry.
+* **API Gateway (Go Edge):** CQRS, RBAC, Rate Limiting, Binance WSS Ingestion & Broadcaster.
+* **Backend Research (Python):** Strategy Plugin Architecture, Event-Driven Job Queue, Backtest Worker Pool.
+* **Database:** PostgreSQL (ACID Outbox, Candles, Experiments, News) & In-memory Ring Buffers (Go API Edge).
 * **Agent & External:** Strategy AI Agent, Crawling Agent, Binance API, OpenAI/Groq.
 
 </div>
@@ -476,20 +540,20 @@ style: |
 
 ---
 
-## 16. Các Design & Architectural Patterns Trọng Yếu
+## 18. Các Design & Architectural Patterns Trọng Yếu
 
 <div class="columns">
 <div>
 
-### Các Pattern Cốt Lõi Áp Dụng
+### Core Architectural & Design Patterns
 * **CQRS (Go API):**
-  * Tách biệt lệnh Command (tạo thí nghiệm) và Query (đọc nến, leaderboard) tối ưu hiệu năng.
-* **Event Streaming & Kappa Architecture:**
-  * Đồng nhất mô hình dữ liệu nến cho cả luồng Realtime (WSS) và Historical (Backtest dataset).
+  * Tách biệt Command (tạo experiment) và Query (đọc candles, leaderboard), optimize latency.
+* **Dual-Channel Market Engine with Parity:**
+  * Schema & execution parity cho cả luồng Realtime (WSS) và Historical Backfill (REST).
 * **Transactional Outbox Pattern:**
-  * Đảm bảo tính nguyên tử (Atomic) khi tạo Experiment và đẩy Job, loại bỏ rủi ro Dual-write.
+  * Atomic consistency khi tạo Experiment và dispatch Job, eliminate dual-write risk.
 * **Plugin Architecture:**
-  * Tách rời hoàn toàn Core Engine khỏi logic chiến lược và thuật toán tìm kiếm.
+  * Decouple hoàn toàn Core Engine khỏi strategy logic và search algorithms (Open-Closed Principle).
 
 </div>
 <div>
@@ -501,19 +565,19 @@ style: |
 
 ---
 
-## 17. Nền Tảng Multi-Agent & Vòng Lặp AI Tự Chủ
+## 19. Nền Tảng Multi-Agent & Vòng Lặp AI Tự Chủ
 
 <div class="columns">
 <div>
 
-### Hệ Thống Multi-Agent & Vòng Lặp Tự Sửa Lỗi
-* **Strategy Designer Agent:** Nhận prompt tự nhiên hoặc URL → sinh đặc tả Draft dạng JSON.
-* **Implementation Agent:** Chuyển đổi JSON Draft thành mã Python tuân thủ `IStrategy`.
+### Multi-Agent System & Self-Repair Loop
+* **Strategy Designer Agent:** Nhận natural language prompt / URL → generate Draft spec (JSON).
+* **Implementation Agent:** Transform JSON Draft thành Python code tuân thủ `IStrategy` protocol.
 * **Self-Repair Loop (AST + Sandbox):**
-  * Kiểm tra cú pháp và chạy thử trong sandbox.
-  * Phản hồi lỗi runtime về LLM để tự sửa mã (tối đa 3 lần).
+  * Static AST syntax validation & isolated dry-run trong Sandbox.
+  * Feed runtime traceback về LLM để auto self-repair code (tối đa 3 retry cycles).
 * **Candidate Discovery & Crawling Agent:**
-  * Tự động kết hợp tham số và crawl tin tức đa nguồn.
+  * Automated hyperparameter sampling & multi-source news crawling.
 
 </div>
 <div>
@@ -525,16 +589,16 @@ style: |
 
 ---
 
-## 18. Runtime Flow: Luồng Nạp Nến Realtime & Gap Backfill
+## 20. Runtime Flow: Realtime Ingestion & Gap Backfill
 
 <div class="columns">
 <div>
 
-### Xử Lý Nến & Khôi Phục Khoảng Trống (Gap Backfill)
-1. **Khởi Tạo Biểu Đồ:** Tải 1,000 nến lịch sử từ Postgres/Binance REST cho đa khung thời gian (1m, 5m, 1h, 1d).
-2. **Luồng Trực Tiếp (WSS Stream):** Tiếp nhận ticker & cập nhật nến tạm thời (provisional candle).
-3. **Đóng Nến (Candle Close):** Ghi nến vào Postgres và phát tán sự kiện `CandleClosed` qua Redis.
-4. **Tự Động Bù Nến (Gap Backfill):** Khi đứt mạng WSS, tự động Reconnect và gọi REST API bù các nến bị khuyết, đảm bảo chuỗi thời gian liên tục.
+### Realtime Ingestion & Gap Backfill Flow
+1. **Chart Initialization:** Fetch 1,000 historical candles từ Postgres/Binance REST đa timeframe (1m, 5m, 1h, 1d).
+2. **WSS Stream Ingestion:** Ingest ticker & update provisional candle theo realtime ticks.
+3. **Candle Close Event:** Persist candle vào Postgres và broadcast event `CandleClosed` qua SSE/WebSocket broadcaster.
+4. **Gap Backfill:** Khi WSS connection drop, auto-reconnect và trigger REST API backfill bù missing candles, đảm bảo continuous time-series.
 
 </div>
 <div>
@@ -546,20 +610,20 @@ style: |
 
 ---
 
-## 19. Runtime Flow: Thực Thi & Thêm Mới Chiến Lược
+## 21. Runtime Flow: Strategy Execution & Dynamic Registration
 
 <div class="columns">
 <div>
 
-### Run Strategy (Handcraft & Auto) & Add Strategy
+### Strategy Execution (Handcrafted / AI) & Dynamic Add Flow
 * **Run Strategy Flow:**
-  * Nạp `Datafeed` & `Sentiment Window` vào `StrategyContext`.
-  * `IStrategy.evaluate()` sinh tín hiệu `BUY` / `SELL` / `HOLD`.
-  * `CompositeStrategy` tổng hợp theo trọng số hoặc đa số.
-* **Add Strategy Flow (Handcraft & AI):**
-  * Handcraft: Thêm file Python vào Registry tự động load.
-  * AI: LLM Agent sinh code qua AST Sandbox xác thực.
-* **Runtime Parity:** Logic chạy đồng nhất 100% trên cả Live và Backtest.
+  * Load `Datafeed` & `Sentiment Window` vào `StrategyContext`.
+  * `IStrategy.evaluate()` emit trading signal `BUY` / `SELL` / `HOLD`.
+  * `CompositeStrategy` aggregate signals theo majority hoặc weighted policy.
+* **Add Strategy Flow (Handcrafted & AI-Generated):**
+  * Handcrafted: Drop Python file vào Strategy Registry → auto-discovery & dynamic load.
+  * AI-Generated: LLM Agent generate strategy code → AST validator & Sandbox verification.
+* **Runtime Parity:** 100% deterministic parity giữa Live Trading và Backtest execution.
 
 </div>
 <div>
@@ -571,16 +635,16 @@ style: |
 
 ---
 
-## 20. Runtime Flow: Pipeline Backtest Bất Đồng Bộ
+## 22. Runtime Flow: Async Backtest Pipeline
 
 <div class="columns">
 <div>
 
-### Quy Trình Thực Thi Thí Nghiệm & Khám Phá
-1. **Tạo Thí Nghiệm:** Ghi thông tin thí nghiệm và sự kiện vào Outbox cùng một ACID transaction.
-2. **Chiếm Quyền (Worker Lease Acquire):** Worker nhận job qua khóa lạc quan (Optimistic Lock) và gửi heartbeat.
-3. **Thực Thi Đa Phân Vùng:** Chạy kiểm thử trên `Train` (30d) → `Validation` (15d) → `Sealed Test` (15d).
-4. **Ghi Nhận Kết Quả:** Tính Sharpe, Drawdown, lưu Trade list và cập nhật Top-K Leaderboard.
+### Async Experiment & Discovery Execution Pipeline
+1. **Create Experiment:** Persist experiment metadata và job event vào Outbox trong cùng một ACID transaction.
+2. **Worker Lease Acquire:** Worker claim job qua Optimistic Lock (FOR UPDATE SKIP LOCKED) và duy trì heartbeat.
+3. **Multi-Split Execution:** Run backtest trên `Train` (30d) → `Validation` (15d) → `Sealed Test` (15d).
+4. **Compute Metrics & Leaderboard:** Calculate Sharpe Ratio, Max Drawdown, Profit Factor; persist Trade logs và update Top-K Leaderboard.
 
 </div>
 <div>
@@ -592,17 +656,17 @@ style: |
 
 ---
 
-## 21. Runtime Flow: Pipeline Crawl Tin Tức & LLM Fallback
+## 23. Runtime Flow: Resilient News Crawl & LLM Fallback Pipeline
 
 <div class="columns">
 <div>
 
-### Thu Thập & Phân Tích Tin Tức Tự Phục Hồi
-1. **Kiểm Tra An Toàn SSRF:** Duyệt nguồn từ `ApprovedSource`, thẩm tra DNS và IP đích.
-2. **Thu Thập Chuẩn:** Trích xuất văn bản qua RSS/HTML Parser.
-3. **Cổng Kiểm Tra Chất Lượng (Quality Gate):** Nếu độ dài bài viết quá ngắn hoặc web đổi DOM → Kích hoạt fallback.
-4. **LLM Fallback Extraction:** Chuyển HTML sang LLM Extractor để tự động nhận diện nội dung.
-5. **Chấm Điểm Sentiment:** Chạy ngầm phân tích ngữ nghĩa và cập nhật điểm [-1.0, 1.0] vào cơ sở dữ liệu.
+### Self-Healing News Crawl & Sentiment Pipeline
+1. **SSRF Validation:** Whitelist check qua `ApprovedSource`, resolve DNS và block internal/private IPs.
+2. **Standard Ingestion:** Fetch & extract article content qua RSS/HTML Parser (Readability).
+3. **Quality Gate Check:** Nếu DOM structure thay đổi hoặc text extraction rỗng → trigger fallback.
+4. **LLM Fallback Extraction:** Dispatch raw HTML sang LLM Agent để parse structured content.
+5. **Async Sentiment Scoring:** Background worker scoring sentiment [-1.0, 1.0] và persist vào PostgreSQL.
 
 </div>
 <div>
@@ -614,16 +678,16 @@ style: |
 
 ---
 
-## 22. Kiến Trúc An Ninh: Phòng Thủ Đa Tầng
+## 24. Security Architecture: Defense-in-Depth
 
 <div class="columns">
 <div>
 
-### Các Lớp Bảo Vệ Hệ Thống (Defense-in-Depth)
-* **Authentication & RBAC:** Xác thực JWT, phân quyền tài nguyên theo người dùng (cô lập dữ liệu thí nghiệm).
-* **Crawler SSRF Prevention:** Chặn IP nội bộ (`127.0.0.1`, `10.0.0.0/8`, cloud metadata), chỉ duyệt domain trong `ApprovedSource`.
-* **AST Sandbox & Safe Execution:** Phân tích AST mã AI sinh ra; nghiêm cấm lệnh nguy hiểm (`eval`, `subprocess`, socket).
-* **Tool Invocation Boundary:** Giới hạn quyền hạn AI Agent qua DTO chặt chẽ.
+### Multi-Layer Security Architecture (Defense-in-Depth)
+* **Authentication & RBAC:** JWT authentication, role-based access control, tenant/user experiment isolation.
+* **Crawler SSRF Prevention:** Block private IP ranges (`127.0.0.1`, `10.0.0.0/8`, cloud metadata), domain whitelisting qua `ApprovedSource`.
+* **AST Sandbox & Safe Execution:** AST static analysis trên AI-generated code; ban dangerous builtins/modules (`eval`, `subprocess`, `socket`, `os.system`).
+* **Tool Invocation Boundary:** Schema-validated DTOs, strict input boundaries cho AI Agents.
 
 </div>
 <div>
@@ -635,19 +699,19 @@ style: |
 
 ---
 
-## 23. Khả Năng Mở Rộng (Scalability) & Benchmark
+## 25. Scalability Architecture & Benchmark
 
 <div class="columns">
 <div>
 
-### Scale-Out & Chiến Lược Chịu Tải 100,000 Backtests
-* **Mở Rộng Ngang Không Trạng Thái (Scale-Out):**
-  * Nhân bản số lượng Python Worker độc lập tùy theo tải CPU.
-  * Phân phối công việc qua hàng đợi PostgreSQL có chỉ mục B-Tree.
-* **Kịch Bản Kiểm Thử Tải (k6 / Locust Benchmark):**
-  * Mô phỏng 10,000 user gửi lệnh Backtest và truy vấn nến đồng thời.
-  * Tốc độ xử lý hàng đợi đạt > 1,500 backtests/phút trên 4 worker.
-  * Độ trễ API nến và leaderboard luôn duy trì ≤ 120ms (p95).
+### Scale-Out Strategy & 100,000 Backtests Benchmark
+* **Stateless Horizontal Scale-Out:**
+  * Spin up N Python Worker instances độc lập dựa trên CPU load / queue backlog.
+  * Distribute jobs qua PostgreSQL B-Tree indexed Leased Job Queue.
+* **Load Testing & Benchmarking (k6 / Locust):**
+  * Simulate 10,000 concurrent users dispatch Backtest jobs và query candle data.
+  * Queue throughput đạt > 1,500 backtests/phút trên 4 workers.
+  * Candle & Leaderboard API latency duy trì ≤ 120ms (p95).
 
 </div>
 <div>
@@ -659,19 +723,19 @@ style: |
 
 ---
 
-## 24. Xử Lý Sự Cố (Fault Tolerance) & Khôi Phục
+## 26. Fault Tolerance & Self-Healing Architecture
 
 <div class="columns">
 <div>
 
-### Cơ Chế Phục Hồi & Mô Phỏng Sự Cố
-* **Chiếm Quyền Xử Lý (Worker Lease Takeover):**
-  * Worker gửi heartbeat 10s/lần. Nếu worker crash, sau 30s hết hạn lease, worker khác tự động tiếp quản job.
+### Resilient Recovery & Chaos Simulation
+* **Worker Lease Takeover & Heartbeat:**
+  * Worker gửi heartbeat 10s/lần. Nếu worker crash, lease timeout sau 30s, worker khác auto-takeover job.
 * **Idempotency & Retry:**
-  * Khóa duy nhất `idempotency_key`, loại bỏ rủi ro chạy trùng lặp.
+  * Unique `idempotency_key` constraint, eliminate duplicate execution risk.
 * **Failure Isolation & Reconnect:**
-  * Lỗi 1 plugin không làm sập Worker; WSS tự reconnect sàn.
-* **Kịch Bản Test Mô Phỏng:** Chủ động tắt module worker/database để kiểm chứng khả năng tự phục hồi.
+  * Plugin failure isolation (lỗi 1 strategy không crash Worker); WSS auto-reconnect & backfill.
+* **Chaos Engineering Simulation:** Kill worker process / inject network drops để verify self-healing behavior.
 
 </div>
 <div>
@@ -683,19 +747,19 @@ style: |
 
 ---
 
-## 25. Triển Khai Thực Tế & MLOps
+## 27. Deployment Topology & MLOps Infrastructure
 
 <div class="columns">
 <div>
 
-### Mô Hình Triển Khai Docker & Kubernetes Readiness
-* **Container Hóa Toàn Diện (Docker Compose):**
-  * Đóng gói độc lập: Next.js Web, Go Edge, Python Worker, AI Service, PostgreSQL, Redis.
-* **Health Checks Khi Triển Khai:**
-  * `/healthz` và `/readyz` tự động khởi động lại container khi lỗi.
-* **MLOps & Prompt Management:**
-  * System prompt và API key LLM tách biệt qua biến môi trường `.env`.
-* **Kubernetes Note:** Hỗ trợ replicas, scheduling, rolling update và HPA khi mở rộng quy mô lớn (MVP dùng Docker Compose).
+### Containerized Deployment (Docker Compose) & K8s Readiness
+* **Full-Stack Containerization:**
+  * Isolated container services: Next.js Web Dashboard, Go Edge Gateway, Python Research API, Python Research Worker × N, Internal AI Inference Adapter, PostgreSQL.
+* **Health Checks & Liveness Probes:**
+  * `/healthz` và `/readyz` endpoints cho container auto-restart & traffic routing.
+* **MLOps & Configuration:**
+  * Versioned system prompts và LLM API keys tách biệt qua environment variables (`.env`).
+* **Kubernetes-Ready Architecture:** Hỗ trợ Deployment Replicas, Rolling Updates, Horizontal Pod Autoscaling (HPA) khi scale production.
 
 </div>
 <div>
@@ -707,30 +771,30 @@ style: |
 
 ---
 
-## 26. Ma Trận Đánh Đổi Kiến Trúc (Tradeoffs Matrix)
+## 28. Architectural Tradeoffs Matrix
 
 | Lựa Chọn Thiết Kế | Phương Án Được Chọn | Phương Án Thay Thế | Lý Do & Đánh Đổi Kiến Trúc (Rationale) |
 | :--- | :--- | :--- | :--- |
-| **Kiến trúc Tổng thể** | **Modular Monolith** | Microservices | **Chọn:** Giảm độ phức tạp vận hành mạng, đảm bảo ranh giới module rõ ràng qua contracts. |
-| **Lưu trữ Nến & Job** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Thí nghiệm & Outbox; B-Tree index đủ đáp ứng hàng triệu nến. |
-| **Hàng Đợi Sự Kiện** | **Postgres Outbox + Redis** | Apache Kafka / RabbitMQ | **Chọn:** Loại bỏ sự cố Dual-write, đảm bảo Outbox nguyên tử và deploy gọn trong Docker Compose. |
-| **Thực Thi Mã AI Sinh** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Khởi tạo sandbox tức thì (<10ms), kiểm soát an toàn cú pháp không tốn tài nguyên. |
-| **Phân Tích Sentiment** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Tiết kiệm chi phí token API, tránh nghẽn luồng crawl; chỉ gọi LLM khi cần phân tích sâu. |
+| **System Architecture** | **Modular Monolith** | Microservices | **Chọn:** Giảm overhead vận hành mạng/distributed latency; enforce module boundaries qua contracts. |
+| **Candle & Job Storage** | **PostgreSQL + B-Tree** | ClickHouse / InfluxDB | **Chọn:** Giữ tính ACID cho Experiments & Outbox; B-Tree indexing đủ đáp ứng hàng triệu candles. |
+| **Job Queue & Event Ingress** | **PostgreSQL Outbox & Leases** | Apache Kafka / RabbitMQ / Redis | **Chọn:** Loại bỏ dual-write, ACID transactional guarantees, zero additional infrastructure dependencies. |
+| **AI Code Execution** | **AST Analyzer + Sandbox** | Docker-in-Docker | **Chọn:** Low latency initialization (<10ms), static syntax safety check, minimal container resource overhead. |
+| **Sentiment Analysis Pipeline** | **Hybrid: Rule + LLM Batch** | Pure LLM Realtime | **Chọn:** Optimize token cost & API rate limits; non-blocking crawl pipeline, deep LLM scoring theo batch. |
 
 ---
 
-## 27. Khả Năng Thay Thế & Mở Rộng (Replaceability)
+## 29. Replaceability & Extensibility Architecture
 
 <div class="columns">
 <div>
 
-### Dễ Dàng Thay Thế Provider & Thuật Toán
-* **Thay Thế Nguồn Dữ Liệu Thị Trường (Market Provider):**
-  * Thiết kế `MarketProviderAdapter` cho phép đổi từ Binance sang OKX, Bybit, Coinbase mà **không thay đổi** Frontend hay Strategy Engine.
-* **Mở Rộng Thuật Toán Tìm Kiếm Nâng Cao:**
-  * Sẵn sàng tích hợp mô hình Reinforcement Learning (PPO) thông qua giao diện `ISearchAlgorithm`.
-* **Mở Rộng Nguồn Thu Thập Tin Tức:**
-  * Dễ dàng bổ sung CryptoPanic, CoinDesk API qua cấu hình.
+### Pluggable Providers & Extensible Algorithms
+* **Pluggable Market Data Providers:**
+  * `MarketProviderAdapter` interface cho phép switch từ Binance sang OKX, Bybit, Coinbase mà **không thay đổi** Core Frontend hay Strategy Engine.
+* **Extensible Search Algorithms:**
+  * Sẵn sàng plug-in Reinforcement Learning (PPO) hoặc Custom Optimizers qua interface `ISearchAlgorithm`.
+* **Extensible News Ingestion:**
+  * Dễ dàng add new sources (CryptoPanic, CoinDesk API) qua config `ApprovedSource`.
 
 </div>
 <div>
@@ -742,32 +806,32 @@ style: |
 
 ---
 
-## 28. Tổng Kết Đồ Án & Giá Trị Kiến Trúc
+## 30. Architectural Summary & Project Conclusion
 
 <div class="columns">
 <div>
 
-### Thành Quả Đạt Được
-* **Chuỗi Quyết Định Rõ Ràng:** Bám sát theo ASRs và Quality Attributes.
-* **Kiến Trúc Rành Mạch, Chống Coupling:** Phân rã 5 module độc lập, triệt tiêu hoàn toàn God Service.
-* **AI Agent & Tự Động Hóa:** Multi-Agent với vòng lặp tự sửa lỗi (Self-repair) và chống Overfitting (Train/Val/Test).
-* **Chịu Tải & Phục Hồi Cao:** Kiểm thử 100,000 backtests, cơ chế Lease Takeover và Idempotency.
+### Architectural Highlights & Key Takeaways
+* **ASR-Driven Architecture:** Bám sát 4 Architectural Drivers & Quality Attributes taxonomy.
+* **Clean Boundaries & Anti-God Service:** Phân rã 6 bounded contexts, zero tight-coupling.
+* **Multi-Agent & Automation:** Self-repair loop (AST + Sandbox) & anti-overfitting data partitioning (Train/Val/Test).
+* **High Scalability & Self-Healing:** Scale-out 100,000 backtests, Lease Takeover & Idempotent execution.
 
-### Phần Hỏi - Đáp (Q & A)
+### Q & A
 * *Cảm ơn Thầy và các bạn đã lắng nghe!*
 
 </div>
 <div>
 
-### Minh Chứng Đầy Đủ
-* **39 Sơ Đồ Blueprint & Specs:** Đầy đủ C4 (L1-L3), UML Class, State Machine, Deployment Topology.
-* **5 Màn Hình Tương Tác Sẵn Sàng:**
+### Architecture Artifacts & Verification
+* **39 Blueprint Diagrams & Specs:** C4 Model (L1-L3), UML Class, State Machines, Sequence Flows, Deployment Topology.
+* **5 Interactive Working Dashboards:**
   1. Realtime Market Chart & Indicators
   2. Strategy Authoring & Plugin Registry
   3. Async Backtest & Trade Visualization
   4. Search Loop & Top-K Leaderboard
   5. News Crawler & Sentiment Intelligence
-* **Kịch Bản Test Tự Động & Benchmark Đầy Đủ.**
+* **Automated Test Scenarios & Benchmark Suite.**
 
 </div>
 </div>

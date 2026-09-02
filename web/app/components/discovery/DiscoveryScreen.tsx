@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   MAX_COMBINED,
@@ -30,6 +31,7 @@ export function DiscoveryScreen() {
     discoveryArchive,
     discoveryArchiveState,
     loadProvenance,
+    openExperiment,
     search,
     discoverySessions,
     discoverySessionsState,
@@ -41,6 +43,7 @@ export function DiscoveryScreen() {
     focusIndex,
     availableTimeframes,
   } = useWorkspace();
+  const router = useRouter();
 
   const timeframe = panels[0]?.timeframe ?? "5m";
   const [discoveryTimeframe, setDiscoveryTimeframe] = useState(timeframe);
@@ -127,6 +130,15 @@ export function DiscoveryScreen() {
     return activeDraft.selectedStrategyIds.map((id) => ({ strategy_id: id, weight: weights[id] }));
   }
 
+  async function viewLeaderboardExperiment(id: string) {
+    if (await openExperiment(id)) router.push("/backtests");
+  }
+
+  async function backtestDiscoveryStrategy() {
+    const accepted = await runBacktest(submittedChildren(), undefined, activeDraft.timeframe, undefined, activeDraft.market);
+    if (accepted) router.push("/backtests");
+  }
+
   return (
     <section className={styles.screen} aria-label="Không gian tạo và tìm kiếm strategy">
       {issues.length > 0 && draft.selectedStrategyIds.length > 0 ? (
@@ -173,13 +185,14 @@ export function DiscoveryScreen() {
           <BuilderActions
             canSubmit={canSubmit}
             onSave={() => void startSearch(activeDraft)}
-            onBacktest={() => void runBacktest(submittedChildren())}
+            onBacktest={() => void backtestDiscoveryStrategy()}
           />
         </div>
 
         <div className={styles.rightColumn}>
           <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
+            key={`${search?.search_run_id ?? "no-run"}:${selectedMarket.provider}:${selectedMarket.symbol}:${activeTimeframe}`}
             entries={discoveryLeaderboard}
             archive={discoveryArchive}
             run={search}
@@ -187,6 +200,7 @@ export function DiscoveryScreen() {
             referenceMode={dataMode === "mock"}
             onRefresh={() => void refreshDiscoveryLeaderboard()}
             onTrace={(id) => void loadProvenance(id)}
+            onOpenExperiment={(id) => void viewLeaderboardExperiment(id)}
           />
           <Panel title="Discovery sessions" bodyClassName={styles.sessionHistory}>
             <Field label="Past sessions">

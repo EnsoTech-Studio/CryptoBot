@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type WheelEvent as ReactWheelEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from "react";
 
 import type { Candle, ExecutionMarker, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
 
@@ -33,9 +33,9 @@ const CHART_FRAMES: Record<ChartSize, {
     showAxis: true,
   },
   result: {
-    width: 900,
-    height: 560,
-    pad: { left: 58, right: 58, top: 20, bottom: 28 },
+    width: 720,
+    height: 540,
+    pad: { left: 48, right: 78, top: 20, bottom: 30 },
     gap: 10,
     volumeH: 72,
     subH: 70,
@@ -100,6 +100,7 @@ export function ChartCanvas({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const timeZone = "Asia/Ho_Chi_Minh";
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ startX: number; startPan: number; moved: boolean } | null>(null);
   const baseVisible = Math.min(candles.length, visibleLimit ?? frame.visible);
   const visibleSpan = candles.length > 0 ? Math.max(8, Math.min(candles.length, Math.round(Math.max(1, baseVisible) / zoom))) : 0;
@@ -108,16 +109,20 @@ export function ChartCanvas({
   const endIndex = candles.length - safePanOffset;
   const view = candles.slice(Math.max(0, endIndex - visibleSpan), endIndex);
   const visibleTimes = new Set(view.map((candle) => candle.open_time));
+  const viewStart = view[0]?.open_time;
+  const viewEnd = view.at(-1)?.open_time;
 
   const priceValues = view.flatMap((candle) => [candle.high, candle.low]);
   series.filter((item) => item.pane === "main").forEach((item) => {
     item.points?.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
     item.band?.upper.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
     item.band?.lower.forEach((point) => { if (point.v != null && visibleTimes.has(point.t)) priceValues.push(point.v); });
-    item.zones?.forEach((zone) => priceValues.push(zone.price_low, zone.price_high));
+    item.zones?.forEach((zone) => {
+      if (zoneIntersectsView(zone, viewStart, viewEnd)) priceValues.push(zone.price_low, zone.price_high);
+    });
   });
   executionMarkers.forEach((marker) => {
-    if (marker.price != null) priceValues.push(marker.price);
+    if (marker.price != null && visibleTimes.has(marker.t)) priceValues.push(marker.price);
   });
 
   const minPrice = Number.isFinite(Math.min(...priceValues)) ? Math.min(...priceValues) : 0;
@@ -134,12 +139,18 @@ export function ChartCanvas({
 
   function chartCoordinates(event: ReactPointerEvent<SVGSVGElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
-    const scaleX = width / Math.max(1, rect.width);
-    const scaleY = height / Math.max(1, rect.height);
+    /* preserveAspectRatio="xMidYMid meet" can letterbox the viewBox inside
+       the CSS box. Account for that offset so hover/crosshair coordinates
+       stay aligned with the candles instead of the outer card. */
+    const scale = Math.min(rect.width / width, rect.height / height);
+    const renderedWidth = width * scale;
+    const renderedHeight = height * scale;
+    const offsetX = (rect.width - renderedWidth) / 2;
+    const offsetY = (rect.height - renderedHeight) / 2;
     return {
-      x: (event.clientX - rect.left) * scaleX,
-      y: (event.clientY - rect.top) * scaleY,
-      width: rect.width,
+      x: (event.clientX - rect.left - offsetX) / Math.max(0.0001, scale),
+      y: (event.clientY - rect.top - offsetY) / Math.max(0.0001, scale),
+      width: renderedWidth,
     };
   }
 
@@ -152,6 +163,8 @@ export function ChartCanvas({
 
   function handlePointerDown(event: ReactPointerEvent<SVGSVGElement>) {
     if (!interactive || event.button !== 0) return;
+    /* A drag is a chart gesture, never a browser text-selection gesture. */
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { startX: event.clientX, startPan: safePanOffset, moved: false };
     setDragging(true);
@@ -176,11 +189,21 @@ export function ChartCanvas({
     setDragging(false);
   }
 
-  function handleWheel(event: ReactWheelEvent<SVGSVGElement>) {
-    if (!interactive || candles.length === 0) return;
-    event.preventDefault();
-    setZoom((current) => Math.max(1, Math.min(6, current + (event.deltaY < 0 ? 0.35 : -0.35))));
-  }
+  useEffect(() => {
+    const node = svgRef.current;
+    if (!interactive || !node) return;
+    /* React's delegated wheel listener can still allow scroll chaining in
+       browsers that mark it passive. Register a non-passive listener directly
+       on the SVG so wheel always belongs to chart zoom, never the page. */
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (candles.length === 0) return;
+      setZoom((current) => Math.max(1, Math.min(6, current + (event.deltaY < 0 ? 0.35 : -0.35))));
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, [candles.length, interactive]);
 
   function resetViewport() {
     setZoom(1);
@@ -189,22 +212,27 @@ export function ChartCanvas({
   }
 
   return (
-    <svg
-      className="chart-svg"
+      <svg
+        ref={svgRef}
+        className={`chart-svg chart-svg--${size}`}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={ariaLabel}
-      style={interactive ? { touchAction: "none", cursor: dragging ? "grabbing" : "crosshair" } : undefined}
+      style={interactive ? {
+        touchAction: "none",
+        /* Show the crosshair cursor only while the pointer is over a candle.
+           Letterboxed side margins keep the normal pointer, preventing the
+           native "+" cursor from appearing detached from the chart lines. */
+        cursor: dragging ? "grabbing" : hoverIndex != null ? "crosshair" : "default",
+      } : undefined}
       onPointerDown={interactive ? handlePointerDown : undefined}
       onPointerMove={interactive ? handlePointerMove : undefined}
       onPointerUp={interactive ? handlePointerUp : undefined}
       onPointerCancel={interactive ? handlePointerUp : undefined}
       onPointerLeave={interactive ? () => { if (!dragRef.current) setHoverIndex(null); } : undefined}
-      onWheel={interactive ? handleWheel : undefined}
       onDoubleClick={interactive ? resetViewport : undefined}
     >
-      <title>{ariaLabel}</title>
       {interactive ? <desc>Hover để xem OHLCV, cuộn để zoom, kéo ngang để di chuyển, double-click để đặt lại.</desc> : null}
       <rect x="0" y="0" width={width} height={height} className="chart-bg" />
       <rect x={pad.left} y={pad.top} width={plotW} height={plotH} className="pane-bg main-pane" />
@@ -317,7 +345,14 @@ function renderMainSeries(
   const keyPrefix = `${item.name}-${seriesIndex}`;
   if (item.points) {
     const d = pointPath(item.points, candles, x, y);
-    if (d) paths.push(<path key={`${keyPrefix}-line`} d={d} className={`overlay-line ${item.overlay_type} ${item.style ?? "solid"}`} />);
+    if (d) {
+      const movingAveragePeriod = item.overlay_type === "moving_average" && /(?:^|[:(])50(?:\)|$)/i.test(item.name)
+        ? "moving_average_50"
+        : item.overlay_type === "moving_average" && /(?:^|[:(])20(?:\)|$)/i.test(item.name)
+          ? "moving_average_20"
+          : "";
+      paths.push(<path key={`${keyPrefix}-line`} d={d} className={`overlay-line ${item.overlay_type} ${movingAveragePeriod} ${item.style ?? "solid"}`} />);
+    }
   }
   if (item.band) {
     const area = bandAreaPath(item.band.upper, item.band.lower, candles, x, y);
@@ -327,7 +362,10 @@ function renderMainSeries(
       if (d) paths.push(<path key={`${keyPrefix}-${name}`} d={d} className={`overlay-line bollinger ${name}`} />);
     }
   }
+  const viewStart = candles[0]?.open_time;
+  const viewEnd = candles.at(-1)?.open_time;
   item.zones?.forEach((zone, index) => {
+    if (!zoneIntersectsView(zone, viewStart, viewEnd)) return;
     const startIndex = clampIndex(indexForTime(candles, zone.from), candles.length);
     const endIndex = clampIndex(indexForTime(candles, zone.to), candles.length, candles.length - 1);
     paths.push(
@@ -384,19 +422,13 @@ function renderSignalMarkers(
     const isBuy = marker.overlay_type.includes("buy");
     const cx = x(index);
     const cy = isBuy ? y(candle.low) + 18 * scale : y(candle.high) - 18 * scale;
-    const shape = (
-      <path
-        key={`${marker.t}-${marker.overlay_type}-shape`}
-        d={isBuy ? triangleUp(cx, cy, scale) : triangleDown(cx, cy, scale)}
-        className={isBuy ? "signal-marker buy" : "signal-marker sell"}
-      />
-    );
-    /* The B/S glyph is illegible on a context chart, so the shape carries the
+    const shape = <path key={`${marker.t}-${marker.overlay_type}-shape`} d={isBuy ? triangleUp(cx, cy, scale) : triangleDown(cx, cy, scale)} className={isBuy ? "signal-marker buy" : "signal-marker sell"} />;
+    /* Full labels do not survive a context chart, so its shape carries the
        meaning alone at small scale. */
     if (scale < 1) return [shape];
     return [
       shape,
-      <text key={`${marker.t}-${marker.overlay_type}-text`} x={cx} y={isBuy ? cy + 4 : cy + 3} textAnchor="middle" className="signal-text">{isBuy ? "B" : "S"}</text>,
+      <text key={`${marker.t}-${marker.overlay_type}-text`} x={cx} y={isBuy ? cy + 4 : cy + 3} textAnchor="middle" className="signal-text">{isBuy ? "BUY" : "SELL"}</text>,
     ];
   });
 }
@@ -478,6 +510,15 @@ function clampIndex(value: number, length: number, fallback = 0): number {
   if (length <= 0) return 0;
   if (value < 0) return Math.max(0, Math.min(length - 1, fallback));
   return Math.max(0, Math.min(length - 1, value));
+}
+
+function zoneIntersectsView(zone: { from: string; to: string }, viewStart?: string, viewEnd?: string) {
+  if (!viewStart || !viewEnd) return false;
+  const zoneStart = Date.parse(zone.from);
+  const zoneEnd = Date.parse(zone.to);
+  const start = Date.parse(viewStart);
+  const end = Date.parse(viewEnd);
+  return Number.isFinite(zoneStart) && Number.isFinite(zoneEnd) && zoneStart <= end && zoneEnd >= start;
 }
 
 function triangleUp(x: number, y: number, s = 1) {

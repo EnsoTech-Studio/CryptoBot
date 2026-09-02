@@ -78,6 +78,7 @@ export function DiscoveryProgress({
   const maxCandidates = submittedDraft?.maxCandidates ?? (showMock ? PROGRESS_MOCK.maxIterations : draft.maxCandidates);
   const iteration = live ? tested : showMock ? PROGRESS_MOCK.iteration : 0;
   const runStrategies = submittedDraft?.selectedStrategyIds ?? [];
+  const runActive = run?.status === "queued" || run?.status === "running" || run?.status === "paused";
 
   return (
     <Panel title="Tiến trình Discovery" info="Số liệu lấy từ search run thật; mốc tối đa là stop condition đã gửi.">
@@ -137,7 +138,7 @@ export function DiscoveryProgress({
         ) : <span className={styles.progressLabel}>Chưa có Discovery run.</span>}
       </div>
 
-      {live ? (
+      {runActive ? (
         <div className={styles.runActions}>
           <Button variant="ghost" disabled={run.status !== "running" && run.status !== "queued"} onClick={() => onAction("pause")}>
             Tạm dừng
@@ -153,6 +154,8 @@ export function DiscoveryProgress({
         <div className={styles.progressMockActions}>
           {showMock ? (
             <PlannedNotice>Số liệu minh hoạ theo thiết kế. Bắt đầu một run để thay bằng dữ liệu thật.</PlannedNotice>
+          ) : live ? (
+            <span className={styles.progressLabel}>Run trước đã kết thúc. Có thể bắt đầu Discovery mới.</span>
           ) : null}
           <div className={styles.runActions}>
             <Button variant="primary" disabled={!canStart} onClick={onStart}>

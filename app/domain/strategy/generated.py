@@ -61,6 +61,9 @@ class DeclarativeStrategy:
             lower, middle, upper = (
                 f"bollinger_lower:{suffix}", f"bollinger_middle:{suffix}", f"bollinger_upper:{suffix}"
             )
+            self._refs[name + ".lower"] = lower
+            self._refs[name + ".middle"] = middle
+            self._refs[name + ".upper"] = upper
             band = str(item.get("band", "middle")).lower()
             self._refs[name] = {"lower": lower, "middle": middle, "upper": upper}.get(band, middle)
             requirement = upper

@@ -1,19 +1,19 @@
-## 5. Tổng Quan Use Case Hệ Thống
+## 7. Tổng Quan Use Case Hệ Thống
 
 <div class="columns">
 <div>
 
-### Tác tử (Actors) & Nhóm Chức năng
+### Actors & Chức Năng Chính
 * **Quant Researcher / Trader:**
-  * Xem biểu đồ nến realtime đa khung thời gian (1m, 5m, 1h, 1d).
-  * Thử nghiệm chiến lược đơn và composite.
-  * Chạy Backtest, xem equity curve, drawdown.
-  * Nhập prompt tự nhiên để sinh & sửa mã chiến lược.
+  * Xem realtime candlestick chart đa timeframe (1m, 5m, 1h, 1d).
+  * Thử nghiệm single strategy và composite strategy.
+  * Chạy Backtest, phân tích equity curve, max drawdown, win rate.
+  * Nhập natural language prompt hoặc URL để AI generate & self-repair strategy code.
 * **Autonomous AI Agent:**
-  * Crawl tin tức, trích xuất text & chấm điểm sentiment.
-  * Tự động chạy vòng lặp tìm kiếm (Loop Discovery).
+  * Crawl financial news, extract text & scoring sentiment.
+  * Tự động trigger Auto Search Loop (Loop Discovery).
 * **System Worker:**
-  * Nạp nến định kỳ, xử lý hàng đợi Backtest ngầm.
+  * Ingest candle định kỳ, process async Backtest Job Queue.
 
 </div>
 <div>
@@ -25,17 +25,17 @@
 
 ---
 
-## 6. C4 Model (Level 1) - System Context Diagram
+## 8. C4 Model (Level 1) - System Context Diagram
 
 <div class="columns">
 <div>
 
-### Ranh Giới & Hệ Thống Bên Ngoài
-* **CryptoBot Core Platform:** Hệ thống trung tâm thu nạp nến, nghiên cứu chiến lược và chấm điểm danh mục.
+### System Boundaries & External Systems
+* **CryptoBot Core Platform:** Platform trung tâm cho market data ingestion, strategy research và portfolio ranking.
 * **External Systems:**
-  * **Binance Exchange:** Dữ liệu nến lịch sử (REST) và giá biến động trực tiếp (WebSocket).
+  * **Binance Exchange:** Historical candle data (REST) và BBO price stream (WebSocket).
   * **News Sources / RSS Feeds:** Cung cấp thông tin thị trường crypto đa nguồn.
-  * **LLM Providers (OpenAI / Groq):** Suy luận ngôn ngữ, phân tích sentiment & tự sửa mã (Self-repair).
+  * **LLM Providers (OpenAI / Groq):** LLM reasoning, sentiment analysis & strategy self-repair.
 
 </div>
 <div>
@@ -47,17 +47,18 @@
 
 ---
 
-## 7. C4 Model (Level 2) - Container Diagram
+## 9. C4 Model (Level 2) - Container Diagram
 
 <div class="columns">
 <div>
 
-### Phân Rã Các Container Chính
-* **Next.js Web App (SPA):** Giao diện tương tác, biểu đồ nến realtime, cấu hình chiến lược & xem Leaderboard.
-* **Go Edge Gateway:** Xác thực RBAC, định tuyến CQRS, duy trì WebSocket Binance và stream nến qua SSE/WS.
-* **Python Research Engine:** Xử lý tính toán nặng (Backtest Worker, Loop Discovery, Metric Evaluation).
-* **PostgreSQL (Storage):** Lưu trữ nến, chiến lược, thí nghiệm và Outbox table.
-* **Redis (Cache & Bus):** In-memory Pub/Sub và caching realtime indicators.
+### Container Architecture (C4 Level 2)
+* **Next.js Dashboard:** Render-only UI: chart, authoring, search, backtest, trade detail & news.
+* **Go Edge & Market Gateway:** Public REST/WSS, auth/quota, Candle/BBO normalization & realtime fan-out.
+* **Python Research API:** Strategy/Agent runtime, experiment/search, news/sentiment orchestration & queries.
+* **Python Research Worker × N:** Leased backtest/agent jobs; immutable Candle+BBO; execution; facts/outbox.
+* **PostgreSQL:** Source of truth: market, strategies, jobs/results, news/sentiment & outbox.
+* **Object Storage / Broker (optional):** Raw HTML by hash; replaceable queue/stream adapter.
 
 </div>
 <div>
@@ -69,17 +70,16 @@
 
 ---
 
-## 8. C4 Model (Level 3) - Python Research Platform
+## 10. C4 Model (Level 3) - Python Research Platform
 
 <div class="columns">
 <div>
 
-### Cấu Trúc Nội Bộ Python Platform
-* **Strategy Registry:** Quản lý lifecycle và metadata của các plugin chiến lược.
-* **Deterministic Backtest Engine:** Mô phỏng khớp lệnh chính xác (BBO, Slippage, Fee).
-* **Search & Loop Manager:** Điều phối thuật toán tìm kiếm (Random, Genetic, Bayesian, LLM).
-* **Worker Lease Manager:** Phân phối công việc không khóa (Optimistic Lock) và tự phục hồi.
-* **AST Sandbox:** Kiểm tra an toàn cú pháp mã nguồn do AI tạo ra trước khi thực thi.
+### Component Breakdown: Python Research Platform
+* **Application services:** `Research API`, `Experiment/Search/Ranking`, `News/Sentiment` & `AgentOrchestrator`.
+* **Domain runtime:** `StrategyRegistry + StrategyRuntime`; `Backtest Engine + Execution Simulator`; news rules; agent state/artifacts.
+* **Python-owned ports:** `MarketDataPort`, `ModelGatewayPort`, `Artifact/Sandbox/Approval` & `Repository/Job/Outbox` ports.
+* **Infrastructure adapters:** Go Market adapter, internal AI/LLM adapter, isolated Sandbox Runner, SafeFetcher/Readability & PostgreSQL repositories.
 
 </div>
 <div>
@@ -91,16 +91,17 @@
 
 ---
 
-## 9. C4 Model (Level 3) - Go Edge & Market Gateway
+## 11. C4 Model (Level 3) - Go Edge & Market Gateway
 
 <div class="columns">
 <div>
 
-### Cấu Trúc Nội Bộ Go Gateway
-* **Binance Adapter:** Duy trì kết nối WSS liên tục, tự động reconnect và gọi REST Backfill khi rớt mạng.
-* **Candle Aggregator & BBO Streamer:** Tổng hợp nến tạm thời (provisional candle) và đóng nến vào CSDL.
-* **CQRS Request Handler:** Phân tách rõ ràng luồng Command (tạo thí nghiệm) và Query (đọc nến, leaderboard).
-* **Security & Auth Middleware:** Kiểm tra JWT token, phân quyền RBAC và giới hạn tần suất gọi API.
+### Component Breakdown: Go Edge & Market Gateway
+* **REST API + Auth and Ownership Guard:** Request validation/DTO mapping, JWT, RBAC & quota.
+* **Public WebSocket Hub:** Subscription fan-out theo panel key.
+* **MarketProviderRegistry + BinanceAdapter:** Resolve provider, REST history & WSS kline/BBO.
+* **MarketNormalizer + MarketService:** Validate symbol/timeframe/decimal/timestamp/sequence; checkpoint, de-dup, persistence, reconnect & backfill.
+* **Python Research Client + Internal Event Ingress:** Signed commands, queries và progress/result events.
 
 </div>
 <div>

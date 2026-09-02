@@ -16,7 +16,10 @@ class DiscoveryProposalError(ValueError):
 
 
 def validate_llm_proposal(
-    proposal: dict[str, Any], search_space: dict[str, Any], archive: list[dict[str, Any]]
+    proposal: dict[str, Any],
+    search_space: dict[str, Any],
+    archive: list[dict[str, Any]],
+    catalog: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate strict model output and return a canonical candidate envelope.
 
@@ -51,7 +54,7 @@ def validate_llm_proposal(
         raise DiscoveryProposalError("strategy is outside the selected catalog")
     leaves = flat_leaves(definition)
     for leaf in leaves:
-        _validate_leaf(leaf, allowed, search_space)
+        _validate_leaf(leaf, allowed, search_space, catalog or {})
     valid, _rules = DomainGuidedGenerator._rules({"candidate_definition": definition})
     if not valid:
         raise DiscoveryProposalError("candidate violates domain parameter rules")
@@ -61,7 +64,12 @@ def validate_llm_proposal(
     return {"candidate_definition": definition, "candidate_hash": candidate_hash}
 
 
-def _validate_leaf(leaf: dict[str, Any], allowed: set[str], search_space: dict[str, Any]) -> None:
+def _validate_leaf(
+    leaf: dict[str, Any],
+    allowed: set[str],
+    search_space: dict[str, Any],
+    catalog: dict[str, dict[str, Any]],
+) -> None:
     strategy_id = leaf.get("strategy_id")
     if strategy_id not in allowed or leaf.get("version", "v1") != "v1":
         raise DiscoveryProposalError("leaf is outside the selected catalog")
@@ -71,8 +79,15 @@ def _validate_leaf(leaf: dict[str, Any], allowed: set[str], search_space: dict[s
     try:
         definition = default_registry().resolve(strategy_id, "v1").definition()
     except (DomainError, KeyError) as exc:
-        raise DiscoveryProposalError("leaf is not registered") from exc
-    properties = (definition.parameters_schema or {}).get("properties", {})
+        # Approved declarative strategies are persisted in the catalog but are
+        # intentionally absent from the built-in Python registry.
+        metadata = catalog.get(strategy_id)
+        if metadata is None:
+            raise DiscoveryProposalError("leaf is not registered") from exc
+        schema = metadata.get("parameters_schema") or {}
+        properties = schema.get("properties", schema) if isinstance(schema, dict) else {}
+    else:
+        properties = (definition.parameters_schema or {}).get("properties", {})
     if set(params) - set(properties):
         raise DiscoveryProposalError("leaf contains an unknown parameter")
     configured = (search_space.get("parameter_grid") or {}).get(strategy_id) or {}
