@@ -49,14 +49,14 @@ Slides:
         + Database: Chia theo nhóm data -> bảng data model
             + Redis
             + PostgreSQL
-        + Agent: Agent Strategy, Crawling agent, LLM sinh code
+        + Agent: Agent sinh strategy từ ngôn ngữ, Crawling agent, Loop agent combination
         + External services: Binance, AI service, news sources
     + Runtime flow: Nói về từng flow  
-        + Market: flow hiện candle từ binance
+        + Market (Realtime): flow hiện candle từ binance
         + Strategy
             + Run strategy: handcraft + auto
             + Add Strategy
-        + Experiment: Chạy Backtest
+        + Backtest
         + News Crawling: pipeline chạy new crawling (handcraft + LLM hỗ trợ)
     + Security: Access control, authen
     + Scalability: scale-out, scale-up -> chạy test k6, locust
@@ -65,7 +65,7 @@ Slides:
         + Scale và failure khi deploy: health check
         + Kubernetes hỗ trợ replicas, scheduling, rolling deployment và autoscaling nhưng không bắt buộc cho MVP -> dùng docker compose
     + Tổng kết: extensibility, replaceability, scalability/failure theo yêu cầu
-    + Bàn thêm tradeoffs: lập ra cái bảng tradeoffs
+    + Tradeoffs: lập ra cái bảng tradeoffs
 
 Demo:
 - 5 web pages thao tác cách hoạt động
@@ -106,12 +106,8 @@ Note for check:
 
 # Kiến thức:
 
-
 3. Backtest:
 Event-driven Architecture
-
-
-
 
 
 Improving:
@@ -146,14 +142,58 @@ Improving:
     (3): gọi web search => crawling => suy luận.
     - Tìm kiếm web uy tín
     - Parse web và html để lấy thông tin
-    - 
 
-Code:
+Fix 1:
 - Add feat crawling news thông thường + crawl có agent LLM phân tích 
 - Add feat AI sentiment -> tích hợp LLM không rule based, lấy AI api key ngoài
-- Add feat agent NLP sinh ngôn ngữ từ câu của user
+- Add feat agent NLP sinh ngôn ngữ từ câu của user, 
     + Sinh code gán kế thừa vào interface Strategy
 - Thêm UI cho backtest
+
+Fix 2:
+UI
+- Bỏ phần tắt mở realtime, chữ đang nhận dữ liệu, 
+- Bỏ Pro Student – Gói đang dùng, Ngày hết hạn 20/06/2025, Notification bell, Settings
+- Bỏ phần logic cập nhật candle
+- Chỉnh lại UI thao tác xem giá giống web crypto thật
+- Làm thêm phóng to, thu nhỏ cho web
+- Chỉnh lại khi nhấn đổi sàn thì giao diện hiện 
+
+
+Backtest:
+- Lưu data có sẵn để chạy test backtest
+- List ra những strategy chạy backtest demo
+- viết script crawl data đưa lên db
+
+
+Agent crawler:
+Tạo script chạy insert mock data vào supabase, dùng mock data để dùng làm demo parse html từ news
+Chạy parse html bằng LLM thì dùng model của groq tôi đã gắn key sẵn
+Phân tích sentiment bằng LLM, viết thêm prompt phân tích news tổng hợp đó thành điểm số 
+Phần tích hợp strategy thì thêm button "lưu strategy" tải về máy hoặc có thể copy sau đó dán vào Strategy engine
+System prompt của LLM để vào folder config, không gán cứng trong code
+Đảm bảo chạy parse html từ web và chạy phân tích news thành score và strategy
+
+
+#Testing:
+
+
+## Strategy 
+
+## 
+
+
+Demo test:
+- Thêm strategy:
+    + Tạo file code mới MACDStrategy thêm vào backend và khởi động lại backend 
+    + Thêm bằng LLMs
+- Tạo Search algorithm: thêm Genetic Search hoặc sửa
+- Thêm provider với vào Market Data
+- Generate combination strategy
+- Chạy backtest -> Leaderboard -> Trade visualization
+- Run news crawling and sentiment analysis  
+- 
+
 
 
 ----------------------------------------------------------
@@ -226,27 +266,18 @@ Câu hỏi:
 
 2. C4 Context và Container của nhóm?
 
-
-
 3. Boundary của Market / Strategy / Experiment / News?
-
 
 4. Thêm strategy mới sửa ở đâu?
 
-
 5. Đổi search algorithm sửa ở đâu?
-
 
 6. Provider mới có làm frontend đổi?
 
-
 7. 100.000 backtests scale thế nào?
-
 
 8. Service lỗi có lan failure không?
 
-
 9. Duplicate/retry/event order xử lý thế nào?
-
 
 10. Leaderboard result truy được provenance thế nào?
