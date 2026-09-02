@@ -53,6 +53,48 @@ def build_chart_overlay_delta(
     }
 
 
+def build_current_signals(
+    candles: list[Candle], strategies: list[tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """Evaluate each selected strategy on the latest closed candle."""
+    if not candles:
+        return [
+            {"strategy_id": strategy_id, "version": version, "action": "HOLD", "confidence": None, "price": None, "evidence": None, "observed_at": None}
+            for strategy_id, version in strategies
+        ]
+
+    latest = candles[-1]
+    result: list[dict[str, Any]] = []
+    for strategy_id, version in strategies:
+        strategy = default_registry().resolve(strategy_id, version)
+        params: dict[str, Any] = {}
+        requirements = DeterministicEngine._safe_requirements(strategy, params)
+        warm_up = DeterministicEngine._safe_warm_up(strategy, params)
+        indicators = DeterministicLibrary().precompute([candle.close for candle in candles], requirements)
+        index = len(candles) - 1
+        signal = strategy.analyze(
+            AnalysisContext(
+                provider=latest.provider,
+                symbol=latest.symbol,
+                timeframe=latest.timeframe,
+                candles=CausalCandles(candles, index),
+                index=index,
+                indicators=IndicatorView(indicators, index),
+                params=params,
+            )
+        ) if index >= warm_up else None
+        result.append({
+            "strategy_id": strategy_id,
+            "version": version,
+            "action": signal.action if signal else "HOLD",
+            "confidence": signal.confidence if signal else None,
+            "price": signal.price if signal else None,
+            "evidence": signal.evidence if signal and isinstance(signal.evidence, dict) else None,
+            "observed_at": latest.close_time.isoformat(),
+        })
+    return result
+
+
 def _series(indicators: dict[str, list[float | None]], candles: list[Candle]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, list[dict[str, float | str | None]]]] = {}
     output: list[dict[str, Any]] = []
