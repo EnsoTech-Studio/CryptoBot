@@ -44,6 +44,27 @@ class StrategySpecRequest(BaseModel):
         return value
 
 
+class DiscoveryProposalRequest(BaseModel):
+    mode: Literal["new", "improve", "combine"]
+    search_space: dict[str, Any]
+    archive: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    research: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiscoveryProposal(BaseModel):
+    candidate_definition: dict[str, Any]
+    hypothesis: str = Field(min_length=1, max_length=1_000)
+    operation: Literal["new", "improve", "combine"]
+
+
+class DiscoveryProposalResponse(BaseModel):
+    proposal: DiscoveryProposal
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    model_version: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)
+
+
 class StrategySpecResponse(BaseModel):
     schema_version: str = "strategy-spec/v1"
     strategy_id: str = Field(min_length=1, max_length=120)

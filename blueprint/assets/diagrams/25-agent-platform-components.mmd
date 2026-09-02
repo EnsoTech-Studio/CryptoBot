@@ -1,5 +1,5 @@
 flowchart TB
-    Trigger["Domain trigger<br/>authoring, extraction, discovery or insight"]
+    Trigger["Domain trigger<br/>authoring, extraction or insight"]
     Orchestrator["AgentOrchestrator<br/>persisted state machine, idempotency,<br/>resume, cancellation and event progress"]
 
     subgraph Control["Shared deterministic control plane"]
@@ -10,7 +10,7 @@ flowchart TB
         Permission --> Budget --> Tools --> Audit
     end
 
-    Roles["Six logical role profiles in Python research<br/><br/>P0 StrategyDesignerAgent<br/>P0 StrategyImplementationAgent<br/>P0 StrategyRepairAgent<br/>P1 NewsExtractionAgent<br/>P2 CandidateDiscoveryAgent - optional/default-off<br/>P2 MarketInsightAgent - optional/default-off"]
+    Roles["Five logical role profiles in Python research<br/><br/>P0 StrategyDesignerAgent<br/>P0 StrategyImplementationAgent<br/>P0 StrategyRepairAgent<br/>P1 NewsExtractionAgent<br/>P2 MarketInsightAgent - optional/default-off"]
     Services["Typed deterministic backing services<br/><br/>Safe source/document service<br/>Spec validator, Registry, compiler, policy checker<br/>Isolated Sandbox Runner + approval/publisher<br/>Search queue, evaluator, ranking, cost estimator<br/>Readability, Quality Gate, news validation/cache<br/>Market/indicator/news/experiment query ports"]
     State[("Python state/evidence store<br/>drafts, runs, attempts, artifacts,<br/>sandbox reports and approvals")]
     ModelGateway["ModelGateway<br/>versioned structured inference"]

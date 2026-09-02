@@ -92,6 +92,7 @@ export const SAVE_FORM = {
 export const SOURCE_OPTIONS = ["USER_PROMPT", "WEB_IMPORT", "MANUAL_JSON"] as const;
 
 export type ImportRow = {
+  draftId?: string;
   strategyId: string | null;
   name: string;
   source: "USER_PROMPT" | "WEB_IMPORT" | "MANUAL_DSL";
@@ -102,6 +103,7 @@ export type ImportRow = {
 };
 
 export type RecentImportDraft = {
+  draft_id?: string;
   source_type: "text" | "approved_url" | "dsl";
   status: string;
   name_hint: string | null;
@@ -138,6 +140,7 @@ export const IMPORT_ROWS: ImportRow[] = [
 export function recentImportRows(drafts: RecentImportDraft[], useReferenceFixtures = false): ImportRow[] {
   if (drafts.length === 0) return useReferenceFixtures ? IMPORT_ROWS : [];
   return drafts.map((draft) => ({
+    draftId: draft.draft_id,
     strategyId: draft.strategy_spec?.strategy_id ?? null,
     name: draft.strategy_spec?.display_name ?? draft.name_hint ?? "Strategy draft",
     source: draft.source_type === "approved_url" ? "WEB_IMPORT" : draft.source_type === "dsl" ? "MANUAL_DSL" : "USER_PROMPT",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,6 +18,10 @@ func Open(ctx context.Context, databaseURL string) (*Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database configuration: %w", err)
 	}
+	// Supabase's transaction pooler can move each transaction to a different
+	// server session; simple-protocol queries do not depend on prepared
+	// statements surviving that move.
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	config.MaxConns = 12
 	config.MinConns = 1
 	config.MaxConnLifetime = 30 * time.Minute

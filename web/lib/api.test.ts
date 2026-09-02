@@ -298,6 +298,7 @@ test("search submission preserves the catalog strategy version and defaults", as
       ...createDraft({ provider: "binance_usdm", symbol: "ETHUSDT" }, "5m"),
       selectedStrategyIds: ["generated.rsi-9f3c"],
       weights: { "generated.rsi-9f3c": 1 },
+      method: "random_search" as const,
     };
     await api.startSearch(draft, [
       { strategy_id: "generated.rsi-9f3c", strategy_version: "v2", parameters: { period: 21 }, weight: 1 },
@@ -308,6 +309,100 @@ test("search submission preserves the catalog strategy version and defaults", as
       parameters: { period: 21 },
       weight: 1,
     }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("discovery submission uses the durable generator and archive endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  const requested: string[] = [];
+  const submitted: Record<string, unknown>[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.includes("/markets/datasets")) {
+      return new Response(JSON.stringify({
+        datasets: [{
+          id: "dataset-sol",
+          dataset_version: "binance_usdm:SOLUSDT:1m:2026-03-04",
+          market: { provider: "binance_usdm", symbol: "SOLUSDT", timeframe: "1m" },
+          range_from: "2026-03-04T00:00:00Z",
+          range_to: "2026-03-05T00:00:00Z",
+          revision_no: 1,
+          candle_count: 1443,
+          content_hash: "candle-hash",
+          bbo_content_hash: "bbo-hash",
+        }],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/archive")) {
+      return new Response(JSON.stringify({
+        search_run_id: "discovery-1",
+        state: { final_candidate_id: "candidate-1" },
+        candidates: [{
+          candidate_id: "candidate-1",
+          ordinal: 1,
+          candidate_hash: "candidate-hash",
+          candidate_definition: { strategy_id: "rsi", version: "v1", parameters: {} },
+          lineage: { generator: "random", phase: "terminal" },
+          score: 0.42,
+          accepted: true,
+          rejection_reason: null,
+          assessment: { score: 0.42 },
+          assessed_at: "2026-03-04T01:00:00Z",
+        }],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    submitted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({
+      search_run_id: "discovery-1",
+      status: "running",
+      generator_id: "discovery",
+      generated: 1,
+      tested: 0,
+      failed: 0,
+      best_score: null,
+      current_candidate_hash: "candidate-hash",
+      dataset_version: "binance_usdm:SOLUSDT:1m:2026-03-04",
+      content_hash: "candle-hash",
+      stop_reason: null,
+      updated_at: "2026-03-04T00:00:00Z",
+    }), { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const draft = {
+      ...createDraft({ provider: "binance_usdm", symbol: "SOLUSDT" }, "1m"),
+      selectedStrategyIds: ["ma_cross", "rsi"],
+      weights: { ma_cross: 0.5, rsi: 0.5 },
+      method: "discovery" as const,
+      maxCandidates: 3,
+    };
+    const run = await api.startSearch(draft);
+    const archive = await api.discoveryArchive(run.search_run_id);
+    assert.equal(submitted[0]?.generator_id, "discovery");
+    assert.equal((submitted[0]?.market as { dataset_version: string }).dataset_version, "binance_usdm:SOLUSDT:1m:2026-03-04");
+    assert.equal(archive.candidates[0]?.accepted, true);
+    assert.ok(requested.some((url) => url.endsWith("/api/v1/search-runs/discovery-1/archive")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("leaderboard requests the selected market and timeframe", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  globalThis.fetch = async (input) => {
+    requestedURL = String(input);
+    return new Response(JSON.stringify({ entries: [] }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await api.leaderboard({ provider: "binance_usdm", symbol: "SOLUSDT" }, "1m");
+    assert.match(requestedURL, /provider=binance_usdm/);
+    assert.match(requestedURL, /symbol=SOLUSDT/);
+    assert.match(requestedURL, /timeframe=1m/);
   } finally {
     globalThis.fetch = originalFetch;
   }

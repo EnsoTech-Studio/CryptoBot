@@ -1,266 +1,187 @@
-# Đặc tả: Python Search Loop
+# Đặc tả: Discovery Search Loop
 
-Trạng thái: Python canonical  
+Trạng thái: Blueprint target — chưa phải runtime claim  
 Owner: Python `research`  
 Runtime seam hiện có: `app/services/search.py`
 
 ## Mô tả
 
-Search Loop tạo bounded `CandidateStrategy`, submit candidate qua durable Python job queue,
-chờ Backtest -> Evaluation -> Ranking và dừng theo explicit stop conditions. Random Search là
-MVP bắt buộc. Domain-Guided chứng minh generator replaceability. Candidate Discovery Agent là
-P2 optional adapter; nó không thay deterministic engine/evaluator/ranking.
-
-Không có Go CandidateGenerator/SearchRun. Go chỉ auth/quota/proxy public command/query và
-fan-out persisted progress.
-
-## Contract
-
-### SearchRun create
-
-```json
-{
-  "strategy_space": {
-    "allowed_strategy_ids": ["ma_cross", "rsi", "bollinger", "support_resistance"],
-    "composite": {
-      "min_children": 1,
-      "max_children": 4,
-      "allowed_policies": ["majority_vote", "weighted_vote"]
-    },
-    "parameter_bounds": {
-      "ma_cross.fast": {"type": "integer", "min": 5, "max": 50},
-      "ma_cross.slow": {"type": "integer", "min": 20, "max": 200}
-    }
-  },
-  "generator": {
-    "id": "random",
-    "version": "v1",
-    "seed": 42
-  },
-  "experiment_template": {
-    "symbol": "BTCUSDT",
-    "dataset_id": "01J_DATASET",
-    "initial_capital": 1000.0,
-    "position_policy": {"kind": "fixed_notional", "entry_notional": 100.0},
-    "execution": {"fee_bps": 10.0, "slippage_bps": 2.0}
-  },
-  "stop_conditions": {
-    "max_candidates": 50,
-    "max_duration_seconds": 1800,
-    "max_non_improving": 20
-  },
-  "max_in_flight": 4,
-  "idempotency_key": "search-create-01"
-}
-```
-
-Ít nhất một finite stop condition bắt buộc; target yêu cầu `max_candidates` luôn có giá trị.
-API, DB constraint và runtime cùng enforce.
-
-### CandidateStrategy
-
-```json
-{
-  "definition": {
-    "strategy_id": "composite",
-    "version": "v1",
-    "children": [
-      {"strategy_id": "ma_cross", "version": "v1", "parameters": {"fast": 20, "slow": 50}, "weight": 1.0},
-      {"strategy_id": "rsi", "version": "v1", "parameters": {"period": 14}, "weight": 1.0}
-    ],
-    "combination": {"policy": "majority_vote", "threshold": 0.0, "encoding": "signed-v1"}
-  },
-  "candidate_hash": "sha256:...",
-  "generated_by": "random@v1",
-  "generation_meta": {
-    "seed": 42,
-    "ordinal": 17,
-    "search_space_hash": "sha256:..."
-  }
-}
-```
-
-Hash dùng canonical JSON sau materialize defaults/order. Unique `(search_run_id,candidate_hash)`
-de-duplicate proposal/retry.
-
-### Search progress
-
-```json
-{
-  "search_run_id": "01J_SEARCH",
-  "status": "running",
-  "generated": 25,
-  "queued": 4,
-  "running": 3,
-  "tested": 18,
-  "failed": 1,
-  "duplicate_skipped": 2,
-  "best_score": 0.8123,
-  "current_candidate_ref": "candidate:sha256:...",
-  "elapsed_seconds": 420,
-  "aggregate_version": 37
-}
-```
-
-Progress là persisted summary; WSS frame có sequence/version, client reconnect refetch snapshot.
-
-## CandidateGenerator port
-
-```python
-class CandidateGenerator(Protocol):
-    def definition(self) -> GeneratorDefinition: ...
-    def propose(self, context: GenerationContext) -> list[CandidateStrategy]: ...
-```
-
-Generator chỉ tạo candidate DSL. Nó không nhận Backtest Engine, DB session, RankingService
-hoặc stop-control handle.
-
-### Random Generator - MVP
-
-- Seed persist trong run snapshot.
-- Sampling deterministic theo seed/ordinal/search-space hash.
-- Tôn trọng type/bounds/family/composite policy.
-- Không đảm bảo unique; standard de-dup layer xử lý.
-
-### Domain-Guided Generator
-
-- Dùng deterministic rules theo family/parameter compatibility.
-- Cùng `GenerationContext` port như Random.
-- Thay generator bằng config; Backtest/Evaluator/Ranking không đổi.
-
-### CandidateDiscoveryAgent - P2
-
-Agent chỉ có tools:
-
-- `search.get_search_space`
-- `search.get_tested_hashes`
-- `leaderboard.get_summary`
-- `candidate.validate`
-- `candidate.estimate_cost`
-- `candidate.submit_batch`
-
-Required provenance: generator/agent version, model, prompt, tool manifest, input-history hash,
-search-space hash và candidate hash. Agent cannot:
-
-- Direct-call Backtest Engine.
-- Write candidate/result/Leaderboard tables trực tiếp.
-- Bypass quota/de-dup/queue/admission.
-- Pause/resume/cancel hoặc sửa stop condition.
-- Tự tăng cost/tool/token budget.
-
-## Luồng chính
-
-### A. Tạo run
-
-1. Browser gửi public command tới Go.
-2. Go auth/RBAC/quota/schema/body-size và signed principal context.
-3. Python validate catalog/search space/dataset/execution/stop conditions.
-4. Python materialize immutable run snapshot + create row/outbox atomically.
-5. Trả `202 + search_run_id`; client subscribe/refetch progress qua Go.
-
-### B. Vòng lặp bounded
-
-1. Search coordinator claim run lease.
-2. Evaluate stop/cancel/pause trước generate.
-3. Tính capacity `max_in_flight - queued - running`.
-4. Gọi configured generator để propose bounded batch.
-5. Candidate validator kiểm schema, parameter bounds, causality và catalog/version.
-6. Canonicalize/hash/de-duplicate theo run/history.
-7. Admission kiểm remaining candidate quota và estimated worker cost.
-8. Insert candidate + experiment/job + outbox trong transaction.
-9. Python Workers backtest; Evaluator persist metrics; Ranking update Top-K idempotently.
-10. Coordinator update counters/best/non-improving và lặp từ bước 2.
-
-Không polling busy vô hạn: coordinator dùng job/event wakeup và bounded reconcile interval.
-
-### C. Stop conditions
-
-Run dừng khi bất kỳ điều kiện bật nào đạt:
-
-- `tested + terminal_failed >= max_candidates`.
-- Wall-clock active duration >= `max_duration_seconds`.
-- `non_improving_count >= max_non_improving`.
-- Human `cancel_requested`.
-
-`paused` ngừng tạo candidate mới nhưng không giết job đã chạy; counters vẫn reconcile. Resume
-idempotent. Cancel không rank partial/incomplete result và không enqueue thêm.
-
-### D. Completion
-
-Run chỉ `completed` khi stop reason persisted và mọi in-flight candidate đã terminal theo
-chosen drain/cancel policy. Completion + outbox atomic. Top-K query đọc Python ranking source
-qua Go proxy.
-
-## Cost và quota
-
-Admission estimate tối thiểu:
+Discovery là `generator_id: "discovery"` bên trong SearchRun hiện có. Một
+`DiscoveryController` durable tuần tự hoá đúng một candidate đang active:
 
 ```text
-estimated_candle_steps = candidate_count * dataset_candle_count * strategy_cost_factor
+select generator -> propose -> duplicate/admission -> train
+-> cheap filter -> V1/V2/V3 -> assess -> archive -> select parents -> stop
 ```
 
-Quota có:
+BacktestEngine, Evaluator, queue admission, worker lease, Ranking và immutable
+experiment snapshot giữ ownership hiện có. Go chỉ auth/quota/proxy public
+contract và fan-out event đã persist. Không thêm workflow/agent framework,
+vector database, Optuna, DEAP, Ray, CPCV/PBO/Deflated Sharpe, MAP-Elites hoặc
+Pareto optimization.
 
-- Max concurrent search runs per principal.
-- Max candidates per run.
-- Max in-flight candidates.
-- Max candle steps/worker seconds.
-- Optional model/tool token/cost cho Candidate Discovery.
+Ordinary `grid`, `random_search`, `domain_guided` giữ one-candidate/one-
+experiment behavior. Discovery archive chỉ reuse trong cùng `search_run_id`.
 
-Go edge enforce public admission coarse quota; Python enforce authoritative domain quota trong
-cùng transaction tạo work để tránh race.
+## Immutable candidate contract
 
-## Persistence
+```python
+@dataclass(frozen=True)
+class StrategyCandidate:
+    id: UUID
+    strategy_spec: CandidateSpec
+    generator: str  # random | mutation | crossover | ensemble | llm
+    parent_ids: tuple[UUID, ...]
+    generation: int
+    hypothesis: str | None = None
+    operation: str | None = None
+```
 
-Python-owned:
+`CandidateSpec` không phải Python arbitrary hay DSL mới. Nó bọc catalog DSL
+safe/versioned hiện có:
 
-- `search_runs`: snapshot/status/stop/counters/lease/version.
-- `search_candidates`: immutable definition/hash/generator/provenance/status.
-- `experiments`, `backtest_jobs`, `backtest_runs`.
-- `evaluations`, `leaderboard_entries`.
-- `domain_events`/outbox.
+```text
+CandidateSpec
+|- strategy: one catalog definition OR flat CompositeDefinition
+`- risk_policy: stop-loss / take-profit override
+```
 
-Candidate status progression idempotent. Duplicate event/result consumer dùng event ID và
-unique result keys.
+Canonical hash là canonical JSON của toàn bộ `CandidateSpec`, gồm risk policy.
+Compiler truyền `strategy` vào runtime hiện có và materialize `risk_policy`
+vào immutable experiment snapshot. Composite chỉ một tầng: composite có thể là
+parent nhưng không thể là leaf của composite khác.
 
-## Kịch bản lỗi
+## Generator policy
 
-| Tình huống | Phản ứng |
-|---|---|
-| Thiếu finite stop condition | Reject create + DB constraint |
-| Unknown strategy/version/parameter | Reject candidate before enqueue |
-| Generator trả duplicate | Increment `duplicate_skipped`, không tạo job |
-| Generator exception | Persist failure; retry bounded theo run policy |
-| Agent đề xuất ngoài search space | `candidate.validate` reject |
-| Cost vượt quota | Reject/defer batch; không bypass |
-| Worker/candidate fail | Mark failed, run tiếp tục nếu stop chưa đạt |
-| Coordinator chết | Lease takeover + reconcile persisted counters |
-| Pause request lặp | Trả current paused state idempotently |
-| Cancel khi có in-flight | Persist cancel intent, apply drain/cancel policy |
-| Duplicate evaluation event | Ranking consumer idempotent |
-| Ranking unavailable | Evaluation facts remain; outbox/reconcile retry |
+| Generator | MVP behaviour | Lineage |
+| --- | --- | --- |
+| `random` | Seeded sample catalog, compatible params và risk. | No parents, generation 0. |
+| `mutation` | One parent; mutate one parameter/leaf/risk, or add/remove flat leaf. | Parent + operation. |
+| `crossover` | Two compatible parents; combine params/flat children; select one risk. | Two parents + `crossover`. |
+| `ensemble` | 2–5 unique catalog leaves, normalized Dirichlet weights, flat `weighted_vote`. | Members + `ensemble`. |
+| `llm` | One validated catalog/flat-composite candidate. | Prompt-mode parent IDs. |
 
-## Ràng buộc
+Initial selection probabilities are `random .35`, `mutation .30`, `crossover
+.15`, `ensemble .10`, `llm .10`. Every 20 terminal trials, reserve `.05` for
+each generator and distribute remaining `.75` proportional to
+`0.1 + acceptance_rate`. Re-sample when generator has no eligible parent or
+LLM endpoint unavailable; never create fake trial.
 
-- Random Search là MVP.
-- Stop conditions luôn finite và authoritative ở SearchRun.
-- Generator chỉ output CandidateStrategy DSL.
-- Backtest/Evaluation/Ranking không phụ thuộc generator type.
-- Candidate hash/provenance immutable.
-- Python sở hữu search state/tables; Go không có generator/domain write.
-- Candidate Discovery/Market Insight default-off không chặn MVP.
+Mutation/crossover/ensemble parents: 80% sample highest-scoring 20% accepted
+candidates; 20% sample all accepted. No accepted parent makes that generator
+temporarily ineligible; random and LLM-new remain runnable.
 
-## Tiêu chí chấp nhận
+## LLM provider boundary
 
-- [ ] AC-01: Run thiếu `max_candidates`/finite stop bị API và DB từ chối.
-- [ ] AC-02: Random generator deterministic với cùng seed/context.
-- [ ] AC-03: Duplicate candidate hash không tạo duplicate job.
-- [ ] AC-04: Random -> Domain-Guided đổi qua config; Backtest/Evaluator/Ranking core diff = 0.
-- [ ] AC-05: Pause ngừng enqueue mới; resume/cancel idempotent.
-- [ ] AC-06: Run dừng đúng max candidate/duration/non-improving/cancel.
-- [ ] AC-07: Coordinator crash/takeover không mất counter hoặc duplicate candidate.
-- [ ] AC-08: Candidate failure isolated và reflected trong progress.
-- [ ] AC-09: Top-K chỉ nhận terminal valid evaluation.
-- [ ] AC-10: Agent candidate ngoài space/quota bị reject trước queue.
-- [ ] AC-11: Candidate Discovery không có direct Backtest/Leaderboard/stop tool.
-- [ ] AC-12: Architecture test chứng minh Go không implement SearchRun/CandidateGenerator.
+LLM is one typed internal generator, backed only by existing server values
+`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `MODEL_CHEAP`, `LUNA_REASONING_EFFORT`.
+No browser/research-facing environment variable is added. Archive records
+provider model/version and prompt version. Provider failure is persisted as an
+LLM generator failure; it never silently falls back to random.
+
+Three strict-JSON prompt modes return `hypothesis`, `operation`, complete
+`CandidateSpec`:
+
+1. New hypothesis: allowed catalog, market capabilities, archive summaries,
+   diversity gaps.
+2. Improve failed strategy: parent metrics/failure evidence; exactly one
+   structural change.
+3. Combination: top candidates plus validation-return correlation; one
+   complementary flat ensemble.
+
+Response may reference only registered versions, configured parameter/risk
+values and flat composites. It cannot write Python, publish definitions, make
+nested composite, call backtest, write result tables or change stop policy.
+Every output still passes catalog, parameter, causality, risk, hash, duplicate,
+quota and cost validation before admission.
+
+## Frozen split, filters and assessment
+
+Run creation freezes chronological candle-index boundaries: first 60% train;
+next 20% split into three contiguous equal V1/V2/V3; final 20% sealed test.
+Segment may load preceding candles only for causal warmup. It must not trade,
+score or expose facts before its boundary. Candidate may see train/validation,
+never test during discovery.
+
+Train is terminal before validation admission. Reserve queue cost for train and
+all three validations before trial starts. Cheap filter requires successful
+terminal backtest, finite Sharpe and at least 10 settled trades. Train reject
+creates no validation job.
+
+Each validation window requires finite Sharpe and at least 10 settled trades.
+Reject if `abs(train_sharpe - median(validation_sharpes)) > 1.0`. For survivors:
+
+```text
+score = median_validation_sharpe
+      - 0.5 * abs(train_sharpe - median_validation_sharpe)
+      - 0.2 * abs(worst_validation_drawdown_pct) / 100
+      - 0.1 * complexity
+      - 0.2 * similarity
+```
+
+`complexity` is clamped `[0,1]` from flat leaf count and non-default parameter
+count. `similarity` is zero at correlation `<= .95`, then normalized excess to
+1.0. Waive similarity penalty only if validation Sharpe beats archive best by
+at least `.10`. Correlation uses aligned per-candle returns across all three
+validation windows against accepted survivors; missing/insufficient alignment
+rejects with explicit reason. Accept only positive score.
+
+Normal completion with accepted candidates schedules exactly one final test for
+highest score. Persist separately. Test never changes acceptance, parents,
+scores or generator probabilities. Cancelled/no-acceptance run never starts it.
+
+## Archive, persistence and progress
+
+Archive is sole per-run source for duplicate checks, lineage, parent selection,
+diversity, generator stats and demo history. Persist terminal outcomes:
+schema failure, duplicate skip, train/validation reject, provider failure and
+acceptance.
+
+| Record | Discovery additions |
+| --- | --- |
+| `search_runs` | mode snapshot, frozen split policy, generator policy/stats, final candidate/test state. |
+| `search_candidates` | immutable spec/hash, generator, parents, generation, operation, hypothesis, terminal status. |
+| candidate experiment partition | candidate, `train`/`validation`/`test`, validation ordinal, experiment ID, segment range. |
+| assessment | immutable metric references, gap, complexity, correlation, novelty, score, accepted, rejection reason. |
+
+Public query: `GET /api/v1/search-runs/{id}/archive`. Existing progress adds
+accepted/rejected counts, active generator stats, best candidate ID/score,
+lineage availability and sealed-test state. Persist events: proposed,
+cheap-rejected, validation-completed, assessed, accepted/rejected,
+final-test-started/completed.
+
+## Lifecycle and stop policy
+
+Pause prevents next candidate admission. Cancel prevents future discovery work
+and final test. Reconcile after controller restart from immutable archive and
+partition unique keys; no duplicate partition experiment.
+
+Stop on first condition:
+
+```text
+trials >= 500
+active elapsed >= 2 hours
+backtest budget or quota exhausted
+100 terminal trials without best score improvement >= .02
+```
+
+## Failure handling
+
+| Condition | Result |
+| --- | --- |
+| Duplicate canonical hash | Archive duplicate skip; no experiment. |
+| Invalid catalog/parameter/risk/cause | Terminal schema failure before queue. |
+| LLM unavailable/invalid | Persist generator failure; select another runnable generator. |
+| Train gate fails | Archive cheap rejection; no validation. |
+| Validation/correlation fails | Archive rejection with evidence. |
+| Worker/controller restart | Lease takeover/reconcile; partition unique key prevents duplicate work. |
+| Pause/cancel | No next admission; cancel never starts final test. |
+
+## Acceptance criteria
+
+- [ ] Seeded random/mutation/crossover/ensemble candidates canonical, valid and reproducible with lineage.
+- [ ] LLM fixture validates strict output/provenance, invalid rejection, provider failure and no queue bypass.
+- [ ] Duplicate creates no duplicate experiment; failed train creates no validation jobs.
+- [ ] Split/warmup, three-window median, gates, penalties and sealed-test isolation fixture tested.
+- [ ] 80/20 parents, adaptive probabilities, exploration floor, re-sampling and every stop condition tested.
+- [ ] Restart/reconcile preserves archive and cannot duplicate candidate partition experiment.

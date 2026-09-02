@@ -31,7 +31,11 @@ class PostgresOutbox:
         self._consumer_id = consumer_id
         self._lease = timedelta(seconds=lease_seconds)
         self._connection = psycopg.connect(
-            conninfo, connect_timeout=5, row_factory=dict_row, autocommit=False
+            conninfo,
+            connect_timeout=5,
+            row_factory=dict_row,
+            autocommit=False,
+            prepare_threshold=None,
         )
 
     def close(self) -> None:
@@ -106,8 +110,8 @@ class PostgresOutbox:
             connection.execute(
                 """
                 UPDATE domain_events
-                SET dispatch_status=CASE WHEN attempt>=max_attempts THEN 'dead'
-                                         ELSE 'pending' END,
+                SET dispatch_status=(CASE WHEN attempt>=max_attempts THEN 'dead'
+                                          ELSE 'pending' END)::event_dispatch_status,
                     next_attempt_at=now()+make_interval(secs => %s),
                     claimed_by=NULL,claim_expires_at=NULL,last_error=%s
                 WHERE event_id=%s AND dispatch_status='claimed' AND claimed_by=%s

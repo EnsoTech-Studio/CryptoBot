@@ -39,7 +39,7 @@ nhúng vào tài liệu narrative).
 | 08 | `08-outbox-event-state` | State machine của một event trong outbox | target | `design.md` §5.7.6 | **Data Flow** |
 | 09 | `09-realtime-reconnect-backfill-flow` | Realtime Flow — disconnect → reconnect → backfill | doc | `design.md` §6.1 | **Realtime/Reconnect Flow** |
 | 10 | `10-strategy-flow` | Strategy Flow — từ nến tới tín hiệu composite | doc | `design.md` §6.2 | **Strategy Flow** |
-| 11 | `11-search-backtest-pipeline` | Generator registry → worker → rank; bounded loop | target | `design.md` §6.3 | **Search/Backtest Flow** |
+| 11 | `11-search-backtest-pipeline` | Discovery controller: archive → train → V1/V2/V3 → sealed test | target | `design.md` §6.3.1 | **Search/Backtest Flow** |
 | 12 | `12-search-run-state` | State machine của `search_runs` (pause/resume/cancel/stop) | target | `design.md` §6.3 | **Search/Backtest Flow** |
 | 13 | `13-news-html-llm-pipeline` | RSS/HTML → extract → LLM tag → sentiment (owner Python platform) | target | `design.md` §6.4 · `specs/news.md` | **Data Flow** |
 | 14 | `14-defense-in-depth` | Security + AI/plugin guardrails (SSRF, sandbox, human approval) | target | `design.md` §7.4 | Access control |
@@ -53,19 +53,19 @@ nhúng vào tài liệu narrative).
 | 22 | `22-strategy-runtime-parity` | Một runtime cho realtime/backtest — không hai nguồn chân lý | target | `design.md` §6.2 | **Strategy Flow** |
 | 23 | `23-bbo-long-short-execution` | Mô phỏng LONG/SHORT bằng BBO (fee, spread, slippage, SL/TP) | target | `specs/backtest.md` | **Search/Backtest Flow** |
 | 24 | `24-trade-result-provenance` | Trade detail và provenance chain đầy đủ | target | `specs/leaderboard.md` | **Search/Backtest Flow** |
-| 25 | `25-agent-platform-components` | Agent Platform: control plane, 6 role, tool/service/state/approval | target | `specs/agent-architecture.md` | **Agent Architecture** |
+| 25 | `25-agent-platform-components` | Agent Platform: control plane, 5 role, tool/service/state/approval | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 26 | `26-agent-run-state-machine` | Durable authoring/repair/review/publish state machine | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 27 | `27-strategy-designer-agent` | Designer Agent và typed tools | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 28 | `28-strategy-implementation-agent` | Implementation Agent: compiler, policy, sandbox, review | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 29 | `29-strategy-repair-agent` | Repair Agent: evidence, bounded patch và retest | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 30 | `30-news-extraction-agent` | Adaptive news extraction fallback với sanitized HTML | target | `specs/news.md` | **Agent Architecture**, **Data Flow** |
-| 31 | `31-candidate-discovery-agent` | Optional Candidate Discovery bounded by normal queue | target | `specs/agent-architecture.md` | **Agent Architecture**, **Search/Backtest Flow** |
+| 31 | `31-candidate-discovery-agent` | Typed discovery LLM modes bounded by controller/admission | target | `specs/agent-architecture.md` | **Agent Architecture**, **Search/Backtest Flow** |
 | 32 | `32-market-insight-agent` | Optional read-only Market Insight flow | target | `specs/agent-architecture.md` | **Agent Architecture** |
 | 33 | `33-tool-invocation-security-boundary` | Typed tool contract và least-privilege security boundary | target | `specs/agent-architecture.md` | **Agent Architecture**, access control |
 | 34 | `34-use-case-overview` | Use Case tổng thể cho user, author, operator và plugin developer | target | `docs/note-update-require.txt` | **Use Case** |
 | 35 | `35-c4-l3-go-edge-market-gateway` | C4 Level 3 — component bên trong Go Edge & Market Gateway | target | `design.md` §1.2–§3.2 | **Component responsibilities**, **Realtime Flow** |
 | 36 | `36-uml-strategy-plugin-model` | UML class — Strategy interface, plugin, composite, registry và runtime | target | `specs/strategy-registry.md`, `specs/composite-strategy.md` | **UML/Class**, **Strategy Flow** |
-| 37 | `37-uml-search-algorithm-model` | UML class — CandidateGenerator và các search algorithm thay thế được | target | `specs/search-loop.md` | **UML/Class**, **Search/Backtest Flow** |
+| 37 | `37-uml-search-algorithm-model` | UML class — discovery controller, generators, archive, partitions và assessment | target | `specs/search-loop.md` | **UML/Class**, **Search/Backtest Flow** |
 | 38 | `38-uml-news-crawler-model` | UML class — crawler adapters, deterministic extractor và LLM fallback | target | `specs/news.md` | **UML/Class**, **Data Flow** |
 | 39 | `39-deployment-topology` | Deployment — Docker Compose MVP, network boundary và scale path | target | `design.md` §1.3, §8, §12 | **Deployment**, scalability/reliability |
 

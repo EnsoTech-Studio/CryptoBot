@@ -29,6 +29,14 @@ func TestSearchRequestValidationAcceptsBoundedCompositeSearch(t *testing.T) {
 	}
 }
 
+func TestSearchRequestValidationAcceptsDiscoveryLoop(t *testing.T) {
+	request := validSearchRequest()
+	request.GeneratorID = "discovery"
+	if err := request.validate(); err != nil {
+		t.Fatalf("expected discovery request to be valid, got %v", err)
+	}
+}
+
 func TestSearchRequestValidationRejectsMalformedStops(t *testing.T) {
 	cases := []map[string]any{
 		{},

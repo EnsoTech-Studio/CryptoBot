@@ -16,6 +16,7 @@ import {
   wsURL,
   DEFAULT_EXECUTION,
   type Candle,
+  type DiscoveryArchive,
   type EquityPoint,
   type ExecutionMarker,
   type ExecutionSettings,
@@ -97,6 +98,7 @@ export type LoadState = "idle" | "loading" | "ready" | "unavailable";
 
 const requiredTimeframes = ["1m", "5m", "15m", "1h", "4h", "1d"];
 const referenceModeEnabled = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true";
+const DISCOVERY_SESSION_KEY = "crypto-lab-discovery-session";
 const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true" || referenceModeEnabled;
 const panelSeed = DEFAULT_PANEL_TIMEFRAMES.map((timeframe, index) => ({
   id: `chart-${index + 1}`,
@@ -153,6 +155,8 @@ type WorkspaceValue = {
   submittedDraft: DiscoveryDraft | null;
   leaderboard: LeaderboardEntry[];
   leaderboardState: LoadState;
+  discoveryArchive: DiscoveryArchive | null;
+  discoveryArchiveState: LoadState;
   news: NewsItem[];
   newsState: LoadState;
   coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number } | null;
@@ -217,7 +221,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [marketPairs, setMarketPairs] = useState<MarketPair[]>(referenceModeEnabled ? MOCK_MARKET_PAIRS : []);
   const [marketPairsState, setMarketPairsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [dataMode, setDataMode] = useState<DataMode>(referenceModeEnabled ? "mock" : "live");
-  const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(referenceModeEnabled ? REFERENCE_MARKET : DEFAULT_MARKET);
+  const [selectedMarket, setSelectedMarket] = useState<MarketSelection>(() => (
+    referenceModeEnabled ? REFERENCE_MARKET : readPersistedMarket() ?? DEFAULT_MARKET
+  ));
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
   const [recentTicks, setRecentTicks] = useState<DisplayTick[]>(() => referenceModeEnabled ? createMockTicks(REFERENCE_MARKET.symbol) : []);
@@ -234,6 +240,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [submittedDraft, setSubmittedDraft] = useState<DiscoveryDraft | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [leaderboardState, setLeaderboardState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
+  const [discoveryArchive, setDiscoveryArchive] = useState<DiscoveryArchive | null>(null);
+  const [discoveryArchiveState, setDiscoveryArchiveState] = useState<LoadState>("idle");
   const [news, setNews] = useState<NewsItem[]>([]);
   const [newsState, setNewsState] = useState<LoadState>(referenceModeEnabled ? "ready" : "loading");
   const [coverage, setCoverage] = useState<WorkspaceValue["coverage"]>(null);
@@ -253,6 +261,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const realtimeEnabledRef = useRef(realtimeEnabled);
   const dataModeRef = useRef<DataMode>(dataMode);
   const mockTickRef = useRef(0);
+
+  useEffect(() => {
+    if (!user || !searchId || !submittedDraft) return;
+    try {
+      window.sessionStorage.setItem(
+        DISCOVERY_SESSION_KEY,
+        JSON.stringify({ ownerId: user.id, searchId, submittedDraft }),
+      );
+    } catch {
+      // Storage can be unavailable in a privacy-restricted browser; the live run still works.
+    }
+  }, [searchId, submittedDraft, user]);
   useEffect(() => {
     panelsRef.current = panels;
   }, [panels]);
@@ -509,6 +529,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setStrategyDrafts([]);
       setLeaderboard([]);
       setLeaderboardState("ready");
+      setDiscoveryArchive(null);
+      setDiscoveryArchiveState("ready");
       setNews([]);
       setNewsState("ready");
       setCoverage(null);
@@ -519,7 +541,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const [strategyPayload, draftPayload, rank, newsPayload, aggregate] = await Promise.all([
       api.strategies().catch(() => null),
       api.strategyDrafts().catch(() => null),
-      api.leaderboard().catch(() => null),
+      api.leaderboard(selectedMarketRef.current, panelsRef.current[0]?.timeframe ?? "5m").catch(() => null),
       api.news().catch(() => null),
       api.newsAggregate().catch(() => null),
     ]);
@@ -585,6 +607,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     api.me()
       .then((payload) => {
         setUser(payload.user);
+        const session = readPersistedDiscoverySession(payload.user.id);
+        if (session) {
+          setSearchId(session.searchId);
+          setSubmittedDraft(session.submittedDraft);
+          setDiscoveryArchiveState("loading");
+        }
         void refreshStaticData();
       })
       .catch(() => report("Sign in to run experiments and search loops.", "warn"));
@@ -874,12 +902,39 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!searchId) return;
+    let stopped = false;
+    const refresh = async () => {
+      try {
+        const next = await api.searchRun(searchId);
+        if (stopped) return;
+        setSearch(next);
+        if (next.generator_id !== "discovery") {
+          setDiscoveryArchive(null);
+          setDiscoveryArchiveState("ready");
+          return;
+        }
+        try {
+          const archive = await api.discoveryArchive(searchId);
+          if (!stopped) {
+            setDiscoveryArchive(archive);
+            setDiscoveryArchiveState("ready");
+          }
+        } catch {
+          if (!stopped) setDiscoveryArchiveState("unavailable");
+        }
+      } catch {
+        // The next polling tick retries a transient progress failure.
+      }
+    };
     const timer = window.setInterval(() => {
-      api.searchRun(searchId).then(setSearch).catch(() => undefined);
+      void refresh();
       void refreshStaticData();
     }, 1800);
-    api.searchRun(searchId).then(setSearch).catch(() => undefined);
-    return () => window.clearInterval(timer);
+    void refresh();
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
   }, [searchId]);
 
   useEffect(() => {
@@ -941,6 +996,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     submittedDraft,
     leaderboard,
     leaderboardState,
+    discoveryArchive,
+    discoveryArchiveState,
     news,
     newsState,
     coverage,
@@ -1012,6 +1069,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ));
         setSearchId(accepted.search_run_id);
         setSubmittedDraft(draft);
+        setDiscoveryArchive(null);
+        setDiscoveryArchiveState(accepted.generator_id === "discovery" ? "loading" : "ready");
         report(`Search run started: ${accepted.search_run_id.slice(0, 8)}`);
       } catch (error) {
         report(messageFromError(error), "error");
@@ -1067,9 +1126,34 @@ function timeframeOrder(timeframe: string) {
 }
 
 function readPersistedMarket(): MarketSelection | null {  try {
+    if (typeof window === "undefined") return null;
     const value = JSON.parse(window.localStorage.getItem("crypto-lab-market") ?? "null") as Partial<MarketSelection> | null;
     if (!value?.provider || !value.symbol) return null;
     return { provider: value.provider, symbol: value.symbol.toUpperCase() };
+  } catch {
+    return null;
+  }
+}
+
+function readPersistedDiscoverySession(ownerId: string): {
+  searchId: string;
+  submittedDraft: DiscoveryDraft;
+} | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const value = JSON.parse(window.sessionStorage.getItem(DISCOVERY_SESSION_KEY) ?? "null") as {
+      ownerId?: unknown;
+      searchId?: unknown;
+      submittedDraft?: Partial<DiscoveryDraft>;
+    } | null;
+    if (
+      value?.ownerId !== ownerId ||
+      typeof value.searchId !== "string" ||
+      !value.searchId ||
+      !Array.isArray(value.submittedDraft?.selectedStrategyIds) ||
+      typeof value.submittedDraft?.timeframe !== "string"
+    ) return null;
+    return { searchId: value.searchId, submittedDraft: value.submittedDraft as DiscoveryDraft };
   } catch {
     return null;
   }

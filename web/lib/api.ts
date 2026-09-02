@@ -213,6 +213,31 @@ export type SearchRun = {
   updated_at: string;
 };
 
+export type DiscoveryArchiveCandidate = {
+  candidate_id: string;
+  ordinal: number;
+  candidate_hash: string;
+  candidate_definition: Record<string, unknown>;
+  lineage: Record<string, unknown>;
+  score: number | null;
+  accepted: boolean | null;
+  rejection_reason: string | null;
+  assessment: Record<string, unknown> | null;
+  reservation?: {
+    reserved_jobs: number | null;
+    consumed_jobs: number | null;
+    released_jobs: number | null;
+    status: string | null;
+  };
+  assessed_at: string | null;
+};
+
+export type DiscoveryArchive = {
+  search_run_id: string;
+  state: Record<string, unknown>;
+  candidates: DiscoveryArchiveCandidate[];
+};
+
 export type NewsItem = {
   id: string;
   title: string;
@@ -347,6 +372,27 @@ function normalizeSearchRun(run: ResearchSearchRun): SearchRun {
 async function ensureDataset(market: MarketSelection, timeframe: string): Promise<MarketDataset> {
   const existing = await api.datasets(market, timeframe);
   return existing.datasets[0] ?? api.createDataset(market, timeframe);
+}
+
+/* Discovery needs enough legal, reproducible variants for a real demo run.
+   Defaults-only plus one composite produces one candidate and makes the loop
+   look broken. These bounded values stay inside each built-in plugin's schema;
+   the model still sees this grid and may choose from it using archive/research. */
+const DISCOVERY_PARAMETER_GRID: Record<string, Record<string, number[]>> = {
+  ma_cross: { fast: [5, 10, 20], slow: [30, 50, 80] },
+  ema_cross: { fast: [5, 10, 20], slow: [30, 50, 80] },
+  rsi: { period: [10, 14, 21], oversold: [25, 30], overbought: [70, 75] },
+  support_resistance: { period: [14, 20, 30, 40] },
+  bollinger: { period: [14, 20, 30], deviation: [1.5, 2, 2.5] },
+  macd: { fast: [8, 12], slow: [20, 26, 40], signal: [5, 9] },
+};
+
+function discoveryParameterGrid(strategyIds: string[]): Record<string, Record<string, number[]>> {
+  return Object.fromEntries(
+    strategyIds
+      .filter((strategyId) => DISCOVERY_PARAMETER_GRID[strategyId])
+      .map((strategyId) => [strategyId, DISCOVERY_PARAMETER_GRID[strategyId]]),
+  );
 }
 
 /* Execution assumptions the Backtest screen puts on screen. They used to be
@@ -530,7 +576,7 @@ export const api = {
         timeframe,
         revision_no: 1,
       }),
-    });
+    }, 30_000);
   },
   async createExperiment(
     children: StrategyExecution[],
@@ -674,9 +720,13 @@ export const api = {
         generator_id: draft.method,
         search_space: {
           strategy_ids: draft.selectedStrategyIds,
-          cardinality: [draft.selectedStrategyIds.length],
+          /* Keep individual leaves and smaller composites in the candidate
+             pool. The builder's selected combination remains the execution
+             default, while discovery can test alternatives. */
+          cardinality: Array.from(new Set([1, 2, draft.selectedStrategyIds.length]))
+            .filter((value) => value <= draft.selectedStrategyIds.length),
           policies: [draft.policy],
-          parameter_grid: {},
+          parameter_grid: discoveryParameterGrid(draft.selectedStrategyIds),
         },
         stop_conditions: {
           max_candidates: draft.maxCandidates,
@@ -702,7 +752,7 @@ export const api = {
         seed: draft.seed,
         idempotency_key: `search-${Date.now()}`,
       }),
-    }).then(normalizeSearchRun);
+    }, 45_000).then(normalizeSearchRun);
   },
   searchRun(id: string) {
     return request<ResearchSearchRun>(`/api/v1/search-runs/${id}`).then(normalizeSearchRun);
@@ -713,10 +763,21 @@ export const api = {
       body: JSON.stringify({ action, command_id: `${action}-${Date.now()}` }),
     });
   },
-  leaderboard(sortBy = "score") {
-    return request<{ entries: ResearchLeaderboardEntry[] }>(`/api/v1/leaderboard?limit=10&sort_by=${sortBy}`).then(
+  leaderboard(marketOrSortBy: MarketSelection | string = DEFAULT_MARKET, timeframe = "5m", sortBy = "score") {
+    const market = typeof marketOrSortBy === "string" ? DEFAULT_MARKET : marketOrSortBy;
+    const requestedTimeframe = typeof marketOrSortBy === "string" ? "5m" : timeframe;
+    const requestedSort = typeof marketOrSortBy === "string" ? marketOrSortBy : sortBy;
+    const path = marketRequestPath("/api/v1/leaderboard", market, {
+      timeframe: requestedTimeframe,
+      limit: 10,
+      sort_by: requestedSort,
+    });
+    return request<{ entries: ResearchLeaderboardEntry[] }>(path).then(
       (payload) => ({ entries: payload.entries.map((entry) => ({ ...entry, id: entry.entry_id })) }),
     );
+  },
+  discoveryArchive(id: string) {
+    return request<DiscoveryArchive>(`/api/v1/search-runs/${encodeURIComponent(id)}/archive`);
   },
   provenance(id: string) {
     return request<Record<string, unknown>>(`/api/v1/leaderboard/${id}/provenance`);

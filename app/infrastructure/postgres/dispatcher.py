@@ -112,7 +112,12 @@ class PostgresJobDispatcher:
         self._conninfo = conninfo
         self._heartbeat = heartbeat
         self._lock = threading.RLock()  # reentrant: claim() loads the snapshot
-        self._conn = psycopg.connect(conninfo, autocommit=False, connect_timeout=5)
+        self._conn = psycopg.connect(
+            conninfo,
+            autocommit=False,
+            connect_timeout=5,
+            prepare_threshold=None,
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -165,7 +170,14 @@ class PostgresJobDispatcher:
                     INSERT INTO backtest_jobs (id, experiment_id, status, priority, attempt, max_attempts)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (job.id, job.experiment_id, job.status, job.priority, job.attempt, job.max_attempts),
+                    (
+                        job.id,
+                        job.experiment_id,
+                        job.status,
+                        job.priority,
+                        job.attempt,
+                        job.max_attempts,
+                    ),
                 )
 
         self._run(work)
@@ -475,7 +487,10 @@ class PostgresJobDispatcher:
         assert psycopg is not None
         try:
             connection = psycopg.connect(
-                self._conninfo, autocommit=True, connect_timeout=5
+                self._conninfo,
+                autocommit=True,
+                connect_timeout=5,
+                prepare_threshold=None,
             )
         except TypeError:  # compatibility with lightweight scripted test adapters
             connection = psycopg.connect(self._conninfo, autocommit=True)
@@ -521,15 +536,42 @@ class PostgresJobDispatcher:
         if row is None:
             raise DomainError(ERR_VALIDATION, f"experiment {experiment_id} not found")
         (
-            eid, owner_id, candidate_definition, candidate_hash,
-            initial_equity, fixed_notional, leverage, fee_bps, slippage_bps,
-            fill_policy, position_policy, open_position_at_end,
-            stop_loss_pct, take_profit_pct, intrabar_priority, evaluator_version,
-            sentiment_model, sentiment_model_version, sentiment_window_sec, analysis_lag_sec,
-            created_at, _dataset_id, replay_range_from, replay_range_to,
-            dataset_version, revision_no, provider, symbol, timeframe,
-            range_from, range_to, candle_count, content_hash, bbo_content_hash,
-            strategy_id, strategy_version,
+            eid,
+            owner_id,
+            candidate_definition,
+            candidate_hash,
+            initial_equity,
+            fixed_notional,
+            leverage,
+            fee_bps,
+            slippage_bps,
+            fill_policy,
+            position_policy,
+            open_position_at_end,
+            stop_loss_pct,
+            take_profit_pct,
+            intrabar_priority,
+            evaluator_version,
+            sentiment_model,
+            sentiment_model_version,
+            sentiment_window_sec,
+            analysis_lag_sec,
+            created_at,
+            _dataset_id,
+            replay_range_from,
+            replay_range_to,
+            dataset_version,
+            revision_no,
+            provider,
+            symbol,
+            timeframe,
+            range_from,
+            range_to,
+            candle_count,
+            content_hash,
+            bbo_content_hash,
+            strategy_id,
+            strategy_version,
         ) = row
         risk = (
             RiskPolicy(
@@ -669,7 +711,11 @@ class PostgresJobDispatcher:
                 WHERE d.dataset_version = %s AND c.open_time >= %s AND c.close_time <= %s
                 ORDER BY c.open_time
                 """,
-                (snapshot.market.dataset_version, snapshot.market.range_from, snapshot.market.range_to),
+                (
+                    snapshot.market.dataset_version,
+                    snapshot.market.range_from,
+                    snapshot.market.range_to,
+                ),
             )
             candle_rows = cur.fetchall()
             cur.execute(
@@ -680,7 +726,11 @@ class PostgresJobDispatcher:
                 WHERE d.dataset_version = %s AND b.event_time >= %s AND b.event_time <= %s
                 ORDER BY b.event_time, b.source_sequence
                 """,
-                (snapshot.market.dataset_version, snapshot.market.range_from, snapshot.market.range_to),
+                (
+                    snapshot.market.dataset_version,
+                    snapshot.market.range_from,
+                    snapshot.market.range_to,
+                ),
             )
             bbo_rows = cur.fetchall()
         candles = [
@@ -717,6 +767,7 @@ class PostgresJobDispatcher:
 
     def load_evaluation_input(self, run_id: UUID) -> tuple[EvaluationInput, str]:
         """Rehydrate immutable run facts for the at-least-once evaluator consumer."""
+
         def work() -> tuple[EvaluationInput, str]:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -788,11 +839,25 @@ class PostgresJobDispatcher:
 
         return self._run(work)
 
+    def experiment_id_for_run(self, run_id: UUID) -> UUID:
+        """Return immutable experiment identity for post-evaluation orchestration."""
+
+        def work() -> UUID:
+            with self._conn.cursor() as cur:
+                cur.execute("SELECT experiment_id FROM backtest_runs WHERE id=%s", (run_id,))
+                row = cur.fetchone()
+            if row is None:
+                raise DomainError(ERR_VALIDATION, f"backtest run {run_id} not found")
+            return row[0]
+
+        return self._run(work)
+
     # -- result persistence --------------------------------------------------------
 
     def persist_evaluation(self, run_id: UUID, evaluation: Any, rank: bool = True) -> None:
         """Idempotent evaluation insert (`ON CONFLICT DO NOTHING`) + outbox event.
         Called by the in-worker evaluator consumer (design.md §5.7.2 config B)."""
+
         def work() -> None:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -806,10 +871,16 @@ class PostgresJobDispatcher:
                     RETURNING id
                     """,
                     (
-                        run_id, evaluation.evaluator_version, evaluation.total_return_pct,
-                        evaluation.win_rate_pct, evaluation.max_drawdown_pct, evaluation.trade_count,
-                        evaluation.open_trade_count, evaluation.profit_factor,
-                        evaluation.sharpe_ratio, evaluation.avg_trade_pct,
+                        run_id,
+                        evaluation.evaluator_version,
+                        evaluation.total_return_pct,
+                        evaluation.win_rate_pct,
+                        evaluation.max_drawdown_pct,
+                        evaluation.trade_count,
+                        evaluation.open_trade_count,
+                        evaluation.profit_factor,
+                        evaluation.sharpe_ratio,
+                        evaluation.avg_trade_pct,
                     ),
                 )
                 inserted = cur.fetchone()
@@ -818,13 +889,16 @@ class PostgresJobDispatcher:
                 evaluation_id = inserted[0]
                 cur.execute(
                     """
-                    SELECT e.id,e.correlation_id
-                    FROM backtest_runs r JOIN experiments e ON e.id=r.experiment_id
+                    SELECT e.id,e.correlation_id,s.generator_id
+                    FROM backtest_runs r
+                    JOIN experiments e ON e.id=r.experiment_id
+                    LEFT JOIN search_candidates c ON c.id=e.search_candidate_id
+                    LEFT JOIN search_runs s ON s.id=c.search_run_id
                     WHERE r.id=%s
                     """,
                     (run_id,),
                 )
-                experiment_id, correlation_id = cur.fetchone()
+                experiment_id, correlation_id, generator_id = cur.fetchone()
                 cur.execute(
                     """
                     INSERT INTO domain_events (
@@ -843,6 +917,8 @@ class PostgresJobDispatcher:
                         ),
                     ),
                 )
+                if generator_id == "discovery":
+                    return
                 cur.execute(
                     """
                     UPDATE search_runs s
@@ -1039,10 +1115,27 @@ class PostgresJobDispatcher:
             """,
             [
                 (
-                    run_id, t.sequence_no, t.side, t.signal_t, t.entry_time, t.entry_price,
-                    t.exit_time, t.exit_price, t.quantity, t.fee_paid, t.slippage_cost,
-                    t.entry_notional, t.exit_notional, t.spread_cost, t.gross_pnl, t.net_pnl,
-                    t.pnl_absolute, t.pnl_percent, t.exit_reason, t.sl_price, t.tp_price,
+                    run_id,
+                    t.sequence_no,
+                    t.side,
+                    t.signal_t,
+                    t.entry_time,
+                    t.entry_price,
+                    t.exit_time,
+                    t.exit_price,
+                    t.quantity,
+                    t.fee_paid,
+                    t.slippage_cost,
+                    t.entry_notional,
+                    t.exit_notional,
+                    t.spread_cost,
+                    t.gross_pnl,
+                    t.net_pnl,
+                    t.pnl_absolute,
+                    t.pnl_percent,
+                    t.exit_reason,
+                    t.sl_price,
+                    t.tp_price,
                 )
                 for t in result.trades
             ],
@@ -1054,7 +1147,10 @@ class PostgresJobDispatcher:
             """,
             [
                 (
-                    run_id, s.candle_time, s.action, s.confidence,
+                    run_id,
+                    s.candle_time,
+                    s.action,
+                    s.confidence,
                     json.dumps(s.child_signals) if s.child_signals is not None else None,
                 )
                 for s in result.signals

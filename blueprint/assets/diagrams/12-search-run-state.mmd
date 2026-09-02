@@ -3,7 +3,7 @@ stateDiagram-v2
     queued --> running : SearchRunService starts
     running --> paused : pause command
     paused --> running : resume command
-    running --> stopping : stop condition reached
+    running --> stopping : trial/budget/time/stagnation stop
     stopping --> draining : no new candidates; wait queued/running jobs
     draining --> completed : all accepted candidates terminal
     running --> cancelled : cancel command
@@ -17,14 +17,14 @@ stateDiagram-v2
 
     note right of running
         Stop conditions bắt buộc:
-        max_candidates, max_duration,
-        max_non_improving, failure_rate,
-        quota/resource budget.
+        Discovery: 500 trials, 2 active hours,
+        quota/budget exhausted, or 100 terminal
+        trials without >= .02 improvement.
     end note
 
     note right of draining
-        Pause: không generate/enqueue mới.
-        Cancel: cancel queued jobs; running job
-        chỉ dừng tại cooperative cancellation point.
+        Pause: no next candidate admission.
+        Cancel: no future work or final test;
+        running work follows cooperative cancellation policy.
     end note
 

@@ -31,7 +31,11 @@ export function StrategyScreen() {
   const draftStatus = draft?.status;
 
   useEffect(() => {
-    if (!draftId || ["REVIEW_REQUIRED", "APPROVED", "REJECTED", "FAILED"].includes(draftStatus ?? "")) return;
+    const terminal = ["APPROVED", "REJECTED", "FAILED"].includes(draftStatus ?? "");
+    const reviewPackageReady = draftStatus === "REVIEW_REQUIRED"
+      && (draft?.current_revision ?? 0) > 0
+      && Boolean(draft?.strategy_spec && draft.spec_hash && draft.artifact_hash && draft.sandbox_report_hash);
+    if (!draftId || terminal || reviewPackageReady) return;
     const timer = window.setInterval(() => {
       void api.strategyDraft(draftId).then((next) => {
         setDraft(next);
@@ -39,7 +43,7 @@ export function StrategyScreen() {
       }).catch(() => undefined);
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [draftId, draftStatus]);
+  }, [draftId, draftStatus, draft?.current_revision, draft?.strategy_spec, draft?.spec_hash, draft?.artifact_hash, draft?.sandbox_report_hash]);
 
   async function createDraft(source: { type: "text"; text: string } | { type: "approved_url"; url: string }) {
     if (!user) {
