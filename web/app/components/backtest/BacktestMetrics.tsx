@@ -1,10 +1,8 @@
 "use client";
 
-import { ASSUMPTIONS, MOCK_KPIS, PROFIT_FORMULA } from "../../../lib/backtest-mock";
+import { MOCK_KPIS } from "../../../lib/backtest-mock";
 import { resolvedTradeKpis, type DerivedKpis } from "../../../lib/backtest";
 import type { EquityPoint, Metrics } from "../../../lib/api";
-import { Panel } from "../ui/Foundation";
-import { Icon } from "../ui/Icon";
 import styles from "./backtest.module.css";
 
 /* Six KPI cells plus the two explanation panels. Winrate, return and drawdown
@@ -89,35 +87,17 @@ export function BacktestMetrics({
         </span>
       </div>
 
-      <Panel title="Cách tính Profit" className={styles.formulaPanel}>
-        <div className={styles.formulaRow}>
-          {PROFIT_FORMULA.map((step) => (
-            <div key={step.label} className={styles.formulaStep}>
-              <span className={`${styles.formulaIcon} ${styles[`formula${step.tone[0].toUpperCase()}${step.tone.slice(1)}`]}`}>
-                <Icon name={step.icon} aria-hidden="true" />
-              </span>
-              <strong>{step.label}</strong>
-              <span>{step.caption}</span>
-              {step.operator ? <b className={styles.formulaOperator} aria-hidden="true">{step.operator}</b> : null}
-            </div>
-          ))}
-        </div>
-      </Panel>
+      <div className={styles.kpiCell}>
+        <span className={styles.kpiLabel}>Profit Factor</span>
+        <span className={styles.kpiValue}>{profitFactor.toFixed(2)}</span>
+        <span className={styles.kpiCaption}>Gross profit / gross loss</span>
+      </div>
 
-      <Panel title="Giả định Backtest" className={styles.assumptionPanel}>
-        <div className={styles.advancedMetrics} aria-label="Metrics nâng cao">
-          <div><span>Profit Factor</span><strong>{profitFactor.toFixed(2)}</strong></div>
-          <div><span>Sharpe Ratio</span><strong>{sharpeRatio.toFixed(2)}</strong></div>
-        </div>
-        <ul className={styles.assumptionList}>
-          {ASSUMPTIONS.map((item) => (
-            <li key={item}>
-              <Icon name="check" aria-hidden="true" />
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
-      </Panel>
+      <div className={styles.kpiCell}>
+        <span className={styles.kpiLabel}>Sharpe Ratio</span>
+        <span className={styles.kpiValue}>{sharpeRatio.toFixed(2)}</span>
+        <span className={styles.kpiCaption}>Risk-adjusted return</span>
+      </div>
     </div>
   );
 }

@@ -434,7 +434,26 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match.split("=")[1]) : "";
 }
 
-async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_000): Promise<T> {
+let refreshingSession: Promise<boolean> | null = null;
+
+/* Multiple panels can receive a 401 together when the short-lived access
+   cookie expires. Share one refresh request: refresh tokens rotate, so a
+   request per panel would otherwise invalidate the session itself. */
+function refreshAccessSession(): Promise<boolean> {
+  if (refreshingSession) return refreshingSession;
+  refreshingSession = fetch(`${apiUrl}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken() },
+    credentials: "include",
+    signal: AbortSignal.timeout(8_000),
+  })
+    .then((response) => response.ok)
+    .catch(() => false)
+    .finally(() => { refreshingSession = null; });
+  return refreshingSession;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_000, retried = false): Promise<T> {
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   const method = (init.method ?? "GET").toUpperCase();
@@ -456,6 +475,9 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_00
   }
 
   const payload = (await response.json().catch(() => undefined)) as unknown;
+  if (response.status === 401 && !retried && !path.startsWith("/api/v1/auth/") && await refreshAccessSession()) {
+    return request<T>(path, init, timeoutMs, true);
+  }
   if (!response.ok) {
     const errorPayload = payload as ErrorPayload | undefined;
     throw new Error(errorPayload?.error?.message ?? errorPayload?.detail ?? "Request failed");
@@ -564,9 +586,10 @@ export const api = {
       }),
     );
   },
-  datasets(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
+  datasets(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m", signal?: AbortSignal) {
     return request<{ datasets: MarketDataset[] }>(
       marketRequestPath("/api/v1/markets/datasets", market, { timeframe, limit: 20 }),
+      { signal },
     );
   },
   createDataset(market: MarketSelection = DEFAULT_MARKET, timeframe = "5m") {
@@ -679,8 +702,8 @@ export const api = {
       next_cursor: payload.next_cursor,
     }));
   },
-  experimentEquity(id: string) {
-    return request<{ equity: ResearchEquityPoint[] }>(`/api/v1/experiments/${id}/equity`).then((payload) => {
+  experimentEquity(id: string, limit = 1_200) {
+    return request<{ equity: ResearchEquityPoint[] }>(`/api/v1/experiments/${id}/equity?limit=${limit}`).then((payload) => {
       const points = payload.equity.map((point) => ({
         t: point.point_time,
         equity: point.equity,

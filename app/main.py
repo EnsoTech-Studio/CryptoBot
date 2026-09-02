@@ -597,11 +597,15 @@ def _trade_csv(store: Store, experiment_id: UUID, experiment: dict[str, Any]):
     "/api/v1/experiments/{experiment_id}/equity", response_model=dict[str, list[EquityPointOut]]
 )
 def get_experiment_equity(
-    experiment_id: UUID, _auth: Internal, owner_id: OwnerID, request: Request
+    experiment_id: UUID,
+    _auth: Internal,
+    owner_id: OwnerID,
+    request: Request,
+    limit: Annotated[int, Query(ge=2, le=5_000)] = 1_200,
 ) -> dict[str, Any]:
     store = _store(request)
     store.get_experiment(experiment_id, owner_id)
-    return {"equity": store.list_experiment_equity(experiment_id)}
+    return {"equity": store.list_experiment_equity(experiment_id, limit=limit)}
 
 
 @app.get("/api/v1/experiments/{experiment_id}/overlays")

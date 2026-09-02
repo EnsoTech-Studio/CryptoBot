@@ -15,6 +15,7 @@ export function BacktestFilters({
   timeframes,
   strategies,
   datasets,
+  datasetLoadState,
   disabled,
   onChange,
 }: {
@@ -23,11 +24,12 @@ export function BacktestFilters({
   timeframes: string[];
   strategies: Strategy[];
   datasets: MarketDataset[];
+  datasetLoadState: "loading" | "ready" | "empty" | "error";
   disabled: boolean;
   onChange: (patch: Partial<BacktestDraft>) => void;
 }) {
   const pairOptions = pairs.length > 0
-    ? pairs
+    ? dedupePairSymbols(pairs, draft.market)
     : [{ ...draft.market, base_asset: draft.market.symbol, quote_asset: "", timeframes }];
 
   return (
@@ -38,9 +40,9 @@ export function BacktestFilters({
             <span className={styles.coinBadge} aria-hidden="true">₿</span>
             <Select
               value={marketKey(draft.market)}
-              disabled={disabled || pairs.length === 0}
+              disabled={disabled || pairOptions.length === 0}
               onChange={(event) => {
-                const next = pairs.find((pair) => marketKey(pair) === event.target.value);
+                const next = pairOptions.find((pair) => marketKey(pair) === event.target.value);
                 if (next) onChange({ market: { provider: next.provider, symbol: next.symbol } });
               }}
             >
@@ -63,10 +65,12 @@ export function BacktestFilters({
       <Field label="Dataset lịch sử">
         <Select
           value={draft.datasetVersion}
-          disabled={disabled || datasets.length === 0}
+          disabled={disabled || datasetLoadState !== "ready"}
           onChange={(event) => onChange({ datasetVersion: event.target.value })}
         >
-          {datasets.length === 0 ? <option value="">Đang tải dataset…</option> : null}
+          {datasets.length === 0 ? <option value="">
+            {datasetLoadState === "loading" ? "Đang tải dataset…" : datasetLoadState === "empty" ? "Không có dataset cho timeframe này" : "Không tải được dataset"}
+          </option> : null}
           {datasets.map((dataset) => (
             <option key={dataset.dataset_version} value={dataset.dataset_version}>
               {dataset.dataset_version} · {dataset.candle_count.toLocaleString("en-US")} nến
@@ -87,18 +91,6 @@ export function BacktestFilters({
         disabled={disabled}
         onChange={(rangeTo) => onChange({ rangeTo })}
       />
-
-      <Field label="Vốn (USD)">
-        <TextInput
-          type="number"
-          min={1}
-          step={1}
-          suffix="USD"
-          value={draft.initialEquity}
-          disabled={disabled}
-          onChange={(event) => onChange({ initialEquity: Number(event.target.value) })}
-        />
-      </Field>
 
       <Field label="Strategy mode">
         <Select
@@ -129,53 +121,86 @@ export function BacktestFilters({
         </Field>
       ) : (
         <Field label="Composite strategies" hint="Chọn từ 2 strategy; trọng số chia đều khi gửi.">
-          <div className={styles.strategyChecks}>
-            {strategies.map((strategy) => (
-              <label key={strategy.strategy_id} className={styles.strategyCheck}>
-                <input
-                  type="checkbox"
-                  checked={draft.selectedStrategyIds.includes(strategy.strategy_id)}
-                  disabled={disabled}
-                  onChange={(event) => onChange({
-                    selectedStrategyIds: event.target.checked
-                      ? [...new Set([...draft.selectedStrategyIds, strategy.strategy_id])]
-                      : draft.selectedStrategyIds.filter((id) => id !== strategy.strategy_id),
-                  })}
-                />
-                <span>{strategy.display_name}</span>
-              </label>
-            ))}
-          </div>
+          <details className={styles.strategyPicker}>
+            <summary>
+              {draft.selectedStrategyIds.length} strategy đã chọn
+            </summary>
+            <div className={styles.strategyChecks} aria-label="Strategy khả dụng trong registry">
+              {strategies.map((strategy) => (
+                <label key={strategy.strategy_id} className={styles.strategyCheck}>
+                  <input
+                    type="checkbox"
+                    checked={draft.selectedStrategyIds.includes(strategy.strategy_id)}
+                    disabled={disabled}
+                    onChange={(event) => onChange({
+                      selectedStrategyIds: event.target.checked
+                        ? [...new Set([...draft.selectedStrategyIds, strategy.strategy_id])]
+                        : draft.selectedStrategyIds.filter((id) => id !== strategy.strategy_id),
+                    })}
+                  />
+                  <span>{strategy.display_name}</span>
+                </label>
+              ))}
+            </div>
+          </details>
         </Field>
       )}
 
-      <Field label="Transaction Cost" hint="Phí giao dịch tính theo phần trăm; API nhận basis points.">
-        <TextInput
-          type="number"
-          min={0}
-          max={100}
-          step={0.01}
-          suffix="%"
-          value={draft.feePercent}
-          disabled={disabled}
-          onChange={(event) => onChange({ feePercent: Number(event.target.value) })}
-        />
-      </Field>
-
-      <Field label="Slippage">
-        <TextInput
-          type="number"
-          min={0}
-          max={10_000}
-          step={1}
-          suffix="bps"
-          value={draft.slippageBps}
-          disabled={disabled}
-          onChange={(event) => onChange({ slippageBps: Number(event.target.value) })}
-        />
-      </Field>
+      <details className={styles.executionDetails}>
+        <summary>Execution settings</summary>
+        <div className={styles.executionFields}>
+          <Field label="Vốn (USD)">
+            <TextInput
+              type="number"
+              min={1}
+              step={1}
+              suffix="USD"
+              value={draft.initialEquity}
+              disabled={disabled}
+              onChange={(event) => onChange({ initialEquity: Number(event.target.value) })}
+            />
+          </Field>
+          <Field label="Transaction Cost" hint="Phí giao dịch tính theo phần trăm; API nhận basis points.">
+            <TextInput
+              type="number"
+              min={0}
+              max={100}
+              step={0.01}
+              suffix="%"
+              value={draft.feePercent}
+              disabled={disabled}
+              onChange={(event) => onChange({ feePercent: Number(event.target.value) })}
+            />
+          </Field>
+          <Field label="Slippage">
+            <TextInput
+              type="number"
+              min={0}
+              max={10_000}
+              step={1}
+              suffix="bps"
+              value={draft.slippageBps}
+              disabled={disabled}
+              onChange={(event) => onChange({ slippageBps: Number(event.target.value) })}
+            />
+          </Field>
+        </div>
+      </details>
     </div>
   );
+}
+
+/* Pair/Coin displays the tradable symbol, not the exchange venue. Keep one
+   option per symbol so Binance/OKX rows do not look like duplicate coins;
+   preserve the currently selected venue when it is already known. */
+function dedupePairSymbols(pairs: MarketPair[], selected: BacktestDraft["market"]) {
+  const bySymbol = new Map<string, MarketPair>();
+  for (const pair of pairs) {
+    const symbol = pair.symbol.toUpperCase();
+    const current = bySymbol.get(symbol);
+    if (!current || marketKey(pair) === marketKey(selected)) bySymbol.set(symbol, pair);
+  }
+  return [...bySymbol.values()];
 }
 
 function DateField({

@@ -1464,15 +1464,26 @@ class Store:
             "next_cursor": page[-1]["sequence_no"] if len(rows) > limit else None,
         }
 
-    def list_experiment_equity(self, experiment_id: UUID) -> list[dict[str, Any]]:
+    def list_experiment_equity(self, experiment_id: UUID, *, limit: int = 1_200) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT p.point_time,p.equity,p.drawdown_pct
-                FROM equity_points p JOIN backtest_runs r ON r.id=p.backtest_run_id
-                WHERE r.experiment_id=%s ORDER BY p.point_time
+                WITH ranked AS (
+                    SELECT p.point_time,p.equity,p.drawdown_pct,
+                           row_number() OVER (ORDER BY p.point_time) AS row_no,
+                           count(*) OVER () AS point_count
+                    FROM equity_points p JOIN backtest_runs r ON r.id=p.backtest_run_id
+                    WHERE r.experiment_id=%s
+                )
+                SELECT point_time,equity,drawdown_pct
+                FROM ranked
+                WHERE point_count <= %s
+                   OR row_no = 1
+                   OR row_no = point_count
+                   OR (row_no - 1) %% CEIL((point_count - 1)::numeric / (%s - 1)) = 0
+                ORDER BY point_time
                 """,
-                (experiment_id,),
+                (experiment_id, limit, limit),
             ).fetchall()
         return [_as_float_fields(row, ("equity", "drawdown_pct")) for row in rows]
 

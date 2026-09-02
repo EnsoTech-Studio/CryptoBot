@@ -27,6 +27,8 @@ import { ExperimentHistory, type ExperimentHistoryRecord } from "./ExperimentHis
 import { TradeLedger } from "./TradeLedger";
 import styles from "./backtest.module.css";
 
+type DatasetLoadState = "loading" | "ready" | "empty" | "error";
+
 export function BacktestScreen() {
   const {
     marketPairs,
@@ -48,6 +50,7 @@ export function BacktestScreen() {
      that produced the numbers, even while the user edits the strip again. */
   const [submitted, setSubmitted] = useState<BacktestDraft | null>(null);
   const [datasets, setDatasets] = useState<MarketDataset[]>([]);
+  const [datasetLoadState, setDatasetLoadState] = useState<DatasetLoadState>("loading");
   const [selectedTradeSequence, setSelectedTradeSequence] = useState<number | null>(null);
   const [history, setHistory] = useState<ExperimentHistoryRecord[]>([]);
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
@@ -73,10 +76,11 @@ export function BacktestScreen() {
 
   useEffect(() => {
     if (dataMode === "mock") {
-      const dataset = pickBacktestDataset(MOCK_DATASETS, draft.datasetVersion) ?? MOCK_DATASETS[0];
+      const dataset = MOCK_DATASETS[0];
       const frame = window.requestAnimationFrame(() => {
         if (!dataset) return;
         setDatasets(MOCK_DATASETS);
+        setDatasetLoadState("ready");
         setDraft((current) => ({
           ...current,
           datasetVersion: dataset.dataset_version,
@@ -87,22 +91,42 @@ export function BacktestScreen() {
       return () => window.cancelAnimationFrame(frame);
     }
     let cancelled = false;
-    void api.datasets(market, effectiveTimeframe).then(({ datasets: availableDatasets }) => {
+    let settled = false;
+    const controller = new AbortController();
+    const loadingFrame = window.requestAnimationFrame(() => {
+      if (cancelled || settled) return;
+      setDatasets([]);
+      setDatasetLoadState("loading");
+    });
+    void api.datasets(market, effectiveTimeframe, controller.signal).then(({ datasets: availableDatasets }) => {
       if (cancelled) return;
+      settled = true;
       setDatasets(availableDatasets);
-      const dataset = pickBacktestDataset(availableDatasets, draft.datasetVersion);
-      if (!dataset) return;
-      const rangeFrom = dataset.range_from.slice(0, 10);
-      const rangeTo = new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10);
-      setDraft((current) => ({
-        ...current,
-        datasetVersion: pickBacktestDataset(availableDatasets, current.datasetVersion)?.dataset_version ?? dataset.dataset_version,
-        rangeFrom,
-        rangeTo,
-      }));
-    }).catch(() => setDatasets([]));
-    return () => { cancelled = true; };
-  }, [dataMode, draft.datasetVersion, effectiveTimeframe, market]);
+      setDatasetLoadState(availableDatasets.length > 0 ? "ready" : "empty");
+      const firstDataset = availableDatasets[0];
+      setDraft((current) => {
+        const dataset = pickBacktestDataset(availableDatasets, current.datasetVersion) ?? firstDataset;
+        if (!dataset) return { ...current, datasetVersion: "", rangeFrom: "", rangeTo: "" };
+        return {
+          ...current,
+          datasetVersion: dataset.dataset_version,
+          rangeFrom: dataset.range_from.slice(0, 10),
+          rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+        };
+      });
+    }).catch(() => {
+      if (!cancelled) {
+        settled = true;
+        setDatasets([]);
+        setDatasetLoadState("error");
+      }
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(loadingFrame);
+      controller.abort();
+    };
+  }, [dataMode, effectiveTimeframe, market]);
 
   const issues = backtestIssues(effectiveDraft);
   const running = !uiCancelled && (experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
@@ -166,8 +190,9 @@ export function BacktestScreen() {
       }, 700);
       return;
     }
+    const draftId = `draft-${Date.now()}`;
     setHistory((current) => [{
-      id: `draft-${Date.now()}`,
+      id: draftId,
       status: "queued",
       createdAt: new Date().toISOString(),
       symbol: effectiveDraft.market.symbol,
@@ -188,7 +213,10 @@ export function BacktestScreen() {
       { from: effectiveDraft.rangeFrom, to: effectiveDraft.rangeTo },
       effectiveDraft.market,
       effectiveDraft.datasetVersion,
-    );
+    ).then((accepted) => {
+      if (accepted) return;
+      setHistory((current) => current.map((record) => record.id === draftId ? { ...record, status: "failed" } : record));
+    });
   }
 
   function toggleComparison(id: string) {
@@ -220,6 +248,7 @@ export function BacktestScreen() {
           timeframes={backtestTimeframes}
           strategies={backtestStrategies}
           datasets={datasets}
+          datasetLoadState={datasetLoadState}
           disabled={running}
           onChange={patch}
         />
