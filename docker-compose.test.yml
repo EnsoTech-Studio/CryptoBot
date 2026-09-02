@@ -37,6 +37,7 @@ services:
       - ./migrations/021_agent_tool_invocations.sql:/docker-entrypoint-initdb.d/21_agent_tool_invocations.sql:ro
       - ./migrations/022_trade_cost_provenance.sql:/docker-entrypoint-initdb.d/22_trade_cost_provenance.sql:ro
       - ./migrations/023_okx_swap_market_pairs.sql:/docker-entrypoint-initdb.d/23_okx_swap_market_pairs.sql:ro
+      - ./migrations/024_seed_default_news_sources.sql:/docker-entrypoint-initdb.d/24_seed_default_news_sources.sql:ro
       - ./scripts/queue-scale-proof.sql:/proof/queue-scale-proof.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cryptobot -d cryptobot"]

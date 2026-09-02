@@ -183,3 +183,33 @@ def test_ai_unavailable_persists_no_placeholder() -> None:
     result = service.analyze_pending(model="sentiment-v1", model_version="v1")
     assert result.unavailable == 1
     assert store.persisted == []
+
+
+def test_blocked_news_source_fails_collection_without_crashing_batch() -> None:
+    job_id = uuid4()
+
+    class Store:
+        failed: list[str]
+
+        def __init__(self) -> None:
+            self.failed = []
+
+        def begin_news_collection(self, _source_id):
+            return job_id
+
+        def latest_news_collection(self, _source_id):
+            return None
+
+        def fail_news_collection(self, _job_id, reason):
+            self.failed.append(reason)
+
+    class BlockedProvider:
+        def collect(self, _source, _since):
+            raise SsrfBlocked("https_required")
+
+    store = Store()
+    result = NewsService(store, BlockedProvider(), object()).collect_source(_source())
+
+    assert result.status == "failed"
+    assert result.error_code == "news_source_blocked"
+    assert store.failed == ["news_source_blocked"]

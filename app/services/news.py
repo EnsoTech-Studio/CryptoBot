@@ -7,7 +7,7 @@ from uuid import UUID
 
 from ..domain.news import ApprovedSource, CollectedItem
 from ..infrastructure.ai import NewsExtractionUnavailable
-from ..infrastructure.news import NewsProviderError
+from ..infrastructure.news import NewsProviderError, SsrfBlocked
 from ..infrastructure.news.html import HtmlQualityGateFailed
 from ..infrastructure.news.security import canonical_url, related_coins, sanitize_text, sha256_text
 from ..infrastructure.sentiment import ContractViolation, SentimentUnavailable
@@ -75,6 +75,9 @@ class NewsService:
         except NewsExtractionUnavailable:
             self._store.fail_news_collection(job_id, "news_extraction_unavailable")
             return CollectionResult(source.id, job_id, "failed", error_code="news_extraction_unavailable")
+        except SsrfBlocked:
+            self._store.fail_news_collection(job_id, "news_source_blocked")
+            return CollectionResult(source.id, job_id, "failed", error_code="news_source_blocked")
         except NewsProviderError as exc:
             self._store.fail_news_collection(job_id, exc.code)
             return CollectionResult(source.id, job_id, "failed", error_code=exc.code)
