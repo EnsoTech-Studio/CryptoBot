@@ -1,0 +1,20 @@
+{
+  "scope": "isolated PostgreSQL queue -> worker processes -> deterministic engine -> persisted results; excludes Go/API and event evaluation",
+  "marker": "bench-c0e9dfbc0f464769bd25ae000ea43c82",
+  "jobs": 100000,
+  "workers": 4,
+  "candles": 50,
+  "completed_jobs": 100000,
+  "failed_jobs": 0,
+  "cancelled_jobs": 0,
+  "elapsed_seconds": 1519.209,
+  "completed_jobs_per_second": 65.824,
+  "completed_jobs_per_minute": 3949.44,
+  "job_latency_p50_ms": 746604.202,
+  "job_latency_p95_ms": 1438429.875,
+  "persisted_signals": 4700000,
+  "persisted_equity_points": 15000000,
+  "python": "3.12.14",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "measured_at": "2026-09-03"
+}

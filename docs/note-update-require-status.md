@@ -30,7 +30,7 @@ the final project status.
 | Strategy/Search/Crawler interfaces | Done | UML diagrams 36–38 and typed ports/plugin contracts |
 | Docker Compose, health/readiness and scale path | Done for MVP | `docker-compose.stack.yml`, health checks and worker replicas; Kubernetes remains optional |
 | Second market provider proof | Partial | `ProviderRegistry` resolves the deterministic `okx_fixture` adapter through the same `RealtimeMarketProvider` contract; regression tests cover contract preservation and provider-scoped stale state. Production registers Binance only, so this is not a live second-exchange integration. |
-| 100k runtime throughput | Pending | Isolated PostgreSQL 16 proof on 2026-09-01 inserted 100k experiments in ~2.899s and 100k jobs in ~1.202s; the claim query executed in ~2.236ms and the transaction rolled back. This is a queue/query-plan proof, not end-to-end throughput. |
+| 100k runtime throughput | Done with boundary | [`benchmark-100k-2026-09-03.json`](benchmark-100k-2026-09-03.json) records 100,000 executed jobs on an isolated PostgreSQL 16 database with 4 workers and 50 candles: 100% completed, 1519.209s elapsed, 65.824 jobs/s, p50 746604.202 ms, p95 1438429.875 ms. Scope is queue → worker → deterministic engine → persisted results; it excludes Go/API and event evaluation. Worker counts 8/16 remain unmeasured. |
 | Failure-injection demo bundle | Done (isolated rehearsal) | The repeatable failure baseline and real PostgreSQL queue integration suite pass. The suite runs real backtest and event-worker processes, kills each after lease acquisition, waits for expiry, then verifies the replacement worker reclaims and completes exactly once. |
 
 ## Latest local verification (2026-09-01)
@@ -59,8 +59,10 @@ previous handoff.
    labeled deterministic mock mode exists for UI-reference/demo fallback.
 3. Do not claim arbitrary URL crawling or automatic production deployment of
    generated Python. Those are security boundaries, not missing validation.
-4. Do not claim 100,000 executed backtests until a measured benchmark artifact
-   exists. The current SQL script proves the queue claim query plan only.
+4. Claim 100,000 executed backtests only with the measured artifact and its
+   boundary. The SQL script still proves the queue claim query plan only;
+   [`benchmark-100k-2026-09-03.json`](benchmark-100k-2026-09-03.json) is the
+   separate end-to-end worker/engine evidence for the 4-worker run.
 
 For the full evidence table, see
 [`../blueprint/traceability.md`](../blueprint/traceability.md).
