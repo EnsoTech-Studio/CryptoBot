@@ -180,7 +180,7 @@ function BacktestContent() {
   useEffect(() => {
     if (!user) return;
     try {
-      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history.slice(0, 20)));
+      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history));
     } catch {
       // Private-mode storage failures must not block a backtest.
     }
@@ -205,7 +205,7 @@ function BacktestContent() {
     const frame = window.requestAnimationFrame(() => {
       setHistory((current) => {
         const next = { ...summaryToHistory(experiment), ...(uiCancelled ? { status: "cancelled" } : {}) };
-        return [next, ...current.filter((record) => record.id !== experiment.id && !record.id.startsWith("draft-"))].slice(0, 20);
+        return [next, ...current.filter((record) => record.id !== experiment.id && !record.id.startsWith("draft-"))];
       });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -268,7 +268,7 @@ function BacktestContent() {
           parameters: Object.assign({}, ...selectedChildren.map((child) => child.parameters ?? {})),
           execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
           metrics: null,
-        }, ...current].slice(0, 20));
+        }, ...current]);
         submitLock.current = false;
         submitOriginExperimentId.current = null;
         setSubmitPending(false);
@@ -290,7 +290,7 @@ function BacktestContent() {
       parameters: Object.assign({}, ...selectedChildren.map((child) => child.parameters ?? {})),
       execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
       metrics: null,
-    }, ...current].slice(0, 20));
+    }, ...current]);
     void runBacktest(
       selectedChildren,
       draftToExecution(effectiveDraft),
@@ -434,7 +434,7 @@ function readExperimentHistory(ownerId: string): ExperimentHistoryRecord[] {
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(experimentHistoryStorageKey(ownerId)) ?? "[]");
     if (!Array.isArray(value)) return [];
-    return value.filter(isExperimentHistoryRecord).slice(0, 20);
+    return value.filter(isExperimentHistoryRecord);
   } catch {
     return [];
   }

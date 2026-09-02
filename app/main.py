@@ -64,7 +64,7 @@ from .schemas import (
 )
 from .services.news import NewsService
 from .services.authoring import StrategyAuthoringService
-from .services.chart_overlays import build_chart_overlay_delta, build_chart_overlays
+from .services.chart_overlays import build_chart_overlay_delta, build_chart_overlays, build_current_signals
 
 _registry = default_registry()
 
@@ -429,6 +429,32 @@ def chart_overlay_delta(
             404 if exc.code == ERR_UNKNOWN_STRATEGY else 422,
             "strategy",
         ) from exc
+
+
+@app.get("/api/v1/markets/current-signals")
+def current_signals(
+    _auth: Internal,
+    request: Request,
+    provider: Annotated[str, Query(min_length=1)] = "binance_usdm",
+    symbol: Annotated[str, Query(min_length=1)] = "ETHUSDT",
+    timeframe: Annotated[str, Query(min_length=1)] = "5m",
+    strategies: Annotated[str, Query(min_length=3)] = "ma_cross@v1,rsi@v1",
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 1_000,
+) -> dict[str, Any]:
+    references = [item.strip() for item in strategies.split(",") if item.strip()]
+    if not 1 <= len(references) <= 5 or any("@" not in item for item in references):
+        raise ApplicationError("invalid_strategy", "strategies must contain 1-5 strategy_id@version values", 422, "strategies")
+    parsed = [tuple(item.rsplit("@", 1)) for item in references]
+    try:
+        signals = build_current_signals(_store(request).list_live_candles(provider, symbol, timeframe, limit), parsed)
+    except DomainError as exc:
+        raise ApplicationError(
+            "unknown_strategy_version" if exc.code == ERR_UNKNOWN_STRATEGY else "invalid_strategy",
+            "strategy is not available" if exc.code == ERR_UNKNOWN_STRATEGY else exc.message,
+            404 if exc.code == ERR_UNKNOWN_STRATEGY else 422,
+            "strategies",
+        ) from exc
+    return {"signals": signals}
 
 
 @app.post("/api/v1/strategy-drafts", response_model=StrategyDraftOut, status_code=202)
