@@ -186,7 +186,9 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/api/v1/news/aggregate", handler.newsAggregate)
 	mux.HandleFunc("/api/v1/news/sources", handler.newsSources)
 	mux.HandleFunc("/api/v1/admin/news/collect", handler.newsCollect)
+	mux.HandleFunc("/api/v1/admin/sentiment/backfill", handler.sentimentBackfill)
 	mux.HandleFunc("/api/v1/ai/predict", handler.predict)
+	mux.HandleFunc("/api/v1/ai/news-strategy-analysis", handler.newsStrategyAnalysis)
 
 	return handler.withRequestID(handler.withCORS(handler.withMetrics(mux)))
 }
@@ -1023,6 +1025,45 @@ func (h *Handler) newsCollect(w http.ResponseWriter, r *http.Request) {
 	}, &principal)
 }
 
+func (h *Handler) sentimentBackfill(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodPost) {
+		return
+	}
+	principal, ok := h.requireCommandAuth(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Limit     int      `json:"limit,omitempty"`
+		SourceIDs []string `json:"source_ids,omitempty"`
+		Coins     []string `json:"coins,omitempty"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if body.Limit == 0 {
+		body.Limit = 200
+	}
+	if body.Limit < 1 || body.Limit > 200 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_limit", "Limit must be between 1 and 200")
+		return
+	}
+	if len(body.SourceIDs) > 50 {
+		writeError(w, http.StatusUnprocessableEntity, "too_many_sources", "source_ids must contain at most 50 items")
+		return
+	}
+	if len(body.Coins) > 20 {
+		writeError(w, http.StatusUnprocessableEntity, "too_many_coins", "coins must contain at most 20 items")
+		return
+	}
+	h.callResearch(w, r, http.MethodPost, "/api/v1/admin/sentiment/backfill", map[string]any{
+		"limit":      body.Limit,
+		"source_ids": body.SourceIDs,
+		"coins":      body.Coins,
+	}, &principal)
+}
+
 func (h *Handler) predict(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodPost) {
 		return
@@ -1046,6 +1087,26 @@ func (h *Handler) predict(w http.ResponseWriter, r *http.Request) {
 		w, r, http.MethodPost, "/api/v1/sentiment/predict",
 		map[string]any{"text": body.Text}, &principal,
 	)
+}
+
+func (h *Handler) newsStrategyAnalysis(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodPost) {
+		return
+	}
+	principal, ok := h.requireCommandAuth(w, r)
+	if !ok {
+		return
+	}
+	var body newsStrategyAnalysisRequest
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := body.validate(); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_strategy_analysis", err.Error())
+		return
+	}
+	h.callResearch(w, r, http.MethodPost, "/api/v1/news/strategy-analysis", body, &principal)
 }
 
 func (h *Handler) marketStream(w http.ResponseWriter, r *http.Request) {

@@ -1,4 +1,4 @@
-"""Seed three safe demo news documents through the real Groq extraction pipeline."""
+"""Seed three safe demo news documents through the real OpenAI-backed extraction pipeline."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def _load_local_env() -> None:
 
 
 def parse_demo_html(source: ApprovedSource, article: DemoArticle):
-    """Intentionally trip the deterministic quality gate so Groq extracts raw HTML text."""
+    """Intentionally trip the deterministic quality gate so the LLM extracts raw HTML text."""
     return HtmlNewsProvider._parse(source, article.page_url, article.html.encode("utf-8"), None)
 
 

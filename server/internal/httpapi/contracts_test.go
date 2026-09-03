@@ -61,3 +61,33 @@ func TestSearchRequestValidationRejectsImpossibleCardinality(t *testing.T) {
 		t.Fatal("expected cardinality above strategy count to be rejected")
 	}
 }
+
+func TestNewsStrategyAnalysisValidationDefaultsModel(t *testing.T) {
+	score := 0.72
+	request := newsStrategyAnalysisRequest{
+		SentimentMix: newsStrategyMixInput{Positive: 60, Neutral: 30, Negative: 10},
+		Coverage: newsStrategyCoverageInput{
+			ItemsTotal: 10, ItemsAnalyzed: 8, ItemsUnanalyzed: 2,
+		},
+		AverageScore: &score,
+	}
+
+	if err := request.validate(); err != nil {
+		t.Fatalf("expected valid strategy analysis request, got %v", err)
+	}
+	if request.Model != "gpt-4o-mini" {
+		t.Fatalf("expected gpt-4o-mini default, got %s", request.Model)
+	}
+}
+
+func TestNewsStrategyAnalysisValidationRejectsUnknownModel(t *testing.T) {
+	request := newsStrategyAnalysisRequest{
+		SentimentMix: newsStrategyMixInput{Positive: 60, Neutral: 30, Negative: 10},
+		Coverage:     newsStrategyCoverageInput{ItemsTotal: 1, ItemsAnalyzed: 1},
+		Model:        "unknown-model",
+	}
+
+	if err := request.validate(); err == nil {
+		t.Fatal("expected unsupported model to be rejected")
+	}
+}

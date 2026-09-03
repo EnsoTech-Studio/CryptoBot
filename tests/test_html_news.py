@@ -32,6 +32,38 @@ def test_html_provider_extracts_one_sanitized_article():
     assert items[0].extraction_version == "html-v1"
 
 
+def test_html_provider_extracts_listing_entries_from_html_source():
+    source = ApprovedSource(
+        id=uuid4(),
+        source_key="example_listing",
+        display_name="Example Listing",
+        kind="html",
+        allowed_origin="https://example.com",
+        url_template="https://example.com/articles",
+    )
+    payload = b"""
+    <html><body>
+      <article>
+        <a href="/bitcoin-rally">Bitcoin rally strengthens</a>
+        <time>September 1, 2026</time>
+        <p>Bitcoin demand improved as ETF flows increased during the session.</p>
+      </article>
+      <article>
+        <h2><a href="/ethereum-liquidity">Ethereum liquidity steadies</a></h2>
+        <time datetime="2026-09-01T12:00:00Z"></time>
+        <p>Ethereum liquidity remained stable while traders watched network activity.</p>
+      </article>
+    </body></html>
+    """
+
+    items = HtmlNewsProvider._parse(source, source.url_template, payload, None)
+
+    assert len(items) == 2
+    assert items[0].canonical_url == "https://example.com/bitcoin-rally"
+    assert items[0].related_coins == ("BTC",)
+    assert items[0].extraction_version == "html-list-v1"
+
+
 def test_html_provider_applies_since_cutoff():
     payload = b"<html><body><h1>Update</h1><p>" + b"enough article text " * 5 + b"</p></body></html>"
     assert HtmlNewsProvider._parse(

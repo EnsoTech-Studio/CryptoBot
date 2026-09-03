@@ -19,6 +19,10 @@ class NewsExtractionUnavailable(RuntimeError):
     pass
 
 
+class NewsStrategyAnalysisUnavailable(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class NewsExtraction:
     title: str
@@ -30,6 +34,14 @@ class NewsExtraction:
 @dataclass(frozen=True)
 class StrategyDesign:
     spec: StrategySpecResponse
+    model: str
+    model_version: str
+
+
+@dataclass(frozen=True)
+class NewsStrategyAnalysis:
+    reasoning: str
+    result: str
     model: str
     model_version: str
 
@@ -86,6 +98,44 @@ class NewsExtractionHTTPAdapter:
             "quality_policy_version": "html-quality/v1",
         }
         return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+class NewsStrategyAnalysisHTTPAdapter:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_s: float = 10.0,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client or httpx.Client(timeout=timeout_s, limits=httpx.Limits(max_connections=4))
+        self._owns_client = client is None
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def analyze(self, payload: dict[str, object], request_id: str | None = None) -> NewsStrategyAnalysis:
+        headers = {"X-Request-ID": request_id} if request_id else {}
+        try:
+            response = self._client.post(
+                self._base_url + "/news/strategy-analysis",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            body = response.json()
+            result = NewsStrategyAnalysis(
+                reasoning=str(body["reasoning"]).strip(),
+                result=str(body["result"]).strip(),
+                model=str(body["model"]).strip(),
+                model_version=str(body["model_version"]).strip(),
+            )
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            raise NewsStrategyAnalysisUnavailable("news strategy analysis inference is unavailable") from exc
+        if not result.reasoning or not result.result or not result.model or not result.model_version:
+            raise NewsStrategyAnalysisUnavailable("news strategy analysis response is invalid")
+        return result
 
 
 class StrategyDesignHTTPAdapter:

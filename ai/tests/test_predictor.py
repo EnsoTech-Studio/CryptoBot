@@ -143,6 +143,8 @@ def test_llm_boolean_bollinger_rule_shape_is_canonicalized() -> None:
 
 
 def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     observed = {}
     response = {
@@ -174,6 +176,8 @@ def test_openai_configuration_is_preferred_and_uses_shared_model(monkeypatch) ->
     monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
     monkeypatch.setenv("MODEL_CHEAP", "gpt-test-mini")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.example/v1")
+    monkeypatch.setenv("SENTIMENT_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("SENTIMENT_MODEL_VERSION", "groq-2026-08-31")
     observed = {}
 
     def requester(request, _timeout):
@@ -185,13 +189,61 @@ def test_openai_configuration_is_preferred_and_uses_shared_model(monkeypatch) ->
     result = Predictor(requester).predict("market update")
 
     assert result.model == "gpt-test-mini"
+    assert result.model_version == "openai-gpt-4o-mini"
     assert observed["url"] == "https://openai.example/v1/chat/completions"
     assert observed["authorization"] == "Bearer openai-test-key"
     assert observed["payload"]["model"] == "gpt-test-mini"
-    assert observed["payload"]["reasoning_effort"] == "low"
+    assert observed["payload"]["temperature"] == 0
+    assert "reasoning_effort" not in observed["payload"]
+
+
+def test_openai_provider_can_be_forced_without_groq_key(monkeypatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    predictor = Predictor(lambda _request, _timeout: b"{}")
+
+    assert predictor.provider == "openai"
+    assert predictor.model == "gpt-4o-mini"
+    assert predictor.model_version == "openai-gpt-4o-mini"
+
+
+def test_news_strategy_analysis_uses_selected_openai_model(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.example/v1")
+    observed = {}
+
+    def requester(request, _timeout):
+        observed["payload"] = json.loads(request.data)
+        return json.dumps({"choices": [{"message": {"content": json.dumps({
+            "reasoning": "1. Đọc sentiment thật.\n2. Đánh giá coverage.",
+            "result_json": json.dumps({"strategy_id": "news_sentiment@v1", "version": "1.0", "decision": "BULLISH_NEWS_FILTER"}),
+        })}}]}).encode()
+
+    result = Predictor(requester).analyze_news_strategy(
+        {
+            "sentiment_mix": {"positive": 60, "neutral": 30, "negative": 10},
+            "coverage": {"items_total": 10, "items_analyzed": 8, "items_unanalyzed": 2},
+            "average_score": 0.72,
+        },
+        model_override="gpt-4o-mini",
+    )
+
+    assert result.model == "gpt-4o-mini"
+    assert result.model_version == "openai-gpt-4o-mini"
+    assert observed["payload"]["model"] == "gpt-4o-mini"
+    assert observed["payload"]["temperature"] == 0
+    assert "reasoning_effort" not in observed["payload"]
+    assert "Quy trình suy luận AI" in observed["payload"]["messages"][0]["content"]
+    parsed = json.loads(result.result)
+    assert parsed["decision"] == "BULLISH_NEWS_FILTER"
+    assert parsed["strategy_id"] == "news_sentiment"
+    assert parsed["version"] == "v1"
 
 
 def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     observed = {}
 
@@ -209,6 +261,8 @@ def test_python_repair_returns_only_a_bounded_replacement_artifact(monkeypatch) 
 
 
 def test_discovery_proposal_normalizes_component_shorthand(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     response = {
         "hypothesis": "Trend and momentum complement each other.",
@@ -240,6 +294,8 @@ def test_discovery_proposal_normalizes_component_shorthand(monkeypatch) -> None:
 
 
 def test_discovery_proposal_normalizes_strategies_alias(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     response = {
         "hypothesis": "Trend and momentum diversify the signal.",

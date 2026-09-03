@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+OPENAI_DEFAULT_MODEL_VERSION = "openai-gpt-4o-mini"
+LEGACY_GROQ_SENTIMENT_MODELS = {"sentiment-v1", "openai/gpt-oss-120b", "gpt-oss-120b"}
+
 
 def _env(name: str, default: str = "") -> str:
     value = os.getenv(name, "").strip()
@@ -46,6 +50,40 @@ def _boolean(name: str, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
+def _openai_inference_enabled() -> bool:
+    provider = _env("AI_PROVIDER").lower()
+    return provider == "openai" or bool(_env("OPENAI_API_KEY"))
+
+
+def _openai_model_default() -> str:
+    return (
+        _env("OPENAI_MODEL")
+        or _env("MODEL_CHEAP")
+        or OPENAI_DEFAULT_MODEL
+    ).removeprefix("openai/")
+
+
+def _sentiment_model() -> str:
+    configured = _env("SENTIMENT_MODEL")
+    if _openai_inference_enabled():
+        if not configured or configured in LEGACY_GROQ_SENTIMENT_MODELS:
+            return _openai_model_default()
+        return configured.removeprefix("openai/")
+    return configured or "sentiment-v1"
+
+
+def _sentiment_model_version() -> str:
+    configured = _env("SENTIMENT_MODEL_VERSION")
+    if _openai_inference_enabled():
+        explicit = _env("OPENAI_MODEL_VERSION")
+        if explicit:
+            return explicit
+        if configured and not configured.startswith("groq-") and configured != "2026-08-01":
+            return configured
+        return OPENAI_DEFAULT_MODEL_VERSION
+    return configured or "2026-08-01"
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -81,7 +119,7 @@ class Settings:
             worker_lease_s=lease,
             worker_heartbeat_s=heartbeat,
             event_lease_s=_positive_int("EVENT_LEASE_SECONDS", 60),
-            sentiment_model=_env("SENTIMENT_MODEL", "sentiment-v1"),
-            sentiment_model_version=_env("SENTIMENT_MODEL_VERSION", "2026-08-01"),
+            sentiment_model=_sentiment_model(),
+            sentiment_model_version=_sentiment_model_version(),
             discovery_demo_mode=_boolean("DISCOVERY_DEMO_MODE"),
         )

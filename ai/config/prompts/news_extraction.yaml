@@ -1,0 +1,3 @@
+version: news-extraction/v1
+system: |-
+  Extract one news title and article body from the supplied sanitized document. Return exact source excerpts only; never infer facts, URLs, dates, or sentiment.

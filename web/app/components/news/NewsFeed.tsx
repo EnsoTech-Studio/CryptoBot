@@ -43,7 +43,7 @@ export function NewsFeed({
         </Unavailable>
       ) : items.length === 0 ? (
         <Unavailable title="Chưa có tin tức phù hợp">
-          Chưa có dữ liệu đã thu thập. Hãy chạy crawl từ tài khoản quản trị hoặc thử lại sau.
+          Chưa có dữ liệu đã thu thập. Hãy bấm Phân tích từ tài khoản quản trị hoặc thử lại sau.
         </Unavailable>
       ) : (
         <>

@@ -2936,19 +2936,35 @@ class Store:
             )
 
     def pending_sentiment_items(
-        self, model: str, model_version: str, limit: int = 200
+        self,
+        model: str,
+        model_version: str,
+        limit: int = 200,
+        source_ids: list[UUID] | None = None,
+        coins: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        filters: list[str] = []
+        params: list[Any] = [model, model_version]
+        if source_ids:
+            filters.append("AND n.source_id = ANY(%s::uuid[])")
+            params.append(source_ids)
+        normalized_coins = [coin.strip().upper() for coin in coins or [] if coin.strip()]
+        if normalized_coins:
+            filters.append("AND n.related_coins && %s::text[]")
+            params.append(normalized_coins)
+        params.append(limit)
         with self._connect() as connection:
             return connection.execute(
-                """
+                f"""
                 SELECT n.id,n.title,n.content
                 FROM news_items n
                 LEFT JOIN sentiment_results s
                   ON s.news_item_id=n.id AND s.model=%s AND s.model_version=%s
                 WHERE s.id IS NULL
+                  {" ".join(filters)}
                 ORDER BY n.published_at,n.id LIMIT %s
                 """,
-                (model, model_version, limit),
+                tuple(params),
             ).fetchall()
 
     def persist_sentiment(self, news_item_id: UUID, result: SentimentResult) -> bool:

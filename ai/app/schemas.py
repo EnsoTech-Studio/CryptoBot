@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class PredictRequest(BaseModel):
@@ -123,5 +123,44 @@ class NewsExtractionRequest(BaseModel):
 class NewsExtractionResponse(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     body: str = Field(min_length=40, max_length=20_000)
+    model: str = Field(min_length=1)
+    model_version: str = Field(min_length=1)
+
+
+class NewsStrategyMix(BaseModel):
+    positive: int = Field(ge=0, le=100)
+    neutral: int = Field(ge=0, le=100)
+    negative: int = Field(ge=0, le=100)
+
+    @model_validator(mode="after")
+    def percentages_must_sum_to_100_when_present(self) -> "NewsStrategyMix":
+        total = self.positive + self.neutral + self.negative
+        if total not in {0, 100}:
+            raise ValueError("sentiment percentages must sum to 100")
+        return self
+
+
+class NewsStrategyCoverage(BaseModel):
+    items_total: int = Field(ge=0, le=10_000)
+    items_analyzed: int = Field(ge=0, le=10_000)
+    items_unanalyzed: int = Field(ge=0, le=10_000)
+
+    @model_validator(mode="after")
+    def counts_must_be_consistent(self) -> "NewsStrategyCoverage":
+        if self.items_analyzed + self.items_unanalyzed != self.items_total:
+            raise ValueError("coverage counts are inconsistent")
+        return self
+
+
+class NewsStrategyAnalysisRequest(BaseModel):
+    sentiment_mix: NewsStrategyMix
+    coverage: NewsStrategyCoverage
+    average_score: float | None = Field(default=None, ge=0, le=1)
+    model: Literal["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-5-mini"] = "gpt-4o-mini"
+
+
+class NewsStrategyAnalysisResponse(BaseModel):
+    reasoning: str = Field(min_length=1, max_length=2_000)
+    result: str = Field(min_length=2, max_length=8_000)
     model: str = Field(min_length=1)
     model_version: str = Field(min_length=1)

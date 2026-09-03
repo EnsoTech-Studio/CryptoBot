@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { api, type NewsStrategyAnalysisModel } from "../../../lib/api";
 import {
   AGGREGATE_MOCK,
   ANALYSIS_METRICS,
@@ -11,7 +12,7 @@ import {
   NEWS_SENTIMENT_STRATEGY,
   newsStrategyEnginePrompt,
 } from "../../../lib/news-strategy-export";
-import { Button, Panel, ProgressBar } from "../ui/Foundation";
+import { Button, Field, Panel, ProgressBar, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./news.module.css";
 
@@ -25,7 +26,18 @@ type Coverage = {
   items_analyzed: number;
   items_unanalyzed: number;
 };
-type StrategyAnalysis = { trace: string; result: string };
+type StrategyAnalysis = {
+  trace: string;
+  result: string;
+  model: string;
+};
+
+const STRATEGY_MODELS: NewsStrategyAnalysisModel[] = [
+  "gpt-4o-mini",
+  "gpt-4o",
+  "gpt-4.1-mini",
+  "gpt-5-mini",
+];
 
 export function AnalysisRail({
   distribution,
@@ -39,10 +51,14 @@ export function AnalysisRail({
   referenceMode: boolean;
 }) {
   const [exportStatus, setExportStatus] = useState("");
+  const [strategyBusy, setStrategyBusy] = useState(false);
+  const [strategyModel, setStrategyModel] =
+    useState<NewsStrategyAnalysisModel>("gpt-4o-mini");
   const [strategyAnalysis, setStrategyAnalysis] = useState<StrategyAnalysis>(
     () => ({
       trace: "",
       result: "",
+      model: "",
     }),
   );
   const mix =
@@ -54,17 +70,49 @@ export function AnalysisRail({
       : referenceMode
         ? ANALYSIS_METRICS.sourceCoveragePct
         : 0;
+  const canAnalyzeStrategy =
+    !referenceMode &&
+    Boolean(distribution) &&
+    Boolean(coverage) &&
+    (coverage?.items_analyzed ?? 0) > 0 &&
+    !strategyBusy;
 
-  const analyzeStrategy = () => {
-    const next = buildStrategyAnalysis(
-      mix,
-      coverage,
-      averageScore,
-      coveragePct,
-      referenceMode,
-    );
-    setStrategyAnalysis(next);
-    setExportStatus("Đã phân tích strategy từ sentiment hiện tại.");
+  const analyzeStrategy = async () => {
+    if (
+      !distribution ||
+      !coverage ||
+      coverage.items_analyzed === 0 ||
+      referenceMode
+    ) {
+      setExportStatus(
+        "Chưa có sentiment thật từ tin đã chọn để phân tích strategy.",
+      );
+      return;
+    }
+    setStrategyBusy(true);
+    setExportStatus("");
+    try {
+      const result = await api.analyzeNewsStrategy({
+        sentimentMix: distribution,
+        coverage,
+        averageScore,
+        model: strategyModel,
+      });
+      setStrategyAnalysis({
+        trace: result.reasoning,
+        result: result.result,
+        model: `${result.model} · ${result.model_version}`,
+      });
+      setExportStatus(
+        "Đã phân tích strategy bằng AI trên dữ liệu sentiment đã chọn.",
+      );
+    } catch {
+      setExportStatus(
+        "Không phân tích được strategy. Kiểm tra đăng nhập, AI service hoặc OpenAI key rồi thử lại.",
+      );
+    } finally {
+      setStrategyBusy(false);
+    }
   };
 
   const copyStrategy = async () => {
@@ -220,13 +268,37 @@ export function AnalysisRail({
       <Panel title="Tích hợp với Strategy">
         <div className={styles.strategyAnalyzer}>
           <p className={styles.integrationCaption}>
-            News Sentiment được sử dụng trong Strategy Engine
+            Phân tích strategy dùng trực tiếp sentiment của các tin đang được
+            chọn.
           </p>
 
-          <Button type="button" variant="primary" onClick={analyzeStrategy}>
-            <Icon name="wand" aria-hidden="true" />
-            Phân tích
-          </Button>
+          <div className={styles.strategyControls}>
+            <Field label="Model">
+              <Select
+                value={strategyModel}
+                onChange={(event) =>
+                  setStrategyModel(
+                    event.target.value as NewsStrategyAnalysisModel,
+                  )
+                }
+              >
+                {STRATEGY_MODELS.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void analyzeStrategy()}
+              disabled={!canAnalyzeStrategy}
+            >
+              <Icon name="wand" aria-hidden="true" />
+              {strategyBusy ? "Đang phân tích..." : "Phân tích"}
+            </Button>
+          </div>
 
           <label className={styles.strategyTextBlock}>
             <span>Quy trình suy luận AI</span>
@@ -235,7 +307,7 @@ export function AnalysisRail({
               rows={6}
               className={styles.strategyTextarea}
               value={strategyAnalysis.trace}
-              placeholder="Nhấn Phân tích strategy để xem các bước đánh giá ở mức tóm tắt."
+              placeholder="AI sẽ hiển thị reasoning tóm tắt sau khi phân tích sentiment thật."
             />
           </label>
 
@@ -246,7 +318,7 @@ export function AnalysisRail({
               rows={8}
               className={styles.strategyTextarea}
               value={strategyAnalysis.result}
-              placeholder="Kết quả JSON sẽ xuất hiện ở đây để copy hoặc lưu về máy."
+              placeholder="Kết quả JSON để copy hoặc lưu về máy sẽ xuất hiện ở đây."
             />
           </label>
 
@@ -264,6 +336,11 @@ export function AnalysisRail({
               Lưu kết quả
             </Button>
           </div>
+          {strategyAnalysis.model ? (
+            <p className={styles.integrationCaption}>
+              {/* Model trả về: {strategyAnalysis.model} */}
+            </p>
+          ) : null}
           {exportStatus ? (
             <p className={styles.integrationCaption} role="status">
               {exportStatus}
@@ -273,71 +350,4 @@ export function AnalysisRail({
       </Panel>
     </>
   );
-}
-
-function buildStrategyAnalysis(
-  mix: SentimentDistribution,
-  coverage: Coverage | null,
-  averageScore: number | null,
-  coveragePct: number,
-  referenceMode: boolean,
-): StrategyAnalysis {
-  const confidence =
-    averageScore ?? (referenceMode ? ANALYSIS_METRICS.confidenceScore : 0);
-  const netSentiment = Number(((mix.positive - mix.negative) / 100).toFixed(3));
-  const confidenceAdjusted = Number(
-    (netSentiment * Math.max(confidence, 0.1)).toFixed(3),
-  );
-  const enoughCoverage = coveragePct >= 50;
-  const enoughItems =
-    (coverage?.items_analyzed ?? 0) >=
-      NEWS_SENTIMENT_STRATEGY.parameters.min_items || referenceMode;
-  const action = decisionFromScore(
-    confidenceAdjusted,
-    enoughCoverage,
-    enoughItems,
-  );
-
-  const trace = [
-    `1. Đọc sentiment 24h: Positive ${mix.positive}%, Neutral ${mix.neutral}%, Negative ${mix.negative}%.`,
-    `2. Kiểm tra độ phủ: ${coveragePct}% với ${coverage?.items_analyzed ?? 0} tin đã phân tích.`,
-    `3. Tính net sentiment: ${netSentiment} và confidence-adjusted score: ${confidenceAdjusted}.`,
-    `4. So với strategy news_sentiment@v1 để quyết định bộ lọc tín hiệu.`,
-  ].join("\n");
-
-  const result = JSON.stringify(
-    {
-      strategy_id: NEWS_SENTIMENT_STRATEGY.strategy_id,
-      version: NEWS_SENTIMENT_STRATEGY.version,
-      parameters: NEWS_SENTIMENT_STRATEGY.parameters,
-      inputs: {
-        sentiment_mix: mix,
-        analyzed_items: coverage?.items_analyzed ?? 0,
-        total_items: coverage?.items_total ?? 0,
-        coverage_pct: coveragePct,
-        confidence_score: Number(confidence.toFixed(2)),
-      },
-      derived: {
-        net_sentiment: netSentiment,
-        confidence_adjusted_score: confidenceAdjusted,
-      },
-      decision: action,
-    },
-    null,
-    2,
-  );
-
-  return { trace, result };
-}
-
-function decisionFromScore(
-  score: number,
-  enoughCoverage: boolean,
-  enoughItems: boolean,
-) {
-  if (!enoughItems) return "WAIT_MORE_NEWS";
-  if (!enoughCoverage) return "LOW_COVERAGE_NEUTRAL_FILTER";
-  if (score >= 0.15) return "BULLISH_NEWS_FILTER";
-  if (score <= -0.15) return "BEARISH_NEWS_FILTER";
-  return "NEUTRAL_NEWS_FILTER";
 }

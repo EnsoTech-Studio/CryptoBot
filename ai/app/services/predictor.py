@@ -8,6 +8,24 @@ from urllib.request import Request, urlopen
 
 from .prompts import load_system_prompt
 
+try:
+    from langsmith import traceable
+except ImportError:  # pragma: no cover - LangSmith is optional outside the AI image.
+    def traceable(*args, **_kwargs):
+        if args and callable(args[0]):
+            return args[0]
+
+        def decorator(function):
+            return function
+
+        return decorator
+
+if os.getenv("LANGSMITH_API_KEY", "").strip():
+    if not os.getenv("LANGSMITH_TRACING", "").strip():
+        os.environ["LANGSMITH_TRACING"] = "true"
+    if not os.getenv("LANGSMITH_ENDPOINT", "").strip():
+        os.environ["LANGSMITH_ENDPOINT"] = "https://api.smith.langchain.com"
+
 
 @dataclass
 class Prediction:
@@ -25,7 +43,21 @@ class NewsExtraction:
     model_version: str
 
 
+@dataclass
+class NewsStrategyAnalysis:
+    reasoning: str
+    result: str
+    model: str
+    model_version: str
+
+
 Requester = Callable[[Request, float], bytes]
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+OPENAI_DEFAULT_MODEL_VERSION = "openai-gpt-4o-mini"
+OPENAI_STRATEGY_MODELS = {"gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-5-mini"}
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
+GROQ_DEFAULT_MODEL_VERSION = "groq-2026-08-31"
+LEGACY_GROQ_SENTIMENT_MODELS = {"sentiment-v1", "openai/gpt-oss-120b", "gpt-oss-120b"}
 
 
 def _request(request: Request, timeout: float) -> bytes:
@@ -48,37 +80,55 @@ class Predictor:
 
     @property
     def provider(self) -> str:
+        configured = os.getenv("AI_PROVIDER", "").strip().lower()
+        if configured in {"openai", "groq"}:
+            return configured
         return "openai" if os.getenv("OPENAI_API_KEY", "").strip() else "groq"
 
     @property
     def model(self) -> str:
         if self.provider == "openai":
-            return (
-                os.getenv("OPENAI_MODEL", "").strip()
-                or os.getenv("MODEL_CHEAP", "").strip()
-                or os.getenv("SENTIMENT_MODEL", "").strip()
-                or "gpt-5-mini"
-            )
+            configured = os.getenv("OPENAI_MODEL", "").strip() or os.getenv("MODEL_CHEAP", "").strip()
+            if configured:
+                return configured.removeprefix("openai/")
+            sentiment_model = os.getenv("SENTIMENT_MODEL", "").strip()
+            if sentiment_model and sentiment_model not in LEGACY_GROQ_SENTIMENT_MODELS:
+                return sentiment_model.removeprefix("openai/")
+            return OPENAI_DEFAULT_MODEL
         configured = (
             os.getenv("GROQ_MODEL", "").strip()
             or os.getenv("SENTIMENT_MODEL", "").strip()
-            or "openai/gpt-oss-120b"
+            or GROQ_DEFAULT_MODEL
         )
         return "openai/" + configured if configured == "gpt-oss-120b" else configured
 
     @property
     def model_version(self) -> str:
-        return os.getenv("SENTIMENT_MODEL_VERSION", f"{self.provider}-2026-09-02").strip()
+        configured = os.getenv("SENTIMENT_MODEL_VERSION", "").strip()
+        if self.provider == "openai":
+            explicit = os.getenv("OPENAI_MODEL_VERSION", "").strip()
+            if explicit:
+                return explicit
+            if configured and not configured.startswith("groq-") and configured != "2026-08-01":
+                return configured
+            return OPENAI_DEFAULT_MODEL_VERSION
+        return configured or GROQ_DEFAULT_MODEL_VERSION
 
     @property
     def _api_key(self) -> str:
-        if self.provider == "openai":
+        return self._api_key_for(self.provider)
+
+    def _api_key_for(self, provider: str) -> str:
+        if provider == "openai":
             return os.getenv("OPENAI_API_KEY", "").strip()
         return os.getenv("GROQ_API_KEY", "").strip()
 
     @property
     def _base_url(self) -> str:
-        if self.provider == "openai":
+        return self._base_url_for(self.provider)
+
+    def _base_url_for(self, provider: str) -> str:
+        if provider == "openai":
             return (
                 os.getenv("OPENAI_BASE_URL", "").strip()
                 or os.getenv("OPENAI_API_BASE_URL", "").strip()
@@ -92,9 +142,29 @@ class Predictor:
 
     @property
     def _timeout_seconds(self) -> float:
-        variable = "OPENAI_TIMEOUT_SECONDS" if self.provider == "openai" else "GROQ_TIMEOUT_SECONDS"
+        return self._timeout_seconds_for(self.provider)
+
+    def _timeout_seconds_for(self, provider: str) -> float:
+        variable = "OPENAI_TIMEOUT_SECONDS" if provider == "openai" else "GROQ_TIMEOUT_SECONDS"
         return float(os.getenv(variable, "30"))
 
+    def _provider_for(self, model_override: str | None = None) -> str:
+        return "openai" if model_override else self.provider
+
+    def _model_for(self, provider: str, model_override: str | None = None) -> str:
+        if model_override:
+            model = model_override.strip().removeprefix("openai/")
+            if model not in OPENAI_STRATEGY_MODELS:
+                raise RuntimeError("requested OpenAI model is not enabled for strategy analysis")
+            return model
+        return self.model if provider == self.provider else OPENAI_DEFAULT_MODEL
+
+    def _model_version_for(self, provider: str, model: str, model_override: str | None = None) -> str:
+        if not model_override and provider == self.provider and model == self.model:
+            return self.model_version
+        return f"{provider}-{model}"
+
+    @traceable(name="cryptobot.ai.complete_json", run_type="llm")
     def _complete_json(
         self,
         *,
@@ -102,12 +172,15 @@ class Predictor:
         name: str,
         schema: dict[str, object],
         max_tokens: int,
+        model_override: str | None = None,
     ) -> dict[str, object]:
-        api_key = self._api_key
+        provider = self._provider_for(model_override)
+        model = self._model_for(provider, model_override)
+        api_key = self._api_key_for(provider)
         if not api_key:
-            raise RuntimeError(f"{self.provider.upper()}_API_KEY is not configured")
+            raise RuntimeError(f"{provider.upper()}_API_KEY is not configured")
         payload = {
-            "model": self.model,
+            "model": model,
             "max_completion_tokens": max_tokens,
             "messages": messages,
             "response_format": {
@@ -115,17 +188,12 @@ class Predictor:
                 "json_schema": {"name": name, "strict": True, "schema": schema},
             },
         }
-        # Reasoning models such as the configured OpenAI model only accept
-        # their default temperature. Groq supports temperature=0 for the
-        # same bounded structured-output contract.
-        if self.provider == "openai":
-            # DSL conversion is constrained extraction, not open-ended
-            # reasoning. Reserve output budget for the escaped JSON contract.
+        if provider == "openai" and _uses_reasoning_effort(model):
             payload["reasoning_effort"] = os.getenv("OPENAI_REASONING_EFFORT", "low").strip() or "low"
         else:
             payload["temperature"] = 0
         request = Request(
-            f"{self._base_url}/chat/completions",
+            f"{self._base_url_for(provider)}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -135,7 +203,7 @@ class Predictor:
             method="POST",
         )
         try:
-            raw = self._requester(request, self._timeout_seconds)
+            raw = self._requester(request, self._timeout_seconds_for(provider))
             response = json.loads(raw)
             content = response["choices"][0]["message"]["content"]
             result = json.loads(content)
@@ -143,16 +211,19 @@ class Predictor:
                 raise ValueError("structured response must be an object")
             return result
         except (HTTPError, URLError, TimeoutError, OSError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"{self.provider} structured inference failed") from exc
+            raise RuntimeError(f"{provider} structured inference failed") from exc
 
+    @traceable(name="cryptobot.ai.news_sentiment", run_type="chain")
     def predict(self, text: str) -> Prediction:
         return self._predict_sentiment(text, prompt_name="news_sentiment", operation="crypto_sentiment")
 
+    @traceable(name="cryptobot.ai.news_aggregate_sentiment", run_type="chain")
     def predict_aggregate(self, text: str) -> Prediction:
         return self._predict_sentiment(
             text, prompt_name="news_aggregate_sentiment", operation="crypto_news_aggregate_sentiment"
         )
 
+    @traceable(name="cryptobot.ai.sentiment_contract", run_type="chain")
     def _predict_sentiment(self, text: str, *, prompt_name: str, operation: str) -> Prediction:
         normalized = text.strip()
         if not normalized or len(normalized) > 10_000:
@@ -183,6 +254,7 @@ class Predictor:
             raise RuntimeError("Model returned an invalid sentiment contract")
         return Prediction(label, score, self.model, self.model_version)
 
+    @traceable(name="cryptobot.ai.strategy_design", run_type="chain")
     def design(self, text: str) -> dict[str, object]:
         normalized = text.strip()
         if not normalized or len(normalized) > 10_000:
@@ -214,6 +286,7 @@ class Predictor:
             raise RuntimeError("Model returned an invalid strategy JSON")
         return _canonicalize_strategy_spec(parsed_spec)
 
+    @traceable(name="cryptobot.ai.discovery_proposal", run_type="chain")
     def propose_discovery(self, payload: dict[str, object]) -> dict[str, object]:
         """Ask for one catalog-only proposal using archive and research context."""
         mode = str(payload.get("mode", "new"))
@@ -273,6 +346,7 @@ class Predictor:
             "operation": operation,
         }
 
+    @traceable(name="cryptobot.ai.strategy_python_repair", run_type="chain")
     def repair_python(self, artifact: str, error_code: str) -> str:
         if not artifact.strip() or len(artifact) > 20_000 or not error_code.strip():
             raise RuntimeError("strategy repair input is outside bounds")
@@ -295,6 +369,7 @@ class Predictor:
             raise RuntimeError("Model returned an invalid strategy repair contract")
         return repaired.strip()
 
+    @traceable(name="cryptobot.ai.news_extraction", run_type="chain")
     def extract_news(self, text: str) -> NewsExtraction:
         normalized = text.strip()
         if not normalized or len(normalized) > 20_000:
@@ -317,6 +392,52 @@ class Predictor:
         if not isinstance(title, str) or not isinstance(body, str) or not title.strip() or len(body.strip()) < 40:
             raise RuntimeError("Model returned an invalid news extraction contract")
         return NewsExtraction(title.strip(), body.strip(), self.model, self.model_version)
+
+    @traceable(name="cryptobot.ai.news_strategy_analysis", run_type="chain")
+    def analyze_news_strategy(self, payload: dict[str, object], model_override: str | None = None) -> NewsStrategyAnalysis:
+        context = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        model = self._model_for("openai", model_override)
+        result = self._complete_json(
+            messages=[
+                {"role": "system", "content": load_system_prompt("news_strategy_analysis")},
+                {"role": "user", "content": context[:10_000]},
+            ],
+            name="news_strategy_analysis",
+            schema={
+                "type": "object",
+                "properties": {
+                    "reasoning": {"type": "string", "minLength": 1, "maxLength": 2_000},
+                    "result_json": {"type": "string", "minLength": 2, "maxLength": 8_000},
+                },
+                "required": ["reasoning", "result_json"],
+                "additionalProperties": False,
+            },
+            max_tokens=1_400,
+            model_override=model,
+        )
+        reasoning = result.get("reasoning")
+        result_json = result.get("result_json")
+        if not isinstance(reasoning, str) or not isinstance(result_json, str):
+            raise RuntimeError("Model returned an invalid news strategy analysis contract")
+        try:
+            parsed_result = json.loads(result_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Model returned invalid strategy analysis JSON") from exc
+        if not isinstance(parsed_result, dict):
+            raise RuntimeError("Model returned invalid strategy analysis JSON")
+        parsed_result = _normalize_news_strategy_result(parsed_result)
+        return NewsStrategyAnalysis(
+            reasoning.strip(),
+            json.dumps(parsed_result, ensure_ascii=False, indent=2, sort_keys=True),
+            model,
+            self._model_version_for("openai", model, model_override=model),
+        )
 
 
 def _canonicalize_strategy_spec(result: dict[str, object]) -> dict[str, object]:
@@ -519,6 +640,26 @@ def _family_for(indicators: list[dict[str, object]]) -> str:
     if "support_resistance" in kinds:
         return "structure"
     return "momentum"
+
+
+def _uses_reasoning_effort(model: str) -> bool:
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _normalize_news_strategy_result(result: dict[str, object]) -> dict[str, object]:
+    normalized = dict(result)
+    normalized["strategy_id"] = "news_sentiment"
+    normalized["version"] = "v1"
+    normalized["parameters"] = {"min_items": 3, "buy_above": 0.7, "sell_below": -0.7}
+    if not isinstance(normalized.get("inputs"), dict):
+        normalized["inputs"] = {}
+    if not isinstance(normalized.get("derived"), dict):
+        normalized["derived"] = {}
+    if not isinstance(normalized.get("risk_notes"), (str, list)):
+        normalized["risk_notes"] = ""
+    if not isinstance(normalized.get("strategy_engine_action"), str):
+        normalized["strategy_engine_action"] = "copy_result_to_strategy_engine"
+    return normalized
 
 
 predictor = Predictor()

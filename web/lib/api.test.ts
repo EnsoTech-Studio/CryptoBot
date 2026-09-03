@@ -490,3 +490,34 @@ test("leaderboard requests the selected market and timeframe", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("news strategy analysis posts selected sentiment metrics and model", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedURL = "";
+  let submitted: Record<string, unknown> = {};
+  globalThis.fetch = async (input, init) => {
+    requestedURL = String(input);
+    submitted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      reasoning: "1. Đọc sentiment thật.",
+      result: "{\"decision\":\"BULLISH_NEWS_FILTER\"}",
+      model: "gpt-4o-mini",
+      model_version: "openai-gpt-4o-mini",
+    }), { headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const result = await api.analyzeNewsStrategy({
+      sentimentMix: { positive: 60, neutral: 30, negative: 10 },
+      coverage: { items_total: 10, items_analyzed: 8, items_unanalyzed: 2 },
+      averageScore: 0.72,
+      model: "gpt-4o-mini",
+    });
+    assert.match(requestedURL, /\/api\/v1\/ai\/news-strategy-analysis$/);
+    assert.deepEqual(submitted.sentiment_mix, { positive: 60, neutral: 30, negative: 10 });
+    assert.equal(submitted.model, "gpt-4o-mini");
+    assert.equal(result.model, "gpt-4o-mini");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

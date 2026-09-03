@@ -26,9 +26,9 @@ from .domain.strategy.defaults import effective_parameters
 from .domain.strategy import Definition
 from .domain.strategy.plugins import default_registry
 from .errors import ApplicationError
-from .infrastructure.ai import DiscoveryLLMHTTPAdapter, NewsExtractionHTTPAdapter, StrategyDesignHTTPAdapter
+from .infrastructure.ai import DiscoveryLLMHTTPAdapter, NewsExtractionHTTPAdapter, NewsStrategyAnalysisHTTPAdapter, NewsStrategyAnalysisUnavailable, StrategyDesignHTTPAdapter
 from .infrastructure.postgres.store import Store
-from .infrastructure.news import HtmlNewsProvider, RssNewsProvider, SsrfBlocked, assert_public_https
+from .infrastructure.news import SsrfBlocked, assert_public_https, default_news_provider_registry
 from .infrastructure.sentiment import (
     ContractViolation,
     SentimentHTTPAdapter,
@@ -48,6 +48,8 @@ from .schemas import (
     NewsItemOut,
     NewsSourceCreateIn,
     NewsSourceOut,
+    NewsStrategyAnalysisIn,
+    NewsStrategyAnalysisOut,
     ScorePolicyCreateIn,
     SearchActionIn,
     SearchRunCreateIn,
@@ -160,7 +162,7 @@ def _news_service(request: Request) -> NewsService:
         analyzer = SentimentHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
         service = NewsService(
             _store(request),
-            {"rss": RssNewsProvider(), "url": HtmlNewsProvider()},
+            default_news_provider_registry(),
             analyzer,
             NewsExtractionHTTPAdapter(
                 settings.ai_service_url,
@@ -843,6 +845,8 @@ def backfill_sentiment(
         model=settings.sentiment_model,
         model_version=settings.sentiment_model_version,
         limit=body.limit,
+        source_ids=body.source_ids,
+        coins=body.coins,
         correlation_id=request.state.request_id,
     )
     return result.__dict__
@@ -872,4 +876,28 @@ def predict_sentiment(
         "model": result.model,
         "model_version": result.model_version,
         "received_at": result.analyzed_at,
+    }
+
+
+@app.post("/api/v1/news/strategy-analysis", response_model=NewsStrategyAnalysisOut)
+def analyze_news_strategy(
+    body: NewsStrategyAnalysisIn, _auth: Internal, request: Request
+) -> dict[str, Any]:
+    settings = Settings.from_env()
+    analyzer = NewsStrategyAnalysisHTTPAdapter(settings.ai_service_url, settings.ai_timeout_s)
+    try:
+        result = analyzer.analyze(body.model_dump(mode="json"), request.state.request_id)
+    except NewsStrategyAnalysisUnavailable as exc:
+        raise ApplicationError(
+            "news_strategy_analysis_unavailable",
+            "news strategy analysis inference is temporarily unavailable",
+            503,
+        ) from exc
+    finally:
+        analyzer.close()
+    return {
+        "reasoning": result.reasoning,
+        "result": result.result,
+        "model": result.model,
+        "model_version": result.model_version,
     }
