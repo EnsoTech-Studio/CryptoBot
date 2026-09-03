@@ -161,9 +161,11 @@ export function BacktestFilters({
         </Field>
       ) : null}
 
-      <details className={styles.executionDetails}>
-        <summary>Execution settings</summary>
-        <div className={styles.executionFields}>
+      <div className={styles.executionField}>
+        <span className={styles.executionFieldLabel}>Execution settings</span>
+        <details className={styles.executionDetails}>
+          <summary>Mở cài đặt</summary>
+          <div className={styles.executionFields}>
           <Field label="Vốn (USD)">
             <TextInput
               type="number"
@@ -199,8 +201,9 @@ export function BacktestFilters({
               onChange={(event) => onChange({ slippageBps: Number(event.target.value) })}
             />
           </Field>
-        </div>
-      </details>
+          </div>
+        </details>
+      </div>
     </div>
   );
 }
