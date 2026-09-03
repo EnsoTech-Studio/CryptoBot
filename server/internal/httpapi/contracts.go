@@ -37,7 +37,7 @@ type experimentRequest struct {
 	Timeframe           string           `json:"timeframe"`
 	StrategyID          string           `json:"strategy_id"`
 	StrategyVersion     string           `json:"strategy_version"`
-	CandidateDefinition map[string]any  `json:"candidate_definition"`
+	CandidateDefinition map[string]any   `json:"candidate_definition"`
 	Children            []strategyChild  `json:"children"`
 	Combination         combinationInput `json:"combination"`
 	RangeFrom           *time.Time       `json:"range_from,omitempty"`
@@ -103,6 +103,57 @@ type strategyApprovalRequest struct {
 
 type strategyDraftActionRequest struct {
 	Action string `json:"action"`
+}
+
+type newsStrategyMixInput struct {
+	Positive int `json:"positive"`
+	Neutral  int `json:"neutral"`
+	Negative int `json:"negative"`
+}
+
+type newsStrategyCoverageInput struct {
+	ItemsTotal      int `json:"items_total"`
+	ItemsAnalyzed   int `json:"items_analyzed"`
+	ItemsUnanalyzed int `json:"items_unanalyzed"`
+}
+
+type newsStrategyAnalysisRequest struct {
+	SentimentMix newsStrategyMixInput      `json:"sentiment_mix"`
+	Coverage     newsStrategyCoverageInput `json:"coverage"`
+	AverageScore *float64                  `json:"average_score"`
+	Model        string                    `json:"model"`
+}
+
+func (request *newsStrategyAnalysisRequest) validate() error {
+	if request.Model == "" {
+		request.Model = "gpt-4o-mini"
+	}
+	allowedModels := map[string]struct{}{
+		"gpt-4o-mini":  {},
+		"gpt-4o":       {},
+		"gpt-4.1-mini": {},
+		"gpt-5-mini":   {},
+	}
+	if _, ok := allowedModels[request.Model]; !ok {
+		return fmt.Errorf("unsupported analysis model")
+	}
+	mixTotal := request.SentimentMix.Positive + request.SentimentMix.Neutral + request.SentimentMix.Negative
+	if mixTotal != 0 && mixTotal != 100 {
+		return fmt.Errorf("sentiment percentages must sum to 100")
+	}
+	if request.SentimentMix.Positive < 0 || request.SentimentMix.Neutral < 0 || request.SentimentMix.Negative < 0 {
+		return fmt.Errorf("sentiment percentages must not be negative")
+	}
+	if request.Coverage.ItemsTotal < 0 || request.Coverage.ItemsAnalyzed < 0 || request.Coverage.ItemsUnanalyzed < 0 {
+		return fmt.Errorf("coverage counts must not be negative")
+	}
+	if request.Coverage.ItemsAnalyzed+request.Coverage.ItemsUnanalyzed != request.Coverage.ItemsTotal {
+		return fmt.Errorf("coverage counts are inconsistent")
+	}
+	if request.AverageScore != nil && (*request.AverageScore < 0 || *request.AverageScore > 1 || math.IsNaN(*request.AverageScore) || math.IsInf(*request.AverageScore, 0)) {
+		return fmt.Errorf("average_score must be between 0 and 1")
+	}
+	return nil
 }
 
 func (request *searchRunRequest) validate() error {

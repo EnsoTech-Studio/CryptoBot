@@ -112,6 +112,9 @@ class StrategyDraftOut(ContractModel):
     repair_attempts_used: int
     repair_attempts_max: int
     strategy_spec: dict[str, Any] | None = None
+    model: str | None = None
+    model_version: str | None = None
+    agent_reasoning: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -138,8 +141,8 @@ class ExperimentCreateIn(ContractModel):
     take_profit_pct: float | None = Field(default=None, gt=0)
     intrabar_priority: Literal["stop_loss_first", "take_profit_first"] = "stop_loss_first"
     evaluator_version: str = Field(default="v1", min_length=1, max_length=24)
-    sentiment_model: str = Field(default="sentiment-v1", min_length=1, max_length=80)
-    sentiment_model_version: str = Field(default="2026-08-01", min_length=1, max_length=80)
+    sentiment_model: str = Field(default="gpt-4o-mini", min_length=1, max_length=80)
+    sentiment_model_version: str = Field(default="openai-gpt-4o-mini", min_length=1, max_length=80)
     sentiment_window_sec: int = Field(default=3600, ge=60, le=604_800)
     analysis_lag_sec: int = Field(default=300, ge=0, le=86_400)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
@@ -430,7 +433,7 @@ class NewsSourceOut(ContractModel):
     id: UUID
     source_key: str
     display_name: str
-    kind: Literal["rss", "url"]
+    kind: Literal["rss", "url", "html"]
     allowed_origin: str
     url_template: str
     is_active: bool
@@ -440,7 +443,7 @@ class NewsSourceOut(ContractModel):
 class NewsSourceCreateIn(ContractModel):
     source_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,62}[a-z0-9]$")
     display_name: str = Field(min_length=1, max_length=120)
-    kind: Literal["rss", "url"] = "rss"
+    kind: Literal["rss", "url", "html"] = "rss"
     allowed_origin: str = Field(min_length=9, max_length=255)
     url_template: str = Field(min_length=9, max_length=2_000)
 
@@ -451,6 +454,8 @@ class NewsCollectIn(ContractModel):
 
 class SentimentBackfillIn(ContractModel):
     limit: int = Field(default=200, ge=1, le=200)
+    source_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    coins: list[str] = Field(default_factory=list, max_length=20)
 
 
 class SentimentPredictIn(ContractModel):
@@ -463,3 +468,42 @@ class SentimentPredictOut(ContractModel):
     model: str
     model_version: str
     received_at: datetime
+
+
+class NewsStrategyMix(ContractModel):
+    positive: int = Field(ge=0, le=100)
+    neutral: int = Field(ge=0, le=100)
+    negative: int = Field(ge=0, le=100)
+
+    @model_validator(mode="after")
+    def percentages_must_sum_to_100_when_present(self) -> "NewsStrategyMix":
+        total = self.positive + self.neutral + self.negative
+        if total not in {0, 100}:
+            raise ValueError("sentiment percentages must sum to 100")
+        return self
+
+
+class NewsStrategyCoverage(ContractModel):
+    items_total: int = Field(ge=0, le=10_000)
+    items_analyzed: int = Field(ge=0, le=10_000)
+    items_unanalyzed: int = Field(ge=0, le=10_000)
+
+    @model_validator(mode="after")
+    def counts_must_be_consistent(self) -> "NewsStrategyCoverage":
+        if self.items_analyzed + self.items_unanalyzed != self.items_total:
+            raise ValueError("coverage counts are inconsistent")
+        return self
+
+
+class NewsStrategyAnalysisIn(ContractModel):
+    sentiment_mix: NewsStrategyMix
+    coverage: NewsStrategyCoverage
+    average_score: float | None = Field(default=None, ge=0, le=1)
+    model: Literal["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-5-mini"] = "gpt-4o-mini"
+
+
+class NewsStrategyAnalysisOut(ContractModel):
+    reasoning: str = Field(min_length=1, max_length=2_000)
+    result: str = Field(min_length=2, max_length=8_000)
+    model: str
+    model_version: str

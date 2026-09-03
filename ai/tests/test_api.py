@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.services.predictor import NewsExtraction, Prediction
+from app.services.predictor import NewsExtraction, NewsStrategyAnalysis, Prediction
 
 
 client = TestClient(main.app)
@@ -51,14 +51,17 @@ def test_strategy_spec_includes_the_model_provenance(monkeypatch) -> None:
             "warmup_bars": 14,
         },
     )
-    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("OPENAI_MODEL_VERSION", "openai-test")
+    monkeypatch.setenv("SENTIMENT_MODEL", "openai/gpt-oss-120b")
     monkeypatch.setenv("SENTIMENT_MODEL_VERSION", "groq-2026-09-01")
 
     response = client.post("/strategy/spec", json={"text": "Use RSI."})
 
     assert response.status_code == 200
-    assert response.json()["model"] == "openai/gpt-oss-120b"
-    assert response.json()["model_version"] == "groq-2026-09-01"
+    assert response.json()["model"] == "gpt-4o-mini"
+    assert response.json()["model_version"] == "openai-test"
     assert response.json()["spec"]["strategy_id"] == "generated.rsi"
 
 
@@ -85,6 +88,26 @@ def test_news_aggregate_sentiment_uses_its_dedicated_llm_operation(monkeypatch) 
     assert response.status_code == 200
     assert response.json()["label"] == "POSITIVE"
     assert response.json()["score"] == 0.78
+
+
+def test_news_strategy_analysis_returns_reasoning_and_model(monkeypatch) -> None:
+    monkeypatch.setattr(main.predictor, "analyze_news_strategy", lambda payload, model_override=None: NewsStrategyAnalysis(
+        "1. Đọc sentiment thật.",
+        "{\"decision\":\"BULLISH_NEWS_FILTER\"}",
+        model_override or "gpt-4o-mini",
+        "openai-gpt-4o-mini",
+    ))
+
+    response = client.post("/news/strategy-analysis", json={
+        "sentiment_mix": {"positive": 60, "neutral": 30, "negative": 10},
+        "coverage": {"items_total": 10, "items_analyzed": 8, "items_unanalyzed": 2},
+        "average_score": 0.72,
+        "model": "gpt-4o-mini",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["reasoning"].startswith("1.")
+    assert response.json()["model"] == "gpt-4o-mini"
 
 
 def test_predict_rejects_oversized_text() -> None:

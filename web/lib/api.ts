@@ -114,6 +114,9 @@ export type StrategyDraft = {
   repair_attempts_used: number;
   repair_attempts_max: number;
   strategy_spec: StrategySpec | null;
+  model: string | null;
+  model_version: string | null;
+  agent_reasoning: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -262,7 +265,7 @@ export type NewsSource = {
   id: string;
   source_key: string;
   display_name: string;
-  kind: "rss" | "url";
+  kind: "rss" | "url" | "html";
   allowed_origin: string;
   url_template: string;
   is_active: boolean;
@@ -275,6 +278,27 @@ export type Prediction = {
   model: string;
   model_version: string;
   received_at: string;
+};
+
+export type SentimentBackfillResult = {
+  attempted: number;
+  analyzed: number;
+  unavailable: number;
+  contract_violations: number;
+};
+
+export type NewsStrategyAnalysisModel = "gpt-4o-mini" | "gpt-4o" | "gpt-4.1-mini" | "gpt-5-mini";
+export type NewsStrategyAnalysisResult = {
+  reasoning: string;
+  result: string;
+  model: string;
+  model_version: string;
+};
+export type NewsStrategyAnalysisInput = {
+  sentimentMix: { positive: number; neutral: number; negative: number };
+  coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number };
+  averageScore: number | null;
+  model: NewsStrategyAnalysisModel;
 };
 
 type ErrorPayload = {
@@ -868,11 +892,40 @@ export const api = {
       body: JSON.stringify({ source_id: sourceId ?? null }),
     });
   },
+  backfillSentiment({
+    sourceIds = [],
+    coins = [],
+    limit = 200,
+  }: {
+    sourceIds?: string[];
+    coins?: string[];
+    limit?: number;
+  } = {}) {
+    return request<SentimentBackfillResult>("/api/v1/admin/sentiment/backfill", {
+      method: "POST",
+      body: JSON.stringify({
+        source_ids: sourceIds,
+        coins,
+        limit,
+      }),
+    }, 60_000);
+  },
   predict(text: string) {
     return request<Prediction>("/api/v1/ai/predict", {
       method: "POST",
       body: JSON.stringify({ text }),
     });
+  },
+  analyzeNewsStrategy(input: NewsStrategyAnalysisInput) {
+    return request<NewsStrategyAnalysisResult>("/api/v1/ai/news-strategy-analysis", {
+      method: "POST",
+      body: JSON.stringify({
+        sentiment_mix: input.sentimentMix,
+        coverage: input.coverage,
+        average_score: input.averageScore,
+        model: input.model,
+      }),
+    }, 60_000);
   },
 };
 

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, status
 
-from app.schemas import DiscoveryProposalRequest, DiscoveryProposalResponse, NewsExtractionRequest, NewsExtractionResponse, PredictRequest, PredictResponse, StrategyDesignResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
+from app.schemas import DiscoveryProposalRequest, DiscoveryProposalResponse, NewsExtractionRequest, NewsExtractionResponse, NewsStrategyAnalysisRequest, NewsStrategyAnalysisResponse, PredictRequest, PredictResponse, StrategyDesignResponse, StrategyPythonRepairRequest, StrategyPythonRepairResponse, StrategySpecRequest, StrategySpecResponse
 from app.services.predictor import predictor
 
 app = FastAPI(
@@ -11,10 +11,16 @@ app = FastAPI(
     description="Inference boundary for the CryptoBot platform.",
 )
 
-
+# check heath
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ai", "model": predictor.model}
+    return {
+        "status": "ok",
+        "service": "ai",
+        "provider": predictor.provider,
+        "model": predictor.model,
+        "model_version": predictor.model_version,
+    }
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -56,10 +62,18 @@ def aggregate_news_sentiment(payload: PredictRequest) -> PredictResponse:
 @app.post("/strategy/spec", response_model=StrategyDesignResponse)
 def design_strategy(payload: StrategySpecRequest) -> StrategyDesignResponse:
     try:
+        result = predictor.design(payload.text)
+        spec = result.spec if hasattr(result, "spec") else result
+        reasoning = getattr(
+            result,
+            "reasoning",
+            "1. Read the strategy prompt.\n2. Convert it into a causal StrategySpec.\n3. Validate it for the runtime DSL.",
+        )
         return StrategyDesignResponse(
-            spec=StrategySpecResponse.model_validate(predictor.design(payload.text)),
-            model=predictor.model,
-            model_version=predictor.model_version,
+            spec=StrategySpecResponse.model_validate(spec),
+            reasoning=reasoning,
+            model=getattr(result, "model", predictor.model),
+            model_version=getattr(result, "model_version", predictor.model_version),
         )
     except Exception as exc:
         raise HTTPException(
@@ -108,4 +122,24 @@ def extract_news(payload: NewsExtractionRequest) -> NewsExtractionResponse:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "news_extraction_unavailable"},
+        ) from exc
+
+
+@app.post("/news/strategy-analysis", response_model=NewsStrategyAnalysisResponse)
+def analyze_news_strategy(payload: NewsStrategyAnalysisRequest) -> NewsStrategyAnalysisResponse:
+    try:
+        result = predictor.analyze_news_strategy(
+            payload.model_dump(mode="json"),
+            model_override=payload.model,
+        )
+        return NewsStrategyAnalysisResponse(
+            reasoning=result.reasoning,
+            result=result.result,
+            model=result.model,
+            model_version=result.model_version,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "news_strategy_analysis_unavailable"},
         ) from exc

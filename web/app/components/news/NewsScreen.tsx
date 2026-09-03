@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { api, type NewsSource } from "../../../lib/api";
+import { api, type NewsItem, type NewsSource } from "../../../lib/api";
 import { NEWS_MOCK } from "../../../lib/news-mock";
 import { useWorkspace } from "../../providers/workspace";
 import { Button, Dialog } from "../ui/Foundation";
@@ -17,9 +17,6 @@ export function NewsScreen() {
   const {
     news,
     newsState,
-    coverage,
-    newsDistribution,
-    newsAverageScore,
     refreshStaticData,
     prediction,
     predictionText,
@@ -34,20 +31,25 @@ export function NewsScreen() {
   const [sourcesState, setSourcesState] = useState<SourceLoadState>("loading");
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
-  const [crawlBusy, setCrawlBusy] = useState(false);
-  const [crawlError, setCrawlError] = useState<string | null>(null);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [analysisStatus, setAnalysisStatus] = useState<{ tone: "status" | "alert"; text: string } | null>(null);
 
   const selectedSourceKeys = useMemo(() => {
     const ids = new Set(selectedSourceIds);
     return new Set(sources.filter((source) => ids.has(source.id)).map((source) => source.source_key));
   }, [selectedSourceIds, sources]);
 
+  const selectedCoins = useMemo(() => coinsFromAsset(asset), [asset]);
+  const selectedCoinSet = useMemo(() => new Set(selectedCoins), [selectedCoins]);
   const isMock = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true" && news.length === 0;
   const items = isMock ? NEWS_MOCK : news;
-  const visibleItems = selectedSourceKeys.size > 0
-    ? items.filter((item) => selectedSourceKeys.has(item.source.key))
-    : items;
-  const distribution: SentimentDistribution | null = newsDistribution;
+  const visibleItems = useMemo(() => items.filter((item) => {
+    const sourceMatches = selectedSourceKeys.size === 0 || selectedSourceKeys.has(item.source.key);
+    const itemCoins = item.related_coins?.map((coin) => coin.toUpperCase()) ?? [];
+    const coinMatches = selectedCoinSet.size === 0 || itemCoins.some((coin) => selectedCoinSet.has(coin));
+    return sourceMatches && coinMatches;
+  }), [items, selectedCoinSet, selectedSourceKeys]);
+  const selectedAnalysis = useMemo(() => summarizeSelectedNews(visibleItems), [visibleItems]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,20 +92,20 @@ export function NewsScreen() {
     ));
   }
 
-  async function crawl() {
+  async function analyzeSelectedNews() {
     if (user?.role !== "ADMIN") {
-      setCrawlError("Bạn cần quyền quản trị để bắt đầu một lượt crawl.");
+      setAnalysisStatus({ tone: "alert", text: "Bạn cần quyền quản trị để phân tích tin tức." });
       return;
     }
 
     const selectedSources = sources.filter((source) => selectedSourceIds.includes(source.id));
     if (selectedSources.length === 0) {
-      setCrawlError("Hãy chọn ít nhất một nguồn tin trước khi crawl.");
+      setAnalysisStatus({ tone: "alert", text: "Hãy chọn ít nhất một nguồn tin trước khi phân tích." });
       return;
     }
 
-    setCrawlBusy(true);
-    setCrawlError(null);
+    setAnalysisBusy(true);
+    setAnalysisStatus(null);
     try {
       const failed: string[] = [];
       for (const source of selectedSources) {
@@ -114,14 +116,36 @@ export function NewsScreen() {
         }
       }
 
+      const backfill = await api.backfillSentiment({
+        sourceIds: selectedSources.map((source) => source.id),
+        coins: selectedCoins,
+        limit: 200,
+      });
       await refreshStaticData();
+
       if (failed.length === selectedSources.length) {
-        setCrawlError("Không crawl được các nguồn đã chọn. Hãy kiểm tra API hoặc thử lại sau.");
+        setAnalysisStatus({
+          tone: "alert",
+          text: `Không crawl được nguồn mới, nhưng đã phân tích ${backfill.analyzed}/${backfill.attempted} tin đang có trong lựa chọn.`,
+        });
       } else if (failed.length > 0) {
-        setCrawlError(`Đã crawl xong, nhưng lỗi nguồn: ${failed.join(", ")}.`);
+        setAnalysisStatus({
+          tone: "alert",
+          text: `Đã phân tích ${backfill.analyzed}/${backfill.attempted} tin; lỗi nguồn: ${failed.join(", ")}.`,
+        });
+      } else {
+        setAnalysisStatus({
+          tone: "status",
+          text: `Đã phân tích ${backfill.analyzed}/${backfill.attempted} tin thuộc nguồn và asset đang chọn.`,
+        });
       }
+    } catch {
+      setAnalysisStatus({
+        tone: "alert",
+        text: "Không phân tích được các tin đã chọn. Hãy kiểm tra AI service, OpenAI key hoặc LangSmith/OpenAI network rồi thử lại.",
+      });
     } finally {
-      setCrawlBusy(false);
+      setAnalysisBusy(false);
     }
   }
 
@@ -138,10 +162,14 @@ export function NewsScreen() {
           sourcesState={sourcesState}
           onToggleSource={toggleSource}
           onToggleAllSources={toggleAllSources}
-          onCrawl={() => void crawl()}
-          crawlBusy={crawlBusy}
+          onAnalyze={() => void analyzeSelectedNews()}
+          analyzeBusy={analysisBusy}
         />
-        {crawlError ? <p className={styles.integrationCaption} role="alert">{crawlError}</p> : null}
+        {analysisStatus ? (
+          <p className={styles.integrationCaption} role={analysisStatus.tone}>
+            {analysisStatus.text}
+          </p>
+        ) : null}
 
         <div className={styles.mainRow}>
           <NewsFeed
@@ -154,9 +182,9 @@ export function NewsScreen() {
 
           <div className={styles.railColumn}>
             <AnalysisRail
-              distribution={distribution}
-              coverage={coverage}
-              averageScore={newsAverageScore}
+              distribution={selectedAnalysis.distribution}
+              coverage={selectedAnalysis.coverage}
+              averageScore={selectedAnalysis.averageScore}
               referenceMode={isMock}
             />
           </div>
@@ -197,4 +225,42 @@ export function NewsScreen() {
       </Dialog>
     </section>
   );
+}
+
+function coinsFromAsset(asset: string): string[] {
+  return asset
+    .split(",")
+    .map((coin) => coin.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function summarizeSelectedNews(items: NewsItem[]): {
+  distribution: SentimentDistribution | null;
+  coverage: { items_total: number; items_analyzed: number; items_unanalyzed: number };
+  averageScore: number | null;
+} {
+  const counts = { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 };
+  let scoreTotal = 0;
+
+  for (const item of items) {
+    if (!item.sentiment) continue;
+    counts[item.sentiment.label] += 1;
+    scoreTotal += item.sentiment.score;
+  }
+
+  const analyzed = counts.POSITIVE + counts.NEUTRAL + counts.NEGATIVE;
+  const positive = analyzed > 0 ? Math.round((counts.POSITIVE / analyzed) * 100) : 0;
+  const neutral = analyzed > 0 ? Math.round((counts.NEUTRAL / analyzed) * 100) : 0;
+
+  return {
+    distribution: analyzed > 0
+      ? { positive, neutral, negative: 100 - positive - neutral }
+      : null,
+    coverage: {
+      items_total: items.length,
+      items_analyzed: analyzed,
+      items_unanalyzed: items.length - analyzed,
+    },
+    averageScore: analyzed > 0 ? scoreTotal / analyzed : null,
+  };
 }

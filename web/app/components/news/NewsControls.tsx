@@ -18,8 +18,8 @@ export function NewsControls({
   sourcesState,
   onToggleSource,
   onToggleAllSources,
-  onCrawl,
-  crawlBusy,
+  onAnalyze,
+  analyzeBusy,
 }: {
   asset: string;
   refreshMinutes: number;
@@ -30,8 +30,8 @@ export function NewsControls({
   sourcesState: "loading" | "ready" | "error";
   onToggleSource: (sourceId: string) => void;
   onToggleAllSources: () => void;
-  onCrawl: () => void;
-  crawlBusy: boolean;
+  onAnalyze: () => void;
+  analyzeBusy: boolean;
 }) {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -89,7 +89,7 @@ export function NewsControls({
       </Field>
 
       <div className={styles.sourceField}>
-        <span className={styles.sourceFieldLabel}>Nguồn tin cần crawl</span>
+        <span className={styles.sourceFieldLabel}>Nguồn tin cần phân tích</span>
         <div ref={pickerRef} className={styles.sourcePicker}>
           <button
             type="button"
@@ -104,7 +104,7 @@ export function NewsControls({
           </button>
 
           {sourceMenuOpen ? (
-            <div className={styles.sourceMenu} role="listbox" aria-label="Chọn nguồn crawl">
+            <div className={styles.sourceMenu} role="listbox" aria-label="Chọn nguồn phân tích">
               <label className={`${styles.sourceOption} ${styles.sourceBulkOption}`}>
                 <input
                   type="checkbox"
@@ -138,15 +138,15 @@ export function NewsControls({
       <div className={styles.stripActions}>
         <Button
           variant="primary"
-          onClick={onCrawl}
+          onClick={onAnalyze}
           disabled={
-            crawlBusy ||
+            analyzeBusy ||
             selectedSourceIds.length === 0 ||
             sourcesState !== "ready"
           }
         >
           <Icon name="play" aria-hidden="true" />
-          {crawlBusy ? "Đang crawl..." : "Crawl"}
+          {analyzeBusy ? "Đang phân tích..." : "Phân tích"}
         </Button>
       </div>
     </div>

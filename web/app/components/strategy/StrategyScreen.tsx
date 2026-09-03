@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { api, type StrategyDraft } from "../../../lib/api";
-import { SAMPLE_PROMPT, SAMPLE_URL, SAVE_FORM } from "../../../lib/strategy-authoring";
+import {
+  SAMPLE_PROMPT,
+  SAMPLE_URL,
+  SAVE_FORM,
+} from "../../../lib/strategy-authoring";
 import { strategyDraftReview } from "../../../lib/strategy-authoring-review";
 import { useWorkspace } from "../../providers/workspace";
 import { AuthoringInputs } from "./AuthoringInputs";
@@ -14,7 +18,13 @@ import { SaveLibraryPanel, ValidationPanel } from "./ValidationPanel";
 import styles from "./strategy.module.css";
 
 export function StrategyScreen() {
-  const { strategies, strategyDrafts, dataMode, user, refreshStaticData, runBacktest } = useWorkspace();
+  const {
+    strategyDrafts,
+    dataMode,
+    user,
+    refreshStaticData,
+    runBacktest,
+  } = useWorkspace();
   const router = useRouter();
 
   const [prompt, setPrompt] = useState(SAMPLE_PROMPT);
@@ -32,25 +42,51 @@ export function StrategyScreen() {
   const draftId = draft?.draft_id;
   const draftStatus = draft?.status;
   const recentDrafts = draft
-    ? [draft, ...strategyDrafts.filter((item) => item.draft_id !== draft.draft_id)]
+    ? [
+        draft,
+        ...strategyDrafts.filter((item) => item.draft_id !== draft.draft_id),
+      ]
     : strategyDrafts;
 
   useEffect(() => {
-    const terminal = ["APPROVED", "REJECTED", "FAILED"].includes(draftStatus ?? "");
-    const reviewPackageReady = draftStatus === "REVIEW_REQUIRED"
-      && (draft?.current_revision ?? 0) > 0
-      && Boolean(draft?.strategy_spec && draft.spec_hash && draft.artifact_hash && draft.sandbox_report_hash);
+    const terminal = ["APPROVED", "REJECTED", "FAILED"].includes(
+      draftStatus ?? "",
+    );
+    const reviewPackageReady =
+      draftStatus === "REVIEW_REQUIRED" &&
+      (draft?.current_revision ?? 0) > 0 &&
+      Boolean(
+        draft?.strategy_spec &&
+        draft.spec_hash &&
+        draft.artifact_hash &&
+        draft.sandbox_report_hash,
+      );
     if (!draftId || terminal || reviewPackageReady) return;
     const timer = window.setInterval(() => {
-      void api.strategyDraft(draftId).then((next) => {
-        setDraft(next);
-        if (next.strategy_spec) setName(next.strategy_spec.display_name);
-      }).catch(() => undefined);
+      void api
+        .strategyDraft(draftId)
+        .then((next) => {
+          setDraft(next);
+          if (next.strategy_spec) setName(next.strategy_spec.display_name);
+        })
+        .catch(() => undefined);
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [draftId, draftStatus, draft?.current_revision, draft?.strategy_spec, draft?.spec_hash, draft?.artifact_hash, draft?.sandbox_report_hash]);
+  }, [
+    draftId,
+    draftStatus,
+    draft?.current_revision,
+    draft?.strategy_spec,
+    draft?.spec_hash,
+    draft?.artifact_hash,
+    draft?.sandbox_report_hash,
+  ]);
 
-  async function createDraft(source: { type: "text"; text: string } | { type: "approved_url"; url: string }) {
+  async function createDraft(
+    source:
+      | { type: "text"; text: string }
+      | { type: "approved_url"; url: string },
+  ) {
     if (!user) {
       setError("Hãy đăng nhập trước khi tạo strategy draft.");
       return;
@@ -65,7 +101,11 @@ export function StrategyScreen() {
         setSource(source.type === "text" ? "USER_PROMPT" : "WEB_IMPORT");
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không thể tạo strategy draft.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Không thể tạo strategy draft.",
+      );
     } finally {
       setBusy(false);
     }
@@ -80,20 +120,36 @@ export function StrategyScreen() {
       setDraft(next);
       await refreshStaticData();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không thể lưu strategy.");
+      setError(
+        reason instanceof Error ? reason.message : "Không thể lưu strategy.",
+      );
     } finally {
       setSaving(false);
     }
   }
 
   async function cancelDraft() {
-    if (!draft || ["REVIEW_REQUIRED", "APPROVED", "REJECTED", "FAILED", "CANCELLED"].includes(draft.status)) return;
+    if (
+      !draft ||
+      [
+        "REVIEW_REQUIRED",
+        "APPROVED",
+        "REJECTED",
+        "FAILED",
+        "CANCELLED",
+      ].includes(draft.status)
+    )
+      return;
     setCancelling(true);
     setError(null);
     try {
       setDraft(await api.cancelStrategyDraft(draft.draft_id));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không thể hủy strategy draft.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Không thể hủy strategy draft.",
+      );
     } finally {
       setCancelling(false);
     }
@@ -106,16 +162,24 @@ export function StrategyScreen() {
       setDraft(next);
       if (next.strategy_spec) setName(next.strategy_spec.display_name);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không thể mở strategy review.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Không thể mở strategy review.",
+      );
     }
   }
 
   async function backtestStrategy(strategyId: string) {
-    if (await runBacktest([{ strategy_id: strategyId, weight: 1 }])) router.push("/backtests");
+    if (await runBacktest([{ strategy_id: strategyId, weight: 1 }]))
+      router.push("/backtests");
   }
 
   return (
-    <section className={styles.screen} aria-label="Không gian tạo strategy từ prompt hoặc URL">
+    <section
+      className={styles.screen}
+      aria-label="Không gian tạo strategy từ prompt hoặc URL"
+    >
       <div className={styles.stack}>
         <div className={styles.authoringRow}>
           <div className={styles.inputColumn}>
@@ -133,7 +197,7 @@ export function StrategyScreen() {
           <DefinitionJson spec={draft?.strategy_spec ?? null} />
 
           <div className={styles.railColumn}>
-            <ValidationPanel strategies={strategies} draft={draft} />
+            <ValidationPanel draft={draft} />
             <SaveLibraryPanel
               name={name}
               version={version}
@@ -142,7 +206,9 @@ export function StrategyScreen() {
               onName={setName}
               onVersion={setVersion}
               onSource={setSource}
-              onRemoveTag={(tag) => setTags((current) => current.filter((item) => item !== tag))}
+              onRemoveTag={(tag) =>
+                setTags((current) => current.filter((item) => item !== tag))
+              }
               draft={draft}
               canSave={Boolean(user && review.canApprove)}
               saving={saving}
@@ -160,7 +226,11 @@ export function StrategyScreen() {
           onRun={(strategyId) => void backtestStrategy(strategyId)}
           onReview={(draftId) => void openReview(draftId)}
         />
-        {error ? <p className={styles.authoringError} role="alert">{error}</p> : null}
+        {error ? (
+          <p className={styles.authoringError} role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
     </section>
   );

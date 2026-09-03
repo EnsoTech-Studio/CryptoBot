@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import app.main as research_main
 from app.main import app
 
 TOKEN_HEADERS = {"Authorization": "Bearer development-internal-token"}
@@ -454,6 +455,42 @@ def test_strategy_draft_command_submits_a_durable_job() -> None:
     assert response.json()["status"] == "DRAFT_CREATED"
     assert authoring.request.owner_id == owner_id
     assert authoring.correlation_id == "durable-agent-command"
+
+
+def test_news_strategy_analysis_is_forwarded_to_ai(monkeypatch) -> None:
+    class FakeAdapter:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.closed = False
+
+        def analyze(self, payload, request_id):
+            assert payload["model"] == "gpt-4o-mini"
+            assert payload["sentiment_mix"]["positive"] == 60
+            assert request_id
+            return type("Result", (), {
+                "reasoning": "1. Đọc sentiment thật.",
+                "result": "{\"decision\":\"BULLISH_NEWS_FILTER\"}",
+                "model": "gpt-4o-mini",
+                "model_version": "openai-gpt-4o-mini",
+            })()
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(research_main, "NewsStrategyAnalysisHTTPAdapter", FakeAdapter)
+
+    response = client.post(
+        "/api/v1/news/strategy-analysis",
+        headers=TOKEN_HEADERS,
+        json={
+            "sentiment_mix": {"positive": 60, "neutral": 30, "negative": 10},
+            "coverage": {"items_total": 10, "items_analyzed": 8, "items_unanalyzed": 2},
+            "average_score": 0.72,
+            "model": "gpt-4o-mini",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-4o-mini"
 
 
 def test_strategy_draft_cancel_uses_the_authenticated_owner() -> None:

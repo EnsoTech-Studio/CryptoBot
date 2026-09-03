@@ -419,8 +419,14 @@
   gap: 12px;
 }
 
-.strategyAnalyzer > button {
-  justify-self: start;
+.strategyControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.strategyControls > button {
   min-height: var(--control-h);
 }
 
@@ -505,4 +511,5 @@
   .feedMeta { display: flex; grid-area: meta; align-items: center; gap: 10px; }
   .feedSource, .feedTime { display: inline; text-align: left; }
   .distributionLegend { grid-template-columns: minmax(0, 1fr); }
+  .strategyControls { grid-template-columns: minmax(0, 1fr); }
 }

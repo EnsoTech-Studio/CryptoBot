@@ -82,6 +82,47 @@ function Set-DefaultEnvironment {
     }
 }
 
+function Test-LegacySentimentModel {
+    param([string]$Value)
+    return [string]::IsNullOrWhiteSpace($Value) -or $Value -in @("sentiment-v1", "openai/gpt-oss-120b", "gpt-oss-120b")
+}
+
+function Test-LegacySentimentVersion {
+    param([string]$Value)
+    return [string]::IsNullOrWhiteSpace($Value) -or $Value -eq "2026-08-01" -or $Value.StartsWith("groq-")
+}
+
+function Get-OpenAIModelDefault {
+    $model = Get-ProcessEnvironment "OPENAI_MODEL"
+    if ([string]::IsNullOrWhiteSpace($model)) {
+        $model = Get-ProcessEnvironment "MODEL_CHEAP"
+    }
+    if ([string]::IsNullOrWhiteSpace($model)) {
+        $model = "gpt-4o-mini"
+    }
+    return $model.Replace("openai/", "")
+}
+
+function Set-OpenAIInferenceDefaults {
+    $provider = (Get-ProcessEnvironment "AI_PROVIDER").ToLowerInvariant()
+    $openAiKey = Get-ProcessEnvironment "OPENAI_API_KEY"
+    if ($provider -ne "openai" -and [string]::IsNullOrWhiteSpace($openAiKey)) {
+        return
+    }
+    Set-DefaultEnvironment "OPENAI_MODEL" "gpt-4o-mini"
+    $resolvedModel = Get-OpenAIModelDefault
+    if (Test-LegacySentimentModel (Get-ProcessEnvironment "SENTIMENT_MODEL")) {
+        [Environment]::SetEnvironmentVariable("SENTIMENT_MODEL", $resolvedModel, "Process")
+    }
+    if (Test-LegacySentimentVersion (Get-ProcessEnvironment "SENTIMENT_MODEL_VERSION")) {
+        $version = Get-ProcessEnvironment "OPENAI_MODEL_VERSION"
+        if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "openai-gpt-4o-mini"
+        }
+        [Environment]::SetEnvironmentVariable("SENTIMENT_MODEL_VERSION", $version, "Process")
+    }
+}
+
 function Get-Port {
     param([Parameter(Mandatory = $true)][string]$Name)
     $value = Get-ProcessEnvironment $Name
@@ -229,6 +270,10 @@ $resolvedEnvFile = $EnvFile
 if (-not [System.IO.Path]::IsPathRooted($resolvedEnvFile)) {
     $resolvedEnvFile = Join-Path $repoRoot $resolvedEnvFile
 }
+$defaultEnvFile = Join-Path $repoRoot ".env"
+if ([System.IO.Path]::GetFullPath($resolvedEnvFile) -ne [System.IO.Path]::GetFullPath($defaultEnvFile)) {
+    Import-EnvFile $defaultEnvFile
+}
 Import-EnvFile $resolvedEnvFile
 
 Set-DefaultEnvironment "POSTGRES_USER" "cryptobot"
@@ -261,6 +306,14 @@ if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment "RESEARCH_PORT"))) {
 Set-DefaultEnvironment "PORT" (Get-ProcessEnvironment "API_PORT")
 Set-DefaultEnvironment "RESEARCH_SERVICE_URL" "http://127.0.0.1:$(Get-ProcessEnvironment 'RESEARCH_PORT')"
 Set-DefaultEnvironment "AI_SERVICE_URL" "http://127.0.0.1:$(Get-ProcessEnvironment 'AI_PORT')"
+Set-DefaultEnvironment "AI_PROVIDER" "auto"
+Set-DefaultEnvironment "OPENAI_BASE_URL" "https://api.openai.com/v1"
+Set-DefaultEnvironment "OPENAI_TIMEOUT_SECONDS" "30"
+Set-DefaultEnvironment "OPENAI_REASONING_EFFORT" "low"
+Set-DefaultEnvironment "LANGSMITH_ENDPOINT" "https://api.smith.langchain.com"
+Set-DefaultEnvironment "GROQ_MODEL" "openai/gpt-oss-120b"
+Set-DefaultEnvironment "GROQ_BASE_URL" "https://api.groq.com/openai/v1"
+Set-DefaultEnvironment "GROQ_TIMEOUT_SECONDS" "10"
 Set-DefaultEnvironment "INTERNAL_SERVICE_TOKEN" "development-internal-token"
 Set-DefaultEnvironment "CORS_ALLOWED_ORIGINS" "http://localhost:3000"
 Set-DefaultEnvironment "COOKIE_SECURE" "false"
@@ -275,6 +328,7 @@ Set-DefaultEnvironment "WORKER_HEARTBEAT_SECONDS" "30"
 Set-DefaultEnvironment "AI_REQUEST_TIMEOUT_SECONDS" "5"
 Set-DefaultEnvironment "SENTIMENT_MODEL" "sentiment-v1"
 Set-DefaultEnvironment "SENTIMENT_MODEL_VERSION" "2026-08-01"
+Set-OpenAIInferenceDefaults
 Set-DefaultEnvironment "NEWS_COLLECTION_INTERVAL_SECONDS" "900"
 Set-DefaultEnvironment "SENTIMENT_BACKFILL_INTERVAL_SECONDS" "60"
 Set-DefaultEnvironment "PYTHONUNBUFFERED" "1"

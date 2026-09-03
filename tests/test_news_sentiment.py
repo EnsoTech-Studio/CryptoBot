@@ -9,6 +9,7 @@ from app.domain.news import ApprovedSource
 from app.infrastructure.news import RssNewsProvider, SsrfBlocked, assert_public_https, canonical_url
 from app.infrastructure.news.security import sanitize_text
 from app.infrastructure.ai import NewsExtractionHTTPAdapter
+from app.infrastructure.ai import NewsStrategyAnalysisHTTPAdapter
 from app.infrastructure.sentiment import ContractViolation, SentimentHTTPAdapter, SentimentUnavailable
 from app.services.news import NewsService
 
@@ -149,6 +150,33 @@ def test_news_extraction_adapter_validates_source_excerpt_contract() -> None:
     assert result.model == "m"
 
 
+def test_news_strategy_analysis_adapter_uses_the_dedicated_endpoint() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json={
+            "reasoning": "1. Đọc sentiment thật.",
+            "result": "{\"decision\":\"BULLISH_NEWS_FILTER\"}",
+            "model": "gpt-4o-mini",
+            "model_version": "openai-gpt-4o-mini",
+        })
+
+    adapter = NewsStrategyAnalysisHTTPAdapter(
+        "http://ai",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = adapter.analyze({
+        "sentiment_mix": {"positive": 60, "neutral": 30, "negative": 10},
+        "coverage": {"items_total": 10, "items_analyzed": 8, "items_unanalyzed": 2},
+        "average_score": 0.72,
+        "model": "gpt-4o-mini",
+    })
+
+    assert requested == ["http://ai/news/strategy-analysis"]
+    assert result.model == "gpt-4o-mini"
+
+
 def test_news_extraction_cache_key_changes_with_model_or_document() -> None:
     adapter = NewsExtractionHTTPAdapter("http://ai", model="model-a", model_version="v1", client=_client({}))
 
@@ -163,8 +191,12 @@ def test_news_extraction_cache_key_changes_with_model_or_document() -> None:
 class _Store:
     def __init__(self) -> None:
         self.persisted = []
+        self.source_ids = None
+        self.coins = None
 
-    def pending_sentiment_items(self, _model: str, _version: str, _limit: int):
+    def pending_sentiment_items(self, _model: str, _version: str, _limit: int, source_ids=None, coins=None):
+        self.source_ids = source_ids
+        self.coins = coins
         return [{"id": uuid4(), "title": "Bitcoin rally", "content": "Strong demand"}]
 
     def persist_sentiment(self, item_id, result):
@@ -183,6 +215,32 @@ def test_ai_unavailable_persists_no_placeholder() -> None:
     result = service.analyze_pending(model="sentiment-v1", model_version="v1")
     assert result.unavailable == 1
     assert store.persisted == []
+
+
+def test_sentiment_backfill_can_be_limited_to_selected_sources() -> None:
+    source_id = uuid4()
+
+    class Analyzer:
+        def analyze(self, _text: str, _request_id: str | None = None):
+            return type("Result", (), {
+                "label": "POSITIVE",
+                "score": 0.8,
+                "model": "sentiment-v1",
+                "model_version": "v1",
+            })()
+
+    store = _Store()
+    service = NewsService(store, object(), Analyzer())
+    result = service.analyze_pending(
+        model="sentiment-v1",
+        model_version="v1",
+        source_ids=[source_id],
+        coins=["BTC"],
+    )
+
+    assert store.source_ids == [source_id]
+    assert store.coins == ["BTC"]
+    assert result.analyzed == 1
 
 
 def test_blocked_news_source_fails_collection_without_crashing_batch() -> None:

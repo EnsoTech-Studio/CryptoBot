@@ -19,7 +19,6 @@ import { Field, Panel, Select, StatusMessage } from "../ui/Foundation";
 import { BuilderActions, CombinedStrategyBuilder } from "./CombinedStrategyBuilder";
 import { DiscoveryLeaderboard } from "./DiscoveryLeaderboard";
 import { DiscoveryMethodSelector, DiscoveryProgress } from "./DiscoveryControls";
-import { DiscoveryWorkflow } from "./DiscoveryWorkflow";
 import { StrategyCatalog } from "./StrategyCatalog";
 import { WeightedVotingPanel } from "./WeightedVotingPanel";
 import styles from "./discovery.module.css";
@@ -46,12 +45,10 @@ export function DiscoveryScreen() {
     selectDiscoverySession,
     runBacktest,
     focusIndex,
-    availableTimeframes,
   } = useWorkspace();
   const router = useRouter();
 
   const timeframe = panels[0]?.timeframe ?? "5m";
-  const [discoveryTimeframe, setDiscoveryTimeframe] = useState(timeframe);
   const [discoveryLeaderboard, setDiscoveryLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [demoArchiveCandidates, setDemoArchiveCandidates] = useState<DiscoveryArchiveCandidate[]>([]);
   const [demoLeaderboardEntries, setDemoLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
@@ -74,8 +71,7 @@ export function DiscoveryScreen() {
 
   /* The market and timeframe are owned by the Realtime screen, so the draft
      mirrors them rather than keeping its own stale copy. */
-  const timeframeOptions = availableTimeframes.length > 0 ? availableTimeframes : [timeframe];
-  const activeTimeframe = timeframeOptions.includes(discoveryTimeframe) ? discoveryTimeframe : timeframeOptions[0];
+  const activeTimeframe = timeframe;
   const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe: activeTimeframe };
 
   useEffect(() => {
@@ -88,7 +84,6 @@ export function DiscoveryScreen() {
           selectedStrategyIds: stored.selectedStrategyIds ?? current.selectedStrategyIds,
           weights: stored.weights ?? current.weights,
         }));
-        if (stored.timeframe) setDiscoveryTimeframe(stored.timeframe);
       }
       setDraftRestored(true);
     });
@@ -196,19 +191,6 @@ export function DiscoveryScreen() {
         <StatusMessage tone="syncing">{issues[0]}</StatusMessage>
       ) : null}
 
-      <div className={styles.toolbar}>
-        <label className={styles.toolbarField}>
-          <span>Khung thời gian Discovery</span>
-          <select
-            aria-label="Khung thời gian Discovery"
-            value={activeTimeframe}
-            onChange={(event) => setDiscoveryTimeframe(event.target.value)}
-          >
-            {timeframeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
-      </div>
-
       <div className={styles.workspace}>
         <StrategyCatalog
           strategies={availableStrategies}
@@ -241,7 +223,6 @@ export function DiscoveryScreen() {
         </div>
 
         <div className={styles.rightColumn}>
-          <DiscoveryWorkflow status={search?.status} />
           <DiscoveryLeaderboard
             key={`${search?.search_run_id ?? "no-run"}:${selectedMarket.provider}:${selectedMarket.symbol}:${activeTimeframe}`}
             entries={discoveryLeaderboard}

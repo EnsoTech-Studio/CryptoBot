@@ -163,6 +163,79 @@
 
 /* --- column 3: validation + save ------------------------------------------ */
 
+.reasoningHeader {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.reasoningHeader > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  background: var(--surface-1);
+  padding: 9px 10px;
+}
+
+.reasoningHeader strong {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+}
+
+.reasoningHeader code {
+  overflow: hidden;
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reasoningTrace {
+  min-height: 220px;
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 12px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reasoningFooter {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-1);
+  padding: 9px 10px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.reasoningFooter > svg { width: 16px; height: 16px; color: var(--brand); }
+.reasoningFooter[data-state="REVIEW_REQUIRED"], .reasoningFooter[data-state="APPROVED"] {
+  border-color: var(--tint-green-line);
+  background: var(--tint-green-bg);
+}
+.reasoningFooter[data-state="FAILED"], .reasoningFooter[data-state="CANCELLED"] {
+  border-color: var(--tint-red-line);
+  background: var(--tint-red-bg);
+  color: var(--tint-red-ink);
+}
+
 .checkList { display: grid; gap: 11px; }
 
 .checkRow {

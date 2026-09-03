@@ -36,39 +36,66 @@ export function TradeLedger({
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingRef = useRef(false);
 
-  const knownTotal = cursor === null ? loadedTrades.length : Math.max(loadedTrades.length, totalTrades ?? 0);
+  const knownTotal =
+    cursor === null
+      ? loadedTrades.length
+      : Math.max(loadedTrades.length, totalTrades ?? 0);
   const totalPages = Math.max(1, Math.ceil(knownTotal / pageSize));
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
   const rows = loadedTrades.slice(start, start + pageSize);
 
   useEffect(() => {
-    if (!experimentId || loadingRef.current || !needsMoreTradesForPage(loadedTrades.length, currentPage, pageSize, cursor)) return;
+    if (
+      !experimentId ||
+      loadingRef.current ||
+      !needsMoreTradesForPage(
+        loadedTrades.length,
+        currentPage,
+        pageSize,
+        cursor,
+      )
+    )
+      return;
     let cancelled = false;
     loadingRef.current = true;
-    void Promise.resolve().then(() => {
-      if (!cancelled) setLoadingMore(true);
-      return api.experimentTrades(experimentId, cursor ?? undefined);
-    }).then((next) => {
-      if (!cancelled) {
-        setLoadedTrades((current) => [...current, ...next.trades.filter((trade) => !current.some((item) => item.sequence_no === trade.sequence_no))]);
-        setCursor(next.next_cursor);
-      }
-    }).catch(() => undefined).finally(() => {
-      loadingRef.current = false;
-      if (!cancelled) setLoadingMore(false);
-    });
-    return () => { cancelled = true; };
+    void Promise.resolve()
+      .then(() => {
+        if (!cancelled) setLoadingMore(true);
+        return api.experimentTrades(experimentId, cursor ?? undefined);
+      })
+      .then((next) => {
+        if (!cancelled) {
+          setLoadedTrades((current) => [
+            ...current,
+            ...next.trades.filter(
+              (trade) =>
+                !current.some((item) => item.sequence_no === trade.sequence_no),
+            ),
+          ]);
+          setCursor(next.next_cursor);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        loadingRef.current = false;
+        if (!cancelled) setLoadingMore(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [cursor, currentPage, experimentId, loadedTrades.length, pageSize]);
 
   return (
     <Panel
       title="Danh sách lệnh giao dịch"
-      action={csvExportUrl ? (
-        <a className={styles.expandButton} href={csvExportUrl} download>
-          <Icon name="download" aria-hidden="true" /> Xuất CSV
-        </a>
-      ) : null}
+      action={
+        csvExportUrl ? (
+          <a className={styles.expandButton} href={csvExportUrl} download>
+            <Icon name="download" aria-hidden="true" />
+          </a>
+        ) : null
+      }
     >
       <div className={styles.ledgerWrap}>
         <table className={styles.ledger}>
@@ -96,9 +123,16 @@ export function TradeLedger({
               rows.map((trade) => (
                 <tr
                   key={trade.id}
-                  className={trade.sequence_no === selectedTradeSequence ? styles.ledgerSelected : undefined}
+                  className={
+                    trade.sequence_no === selectedTradeSequence
+                      ? styles.ledgerSelected
+                      : undefined
+                  }
                   onClick={() => onSelectTrade(trade.sequence_no)}
-                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelectTrade(trade.sequence_no); }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ")
+                      onSelectTrade(trade.sequence_no);
+                  }}
                   role="button"
                   tabIndex={0}
                   aria-label={`Highlight trade ${trade.sequence_no} on chart`}
@@ -109,15 +143,22 @@ export function TradeLedger({
                   <td>{ledgerDate(trade.entry_time)}</td>
                   <td>{ledgerDate(trade.exit_time)}</td>
                   <td>
-                    <span className={`${styles.sideTag} ${isLong(trade.side) ? styles.sideLong : styles.sideShort}`}>
+                    <span
+                      className={`${styles.sideTag} ${isLong(trade.side) ? styles.sideLong : styles.sideShort}`}
+                    >
                       {isLong(trade.side) ? "LONG" : "SHORT"}
                     </span>
                   </td>
-                  <td className={styles.numeric}>{trade.quantity.toFixed(6)}</td>
+                  <td className={styles.numeric}>
+                    {trade.quantity.toFixed(6)}
+                  </td>
                   <td className={styles.numeric}>{price(trade.entry_price)}</td>
                   <td className={styles.numeric}>{price(trade.exit_price)}</td>
-                  <td className={`${styles.money} ${trade.pnl >= 0 ? styles.gain : styles.loss}`}>
-                    {trade.pnl >= 0 ? "+" : ""}{trade.pnl.toFixed(2)}
+                  <td
+                    className={`${styles.money} ${trade.pnl >= 0 ? styles.gain : styles.loss}`}
+                  >
+                    {trade.pnl >= 0 ? "+" : ""}
+                    {trade.pnl.toFixed(2)}
                   </td>
                 </tr>
               ))
@@ -139,43 +180,69 @@ export function TradeLedger({
               }}
             >
               {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>{size}</option>
+                <option key={size} value={size}>
+                  {size}
+                </option>
               ))}
             </Select>
           </span>
           <span className={styles.rangeLabel}>
-            {loadedTrades.length === 0 ? "0 lệnh" : `${start + 1}–${Math.min(start + pageSize, knownTotal)} của ${knownTotal} lệnh${loadingMore ? " (đang tải…)" : ""}`}
+            {loadedTrades.length === 0
+              ? "0 lệnh"
+              : `${start + 1}–${Math.min(start + pageSize, knownTotal)} của ${knownTotal} lệnh${loadingMore ? " (đang tải…)" : ""}`}
           </span>
         </span>
 
         <Pager page={currentPage} totalPages={totalPages} onPage={setPage} />
       </div>
-
     </Panel>
   );
 }
 
 function ledgerDate(value: string) {
-  return new Date(value).toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: DISPLAY_TIME_ZONE,
-  }).replace(",", "");
+  return new Date(value)
+    .toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: DISPLAY_TIME_ZONE,
+    })
+    .replace(",", "");
 }
 
-function Pager({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (page: number) => void }) {
+function Pager({
+  page,
+  totalPages,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  onPage: (page: number) => void;
+}) {
   return (
     <nav className={styles.pager} aria-label="Phân trang danh sách lệnh">
-      <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Trang trước">
+      <button
+        type="button"
+        disabled={page <= 1}
+        onClick={() => onPage(page - 1)}
+        aria-label="Trang trước"
+      >
         <Icon name="chevron-left" />
       </button>
       {pageWindow(page, totalPages).map((item, index) =>
         item === null ? (
-          <button key={`gap-${index}`} type="button" className={styles.pageGap} disabled aria-hidden="true">…</button>
+          <button
+            key={`gap-${index}`}
+            type="button"
+            className={styles.pageGap}
+            disabled
+            aria-hidden="true"
+          >
+            …
+          </button>
         ) : (
           <button
             key={item}
@@ -188,7 +255,12 @@ function Pager({ page, totalPages, onPage }: { page: number; totalPages: number;
           </button>
         ),
       )}
-      <button type="button" disabled={page >= totalPages} onClick={() => onPage(page + 1)} aria-label="Trang sau">
+      <button
+        type="button"
+        disabled={page >= totalPages}
+        onClick={() => onPage(page + 1)}
+        aria-label="Trang sau"
+      >
         <Icon name="chevron-right" />
       </button>
     </nav>
@@ -197,12 +269,15 @@ function Pager({ page, totalPages, onPage }: { page: number; totalPages: number;
 
 /* 1 2 3 … last, as in the reference footer. */
 function pageWindow(page: number, totalPages: number): Array<number | null> {
-  if (totalPages <= 5) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (totalPages <= 5)
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
   const head = [1, 2, 3].filter((value) => value <= totalPages);
   const window = new Set<number>(head);
   window.add(page);
   window.add(totalPages);
-  const sorted = [...window].filter((value) => value >= 1 && value <= totalPages).sort((a, b) => a - b);
+  const sorted = [...window]
+    .filter((value) => value >= 1 && value <= totalPages)
+    .sort((a, b) => a - b);
   const output: Array<number | null> = [];
   sorted.forEach((value, index) => {
     if (index > 0 && value - sorted[index - 1] > 1) output.push(null);
@@ -216,5 +291,8 @@ function isLong(side: string) {
 }
 
 function price(value: number) {
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }

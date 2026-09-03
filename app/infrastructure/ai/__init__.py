@@ -1,4 +1,4 @@
-from .design import NewsExtractionHTTPAdapter, NewsExtractionUnavailable, StrategyDesign, StrategyDesignUnavailable, StrategyDesignHTTPAdapter
+from .design import NewsExtractionHTTPAdapter, NewsExtractionUnavailable, NewsStrategyAnalysis, NewsStrategyAnalysisHTTPAdapter, NewsStrategyAnalysisUnavailable, StrategyDesign, StrategyDesignUnavailable, StrategyDesignHTTPAdapter
 from .discovery import DiscoveryLLMHTTPAdapter, DiscoveryLLMResult, DiscoveryLLMUnavailable
 
 __all__ = [
@@ -7,6 +7,9 @@ __all__ = [
     "DiscoveryLLMUnavailable",
     "NewsExtractionHTTPAdapter",
     "NewsExtractionUnavailable",
+    "NewsStrategyAnalysis",
+    "NewsStrategyAnalysisHTTPAdapter",
+    "NewsStrategyAnalysisUnavailable",
     "StrategyDesign",
     "StrategyDesignHTTPAdapter",
     "StrategyDesignUnavailable",

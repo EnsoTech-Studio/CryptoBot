@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import email.utils
+import re
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from ...domain.news import ApprovedSource, CollectedItem
 from .rss import MAX_REDIRECTS, MAX_RESPONSE_BYTES, NewsProviderError, _pinned_https_get
@@ -12,6 +15,11 @@ from .security import assert_public_https, canonical_url, related_coins, sanitiz
 
 _ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 _SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "footer"}
+_MONTH_DATE = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+"
+    r"\d{1,2},\s+\d{4}\b",
+    re.I,
+)
 
 
 class HtmlQualityGateFailed(NewsProviderError):
@@ -75,9 +83,76 @@ class _ArticleParser(HTMLParser):
             self._buffer.append(data)
 
 
+@dataclass
+class _ListingEntry:
+    url: str = ""
+    title: str = ""
+    summary: list[str] = field(default_factory=list)
+    published: str | None = None
+
+
+class _ListingParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.entries: list[_ListingEntry] = []
+        self._current: _ListingEntry | None = None
+        self._article_depth = 0
+        self._skip_depth = 0
+        self._capture_tag = ""
+        self._buffer: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        attributes = dict(attrs)
+        if tag in _SKIP_TAGS:
+            self._skip_depth += 1
+        if tag == "article":
+            if self._current is None:
+                self._current = _ListingEntry()
+            self._article_depth += 1
+        if self._current is None:
+            return
+        if tag == "a" and not self._current.url:
+            self._current.url = attributes.get("href") or ""
+        if tag == "time" and not self._current.published:
+            self._current.published = attributes.get("datetime")
+        if tag in {"a", "h1", "h2", "h3", "p", "time"}:
+            self._capture_tag = tag
+            self._buffer = []
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self._current is not None and tag == self._capture_tag:
+            text = sanitize_text(" ".join(self._buffer), 2_000)
+            if self._skip_depth == 0 and text:
+                if tag in {"h1", "h2", "h3"} and not self._current.title:
+                    self._current.title = text
+                elif tag == "a" and not self._current.title and len(text) >= 12:
+                    self._current.title = text
+                elif tag == "p":
+                    self._current.summary.append(text)
+                elif tag == "time" and not self._current.published:
+                    self._current.published = text
+            self._capture_tag = ""
+            self._buffer = []
+        if tag == "article" and self._current is not None:
+            self._article_depth -= 1
+            if self._article_depth <= 0:
+                if self._current.title and self._current.url:
+                    self.entries.append(self._current)
+                self._current = None
+                self._article_depth = 0
+        if tag in _SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._current is not None and self._skip_depth == 0 and self._capture_tag:
+            self._buffer.append(data)
+
+
 class HtmlNewsProvider:
     def collect(self, source: ApprovedSource, since: datetime | None) -> list[CollectedItem]:
-        if not source.is_active or source.kind != "url":
+        if not source.is_active or source.kind not in {"url", "html"}:
             raise NewsProviderError("unsupported_source", "source is not an active HTML source")
         current = source.url_template
         for redirect in range(MAX_REDIRECTS + 1):
@@ -105,6 +180,9 @@ class HtmlNewsProvider:
     ) -> list[CollectedItem]:
         if len(payload) > MAX_RESPONSE_BYTES:
             raise NewsProviderError("response_too_large", "news response exceeded 2 MiB")
+        listing_items = _parse_listing(source, page_url, payload, since)
+        if len(listing_items) >= 2:
+            return listing_items
         parser = _ArticleParser()
         try:
             parser.feed(payload.decode("utf-8", "replace"))
@@ -140,9 +218,66 @@ class HtmlNewsProvider:
 
 def _parse_date(value: str | None) -> datetime:
     if value:
+        candidate = value.strip()
+        month_match = _MONTH_DATE.search(candidate)
+        if month_match:
+            candidate = month_match.group(0)
         try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = email.utils.parsedate_to_datetime(candidate)
+            return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
+        except (TypeError, ValueError):
+            pass
+        try:
+            parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
             return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
         except ValueError:
             pass
+        for pattern in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(candidate, pattern).replace(tzinfo=UTC)
+            except ValueError:
+                pass
     return datetime.now(tz=UTC)
+
+
+def _parse_listing(
+    source: ApprovedSource, page_url: str, payload: bytes, since: datetime | None
+) -> list[CollectedItem]:
+    parser = _ListingParser()
+    try:
+        parser.feed(payload.decode("utf-8", "replace"))
+        parser.close()
+    except Exception as exc:
+        raise NewsProviderError("parse_error", "news page is not valid HTML") from exc
+
+    origin_host = urlsplit(source.allowed_origin).hostname
+    result: list[CollectedItem] = []
+    seen: set[str] = set()
+    for entry in parser.entries[:50]:
+        try:
+            normalized_url = canonical_url(urljoin(page_url, entry.url))
+        except ValueError:
+            continue
+        if urlsplit(normalized_url).hostname != origin_host or normalized_url in seen:
+            continue
+        seen.add(normalized_url)
+        title = sanitize_text(entry.title, 512)
+        summary = sanitize_text("\n".join(entry.summary), 20_000)
+        content = summary if len(summary) >= 40 else sanitize_text(f"{title}\n{summary}", 20_000)
+        if not title or len(content) < 40:
+            continue
+        published = _parse_date(entry.published)
+        if since is not None and published <= since:
+            continue
+        result.append(CollectedItem(
+            source_id=source.id,
+            canonical_url=normalized_url,
+            url_hash=sha256_text(normalized_url),
+            title=title,
+            content=content,
+            content_hash=sha256_text(f"{title}\n{content}"),
+            published_at=published,
+            related_coins=related_coins(title, content),
+            extraction_version="html-list-v1",
+        ))
+    return result

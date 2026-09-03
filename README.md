@@ -35,6 +35,36 @@ cd web
 npm run dev
 ```
 
+OpenAI inference for news crawling is server-side only. Put your key in `.env`
+as `OPENAI_API_KEY=...`; the AI service will prefer OpenAI automatically and
+use `OPENAI_MODEL=gpt-4o-mini` unless you set another OpenAI model. Do not prefix
+OpenAI model names with `openai/`. The news crawler uses the same model identity
+through `SENTIMENT_MODEL` and `SENTIMENT_MODEL_VERSION` so sentiment backfill can
+persist results:
+
+```dotenv
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL_VERSION=openai-gpt-4o-mini
+SENTIMENT_MODEL=gpt-4o-mini
+SENTIMENT_MODEL_VERSION=openai-gpt-4o-mini
+```
+
+Optional LangSmith tracing is also server-side. Add these values to `.env` to
+observe the AI service calls used by crawling, aggregate sentiment, and strategy
+generation. When `LANGSMITH_API_KEY` is present, the AI service enables tracing
+automatically unless you explicitly set `LANGSMITH_TRACING=false`:
+
+```dotenv
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=cryptobot-local
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+To demo real crawling after the backend is up, start or restart `ai`, `research`
+and `news-worker`, then use the News Crawler UI or the admin collect/backfill
+actions.
+
 For offline local database development, use an env file whose database URLs
 point to `localhost`/`127.0.0.1`; the launcher will start the optional
 `local-db` Compose profile:

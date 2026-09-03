@@ -9,6 +9,8 @@ Tóm tắt tình hình:
 - Thêm phần AI sentiment crawling -> không cố định một phương pháp crawling
 - Thêm phần vòng loop tìm strategy
 
+Bỏ phần 
+
 Note - slide: 
 - Làm theo format của thầy
     + Yêu cầu kiến trúc: Quality Attributes / ASRs 
@@ -17,6 +19,7 @@ Note - slide:
     + Strategy với algorithm vẽ class diagram
 
 Slides:
+Xin lỗi thầy và thừa nhận
     + Yêu cầu kiến trúc: 
         + ASRs / Architectural Drivers 
         + Quality Attributes (nói 2 thôi - realtime + strategy)
@@ -67,6 +70,17 @@ Slides:
         + Kubernetes hỗ trợ replicas, scheduling, rolling deployment và autoscaling nhưng không bắt buộc cho MVP -> dùng docker compose
     + Tổng kết: extensibility, replaceability, scalability/failure theo yêu cầu
     + Tradeoffs: lập ra cái bảng tradeoffs
+
+Talk more:
+- 
+
+Command Query Responsibility Segregation (CQRS) 
+
+Mô hình SPA (Single Page Application) ở frontend dùng để xây dựng các ứng dụng web chỉ tải một trang HTML duy nhất và cập nhật nội dung linh hoạt bằng JavaScript mà không cần tải lại (reload) toàn bộ trang khi người dùng chuyển hướng.
+
+
+
+
 
 Demo:
 - 5 web pages thao tác cách hoạt động
@@ -170,7 +184,6 @@ Backtest:
 - List ra những strategy chạy backtest demo
 - viết script crawl data đưa lên db
 
-
 Agent crawler:
 Tạo script chạy insert mock data vào supabase, dùng mock data để dùng làm demo parse html từ news
 Chạy parse html bằng LLM thì dùng model của groq tôi đã gắn key sẵn
@@ -179,19 +192,12 @@ Phần tích hợp strategy thì thêm button "lưu strategy" tải về máy ho
 System prompt của LLM để vào folder config, không gán cứng trong code
 Đảm bảo chạy parse html từ web và chạy phân tích news thành score và strategy
 
-
 #Testing:
-
 - add chosing news to crawl in stead of job queres
 - Chỉnh lại crawling thêm news API, ... vào provider
 - Thêm Discovery slide
 
-## Strategy 
-
-## 
-
-
-Demo test:
+# Demo test:
 - Thêm strategy:
     + Tạo file code mới MACDStrategy thêm vào backend và khởi động lại backend 
     + Thêm bằng LLMs
@@ -200,8 +206,17 @@ Demo test:
 - Generate combination strategy
 - Chạy backtest -> Leaderboard -> Trade visualization
 - Run news crawling and sentiment analysis  
-- 
 
+Slide
+Nhựt: 1-6
+Đức: 7-16
+Hưng: 17-19
+Thịnh: 20-26
+Thắng: 27-31
+
+Make more:
+- Study more about build AI system that is easy to Fix
+- 
 
 
 ----------------------------------------------------------

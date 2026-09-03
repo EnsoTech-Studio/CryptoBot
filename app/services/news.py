@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -63,7 +64,12 @@ class NewsService:
             return CollectionResult(source.id, None, "already_running")
         try:
             since = self._store.latest_news_collection(source.id)
-            provider = self._provider.get(source.kind) if isinstance(self._provider, dict) else self._provider
+            if isinstance(self._provider, Mapping):
+                provider = self._provider.get(source.kind)
+                if provider is None:
+                    raise NewsProviderError("unsupported_source_kind", f"unsupported news provider kind: {source.kind}")
+            else:
+                provider = self._provider.get(source.kind) if hasattr(self._provider, "get") else self._provider
             try:
                 items = provider.collect(source, since)
             except HtmlQualityGateFailed as failure:
@@ -129,9 +135,11 @@ class NewsService:
         model: str,
         model_version: str,
         limit: int = 200,
+        source_ids: list[UUID] | None = None,
+        coins: list[str] | None = None,
         correlation_id: str | None = None,
     ) -> SentimentBatchResult:
-        rows = self._store.pending_sentiment_items(model, model_version, limit)
+        rows = self._store.pending_sentiment_items(model, model_version, limit, source_ids, coins)
         analyzed = unavailable = violations = 0
         for row in rows:
             text = f"{row['title']}\n{row['content'][:2000]}".strip()

@@ -243,7 +243,7 @@ func (s *Store) CreateDataset(
 	revision int,
 	quotes []domainmarket.BBO,
 ) (domainmarket.Dataset, error) {
-	if !to.After(from) || revision < 1 || len(quotes) == 0 {
+	if !to.After(from) || revision < 1 {
 		return domainmarket.Dataset{}, fmt.Errorf("invalid immutable dataset request")
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -275,6 +275,40 @@ func (s *Store) CreateDataset(
 	}
 	if len(candles) == 0 || len(candles) > 20_000 {
 		return domainmarket.Dataset{}, fmt.Errorf("dataset candle count must be 1..20000")
+	}
+	bboRows, err := tx.Query(
+		ctx,
+		`SELECT event_time,source_sequence,bid,bid_qty,ask,ask_qty,update_id
+		 FROM bbo_events
+		 WHERE provider=$1 AND symbol=$2 AND event_time >= $3 AND event_time <= $4
+		 ORDER BY event_time,source_sequence`,
+		key.Provider, strings.ToUpper(key.Symbol), from, to,
+	)
+	if err != nil {
+		return domainmarket.Dataset{}, fmt.Errorf("read dataset BBO events: %w", err)
+	}
+	persistedQuotes, err := pgx.CollectRows(bboRows, func(row pgx.CollectableRow) (domainmarket.BBO, error) {
+		var quote domainmarket.BBO
+		var sourceSequence int64
+		if err := row.Scan(
+			&quote.EventTime, &sourceSequence, &quote.Bid, &quote.BidQty,
+			&quote.Ask, &quote.AskQty, &quote.UpdateID,
+		); err != nil {
+			return domainmarket.BBO{}, err
+		}
+		quote.Provider = key.Provider
+		quote.Symbol = strings.ToUpper(key.Symbol)
+		quote.SourceSequence = uint64(sourceSequence)
+		return quote, nil
+	})
+	if err != nil {
+		return domainmarket.Dataset{}, fmt.Errorf("scan dataset BBO events: %w", err)
+	}
+	if len(persistedQuotes) > 0 {
+		quotes = persistedQuotes
+	}
+	if len(quotes) == 0 {
+		return domainmarket.Dataset{}, fmt.Errorf("no BBO events in requested range")
 	}
 	sort.Slice(quotes, func(i, j int) bool {
 		if quotes[i].EventTime.Equal(quotes[j].EventTime) {

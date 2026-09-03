@@ -86,9 +86,15 @@ Ranh giới hệ thống ở đây rất quan trọng. CryptoBot không kiểm s
 
 Ở C4 Level 2, hệ thống được chia thành các container chính.
 
-Next.js Dashboard là lớp giao diện, chủ yếu render chart, authoring, search, backtest, trade detail và news. Go Edge & Market Gateway là lớp public REST và WebSocket, chịu trách nhiệm auth, quota, normalize candle/BBO và fan-out realtime.
+Next.js Dashboard là lớp giao diện, chủ yếu render chart, authoring, search, backtest, trade detail và news.
+
+Go Edge & Market Gateway là lớp public REST và WebSocket, chịu trách nhiệm auth, quota, normalize candle/BBO và fan-out realtime.
+
+- Tradeoff: workload ở phần đó thiên về network concurrency + WebSocket + fan-out realtime, không phải AI/ML logic. Go có lợi thế lớn ở chỗ mỗi WebSocket connection, stream reader, writer, reconnect loop, channel consumer có thể chạy bằng goroutine rất nhẹ. Trong code hiện tại, MarketService đã dùng nhiều goroutine và buffered channel để xử lý song song kline, BBO và stream status; provider cũng chạy các connection loop độc lập.
 
 Python Research API xử lý strategy runtime, agent runtime, experiment, search, news và sentiment orchestration. Python Research Worker scale theo N instance để xử lý job nặng như backtest và agent task. PostgreSQL là source of truth cho market data, strategies, jobs, results, news và outbox.
+
+- Tradeoff: Trong MVP, Chọn python là bởi vì dùng nhiều cho model AI, có sẵn nhiều thư viện.
 
 Ngoài ra có object storage hoặc broker tùy chọn. Điểm thiết kế là phần core vẫn chạy được với PostgreSQL trước, nhưng boundary đủ rõ để sau này thay queue hoặc storage nếu workload tăng.
 

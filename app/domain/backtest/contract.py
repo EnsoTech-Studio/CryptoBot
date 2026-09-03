@@ -66,8 +66,8 @@ class ExperimentSnapshot:
     open_position_at_end: OpenPositionPolicy
     risk_policy: RiskPolicy | None = None
     evaluator_version: str = ""
-    sentiment_model: str = "sentiment-v1"
-    sentiment_model_version: str = "2026-08-01"
+    sentiment_model: str = "gpt-4o-mini"
+    sentiment_model_version: str = "openai-gpt-4o-mini"
     sentiment_window_sec: int = 3600
     analysis_lag_sec: int = 300
     created_at: datetime | None = None
