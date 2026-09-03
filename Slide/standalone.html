@@ -154,6 +154,22 @@
       transition: transform 0.08s ease-out;
     }
 
+    /* SELab branding appears on every slide as a subtle watermark. */
+    .slide-watermark {
+      position: absolute;
+      top: 18px;
+      right: 22px;
+      z-index: 5;
+      width: 54px;
+      height: 54px;
+      object-fit: contain;
+      border: 0;
+      border-radius: 0;
+      opacity: 0.22;
+      pointer-events: none;
+      user-select: none;
+    }
+
     .slide-body {
       flex: 1;
       padding: 32px 48px 20px 48px;
@@ -317,6 +333,7 @@
       background-color: #ffffff;
       padding: 5px;
     }
+    .slide-body.lead img[alt="SELab Logo"] { display: none; }
     .slide-body.lead .lead-institution {
       margin-top: 0;
       margin-bottom: 14px;
@@ -544,6 +561,7 @@
       <div id="slide-body" class="slide-body">
         <!-- Rendered slide content -->
       </div>
+      <img class="slide-watermark" src="./selab.jpeg" alt="" aria-hidden="true">
       <div class="slide-footer">
         <span>Crypto Strategy Lab — Architecture Presentation</span>
         <span id="slide-counter">Slide 1 / 31</span>
