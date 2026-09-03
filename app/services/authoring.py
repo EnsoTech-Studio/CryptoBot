@@ -414,10 +414,12 @@ class StrategyAuthoringService:
             spec = StrategySpecResponse.model_validate(request.source.spec)
             designer_model = "user-dsl"
             designer_version = "strategy-spec/v1"
+            designer_reasoning = "1. Read a user-supplied StrategySpec.\n2. Normalize the runtime DSL shape.\n3. Validate and prepare the review package."
             attempts_used = 1
         else:
             designer_model = "unversioned-designer"
             designer_version = "unversioned"
+            designer_reasoning = ""
             design_input = source_text
             for attempts_used in range(1, _MAX_DESIGN_ATTEMPTS + 1):
                 candidate: StrategySpecResponse | None = None
@@ -429,6 +431,7 @@ class StrategyAuthoringService:
                         candidate = getattr(designed, "spec", None)
                         designer_model = str(getattr(designed, "model", "")).strip()
                         designer_version = str(getattr(designed, "model_version", "")).strip()
+                        designer_reasoning = str(getattr(designed, "reasoning", "")).strip()
                         if not isinstance(candidate, StrategySpecResponse) or not designer_model or not designer_version:
                             raise ApplicationError("strategy_design_invalid", "designer returned invalid provenance", 422)
                     spec = normalize_spec(stabilize_generated_id(candidate, source_hash))
@@ -491,6 +494,12 @@ class StrategyAuthoringService:
         advance("SANDBOX_TESTING")
         require("StrategyImplementationAgent", "sandbox.run_contract_tests")
         report = preflight_dsl(spec, artifact)
+        report["model_reasoning"] = designer_reasoning or (
+            "1. Read the strategy source.\n"
+            "2. Ask the shared OpenAI strategy model to produce a causal StrategySpec.\n"
+            "3. Normalize indicators and rules for the runtime DSL.\n"
+            "4. Validate the spec, compile the artifact, and run preflight checks."
+        )
         if self._backtest_verifier is not None:
             report["fixture_backtest"] = self._backtest_verifier(spec)
         if self._sandbox is not None:

@@ -19,6 +19,7 @@ Note - slide:
     + Strategy với algorithm vẽ class diagram
 
 Slides:
+Xin lỗi thầy và thừa nhận
     + Yêu cầu kiến trúc: 
         + ASRs / Architectural Drivers 
         + Quality Attributes (nói 2 thôi - realtime + strategy)
@@ -72,7 +73,14 @@ Slides:
 
 Talk more:
 - 
-- 
+
+Command Query Responsibility Segregation (CQRS) 
+
+Mô hình SPA (Single Page Application) ở frontend dùng để xây dựng các ứng dụng web chỉ tải một trang HTML duy nhất và cập nhật nội dung linh hoạt bằng JavaScript mà không cần tải lại (reload) toàn bộ trang khi người dùng chuyển hướng.
+
+
+
+
 
 Demo:
 - 5 web pages thao tác cách hoạt động
@@ -205,8 +213,6 @@ Nhựt: 1-6
 Hưng: 17-19
 Thịnh: 20-26
 Thắng: 27-31
-
-
 
 Make more:
 - Study more about build AI system that is easy to Fix

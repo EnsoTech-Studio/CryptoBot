@@ -79,6 +79,7 @@ class StrategySpecResponse(BaseModel):
 
 class StrategyDesignResponse(BaseModel):
     spec: StrategySpecResponse
+    reasoning: str = Field(min_length=1, max_length=2_000)
     model: str = Field(min_length=1)
     model_version: str = Field(min_length=1)
 

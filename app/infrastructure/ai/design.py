@@ -34,6 +34,7 @@ class NewsExtraction:
 @dataclass(frozen=True)
 class StrategyDesign:
     spec: StrategySpecResponse
+    reasoning: str
     model: str
     model_version: str
 
@@ -156,12 +157,13 @@ class StrategyDesignHTTPAdapter:
             payload = response.json()
             result = StrategyDesign(
                 spec=StrategySpecResponse.model_validate(payload["spec"]),
+                reasoning=str(payload["reasoning"]).strip(),
                 model=str(payload["model"]).strip(),
                 model_version=str(payload["model_version"]).strip(),
             )
-        except (httpx.HTTPError, ValueError, TypeError) as exc:
+        except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
             raise StrategyDesignUnavailable("strategy design inference is unavailable") from exc
-        if not result.model or not result.model_version:
+        if not result.reasoning or not result.model or not result.model_version:
             raise StrategyDesignUnavailable("strategy design response is missing model provenance")
         return result
 

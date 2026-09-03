@@ -51,6 +51,14 @@ class NewsStrategyAnalysis:
     model_version: str
 
 
+@dataclass
+class StrategyDesignResult:
+    spec: dict[str, object]
+    reasoning: str
+    model: str
+    model_version: str
+
+
 Requester = Callable[[Request, float], bytes]
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 OPENAI_DEFAULT_MODEL_VERSION = "openai-gpt-4o-mini"
@@ -255,7 +263,7 @@ class Predictor:
         return Prediction(label, score, self.model, self.model_version)
 
     @traceable(name="cryptobot.ai.strategy_design", run_type="chain")
-    def design(self, text: str) -> dict[str, object]:
+    def design(self, text: str) -> StrategyDesignResult:
         normalized = text.strip()
         if not normalized or len(normalized) > 10_000:
             raise RuntimeError("strategy source must contain 1..10000 characters")
@@ -269,22 +277,31 @@ class Predictor:
                 "type": "object",
                 "properties": {
                     "spec_json": {"type": "string", "minLength": 2, "maxLength": 10_000},
+                    "reasoning": {"type": "string", "minLength": 1, "maxLength": 2_000},
                 },
-                "required": ["spec_json"],
+                "required": ["spec_json", "reasoning"],
                 "additionalProperties": False,
             },
             max_tokens=2_400,
         )
         raw_spec = envelope.get("spec_json")
+        reasoning = envelope.get("reasoning")
         if not isinstance(raw_spec, str):
             raise RuntimeError("Model returned an invalid strategy envelope")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            raise RuntimeError("Model returned an invalid strategy reasoning")
         try:
             parsed_spec = json.loads(raw_spec)
         except json.JSONDecodeError as exc:
             raise RuntimeError("Model returned an invalid strategy JSON") from exc
         if not isinstance(parsed_spec, dict):
             raise RuntimeError("Model returned an invalid strategy JSON")
-        return _canonicalize_strategy_spec(parsed_spec)
+        return StrategyDesignResult(
+            _canonicalize_strategy_spec(parsed_spec),
+            reasoning.strip(),
+            self.model,
+            self.model_version,
+        )
 
     @traceable(name="cryptobot.ai.discovery_proposal", run_type="chain")
     def propose_discovery(self, payload: dict[str, object]) -> dict[str, object]:

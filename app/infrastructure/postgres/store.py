@@ -50,6 +50,54 @@ def _as_float_fields(row: dict[str, Any], fields: Iterable[str]) -> dict[str, An
     return row
 
 
+_AUTHORING_STATE_LABELS = {
+    "DRAFT_CREATED": "Queued the authoring request.",
+    "SOURCE_READY": "Loaded and sanitized the strategy source.",
+    "SPEC_GENERATING": "Called the shared OpenAI strategy model.",
+    "SPEC_VALIDATING": "Validated the generated StrategySpec schema and rules.",
+    "CODE_GENERATING": "Compiled the StrategySpec into the executable artifact.",
+    "POLICY_CHECKING": "Checked the artifact against the authoring policy.",
+    "SANDBOX_TESTING": "Ran sandbox contract checks for the generated artifact.",
+    "REPAIRING": "Fed validation feedback back into the model for one repair pass.",
+    "REVIEW_REQUIRED": "Built the review package with fixed fingerprints.",
+    "APPROVED": "Approved and published the reviewed strategy.",
+    "REJECTED": "Rejected the draft after review.",
+    "FAILED": "Stopped because generation or validation failed.",
+    "CANCELLED": "Cancelled the pending authoring job.",
+}
+
+
+def _strategy_draft_reasoning(row: dict[str, Any]) -> str:
+    model_reasoning = row.get("model_reasoning")
+    if isinstance(model_reasoning, str) and model_reasoning.strip():
+        return model_reasoning.strip()[:2000]
+
+    model = row.get("agent_model") or "gpt-4o-mini"
+    version = row.get("agent_model_version") or "openai-gpt-4o-mini"
+    if model == "pending":
+        model = "gpt-4o-mini"
+    if version == "pending":
+        version = "openai-gpt-4o-mini"
+    states = row.get("workflow_states") or []
+    if not isinstance(states, list):
+        states = []
+    if not states:
+        state = row.get("agent_state") or row.get("status") or "DRAFT_CREATED"
+        states = [str(state)]
+
+    lines = [f"Model: {model} ({version})"]
+    seen: set[str] = set()
+    for state in states:
+        key = str(state)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"- {_AUTHORING_STATE_LABELS.get(key, key)}")
+    if row.get("spec_hash") and row.get("artifact_hash") and row.get("sandbox_report_hash"):
+        lines.append("- Review fingerprints are ready for approval.")
+    return "\n".join(lines)[:2000]
+
+
 class Store:
     """Short-transaction repository.
 
@@ -876,8 +924,15 @@ class Store:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT d.*,r.spec_json,r.spec_hash,a.artifact_hash,agent.attempts_used,
-                       s.report_json->>'report_hash' AS sandbox_report_hash
+                SELECT d.*,r.spec_json,r.spec_hash,a.artifact_hash,
+                       agent.id AS agent_run_id,
+                       agent.attempts_used AS agent_attempts_used,
+                       agent.model AS agent_model,
+                       agent.model_version AS agent_model_version,
+                       agent.state AS agent_state,
+                       s.report_json->>'report_hash' AS sandbox_report_hash,
+                       s.report_json->>'model_reasoning' AS model_reasoning,
+                       COALESCE(transitions.workflow_states, '[]'::jsonb) AS workflow_states
                 FROM strategy_drafts d
                 LEFT JOIN strategy_draft_revisions r
                   ON r.draft_id=d.id AND r.revision=d.current_revision
@@ -885,10 +940,16 @@ class Store:
                   ON a.draft_id=d.id AND a.revision=d.current_revision
                 LEFT JOIN sandbox_runs s ON s.artifact_id=a.id
                 LEFT JOIN LATERAL (
-                    SELECT attempts_used FROM agent_runs
+                    SELECT id, attempts_used, model, model_version, state
+                    FROM agent_runs
                     WHERE draft_id=d.id AND agent_type='StrategyDesignerAgent'
                     ORDER BY created_at DESC LIMIT 1
                 ) agent ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT jsonb_agg(state ORDER BY sequence_no) AS workflow_states
+                    FROM agent_run_transitions
+                    WHERE agent_run_id=agent.id
+                ) transitions ON TRUE
                 WHERE d.id=%s
                 """,
                 (draft_id,),
@@ -907,9 +968,12 @@ class Store:
             "spec_hash": row["spec_hash"],
             "artifact_hash": row["artifact_hash"],
             "sandbox_report_hash": row["sandbox_report_hash"],
-            "repair_attempts_used": row["attempts_used"] if row["attempts_used"] is not None else 0,
+            "repair_attempts_used": row["agent_attempts_used"] if row["agent_attempts_used"] is not None else 0,
             "repair_attempts_max": 3,
             "strategy_spec": row["spec_json"],
+            "model": row["agent_model"] if row["agent_model"] != "pending" else None,
+            "model_version": row["agent_model_version"] if row["agent_model_version"] != "pending" else None,
+            "agent_reasoning": _strategy_draft_reasoning(row),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

@@ -165,11 +165,17 @@ def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:
 
     def requester(request, _timeout):
         observed.update(json.loads(request.data))
-        return json.dumps({"choices": [{"message": {"content": json.dumps({"spec_json": json.dumps(response)})}}]}).encode()
+        return json.dumps({"choices": [{"message": {"content": json.dumps({
+            "spec_json": json.dumps(response),
+            "reasoning": "1. Read the prompt.\n2. Build and validate the StrategySpec.",
+        })}}]}).encode()
 
-    assert Predictor(requester).design("Use an SMA crossover.") == response
+    result = Predictor(requester).design("Use an SMA crossover.")
+    assert result.spec == response
+    assert result.reasoning.startswith("1.")
     assert "Entry comparison form" in observed["messages"][0]["content"]
     assert observed["response_format"]["json_schema"]["name"] == "strategy_spec"
+    assert "reasoning" in observed["response_format"]["json_schema"]["schema"]["properties"]
 
 
 def test_openai_configuration_is_preferred_and_uses_shared_model(monkeypatch) -> None:

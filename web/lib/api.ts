@@ -114,6 +114,9 @@ export type StrategyDraft = {
   repair_attempts_used: number;
   repair_attempts_max: number;
   strategy_spec: StrategySpec | null;
+  model: string | null;
+  model_version: string | null;
+  agent_reasoning: string | null;
   created_at: string;
   updated_at: string;
 };

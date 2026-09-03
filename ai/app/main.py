@@ -62,10 +62,18 @@ def aggregate_news_sentiment(payload: PredictRequest) -> PredictResponse:
 @app.post("/strategy/spec", response_model=StrategyDesignResponse)
 def design_strategy(payload: StrategySpecRequest) -> StrategyDesignResponse:
     try:
+        result = predictor.design(payload.text)
+        spec = result.spec if hasattr(result, "spec") else result
+        reasoning = getattr(
+            result,
+            "reasoning",
+            "1. Read the strategy prompt.\n2. Convert it into a causal StrategySpec.\n3. Validate it for the runtime DSL.",
+        )
         return StrategyDesignResponse(
-            spec=StrategySpecResponse.model_validate(predictor.design(payload.text)),
-            model=predictor.model,
-            model_version=predictor.model_version,
+            spec=StrategySpecResponse.model_validate(spec),
+            reasoning=reasoning,
+            model=getattr(result, "model", predictor.model),
+            model_version=getattr(result, "model_version", predictor.model_version),
         )
     except Exception as exc:
         raise HTTPException(

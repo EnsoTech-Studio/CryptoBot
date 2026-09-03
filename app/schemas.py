@@ -112,6 +112,9 @@ class StrategyDraftOut(ContractModel):
     repair_attempts_used: int
     repair_attempts_max: int
     strategy_spec: dict[str, Any] | None = None
+    model: str | None = None
+    model_version: str | None = None
+    agent_reasoning: str | None = None
     created_at: datetime
     updated_at: datetime
 
