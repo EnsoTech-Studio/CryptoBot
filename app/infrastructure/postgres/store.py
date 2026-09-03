@@ -2678,6 +2678,20 @@ class Store:
         except psycopg.errors.UniqueViolation as exc:
             raise conflict("news_source_exists", "news source key already exists") from exc
 
+    def list_news_sources(self, active_only: bool = True) -> list[dict[str, Any]]:
+        where = "WHERE is_active" if active_only else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id,source_key,display_name,kind,allowed_origin,url_template,
+                       is_active,last_collected_at
+                FROM news_sources
+                {where}
+                ORDER BY is_active DESC, display_name ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_approved_sources(self, source_id: UUID | None = None) -> list[ApprovedSource]:
         where = "AND id=%s" if source_id else ""
         params: tuple[Any, ...] = (source_id,) if source_id else ()

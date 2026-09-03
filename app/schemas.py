@@ -423,6 +423,17 @@ class NewsAggregateOut(ContractModel):
     label_counts: dict[str, int]
 
 
+class NewsSourceOut(ContractModel):
+    id: UUID
+    source_key: str
+    display_name: str
+    kind: Literal["rss", "url"]
+    allowed_origin: str
+    url_template: str
+    is_active: bool
+    last_collected_at: datetime | None = None
+
+
 class NewsSourceCreateIn(ContractModel):
     source_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,62}[a-z0-9]$")
     display_name: str = Field(min_length=1, max_length=120)

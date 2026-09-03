@@ -1,60 +1,79 @@
 "use client";
 
-import { ASSET_PRESETS, REFRESH_OPTIONS, SOURCE_MODES, type SourceMode } from "../../../lib/news-mock";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import type { NewsSource } from "../../../lib/api";
+import { ASSET_PRESETS, REFRESH_OPTIONS } from "../../../lib/news-mock";
 import { Button, Field, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./news.module.css";
 
-/* The API remains the source of truth for real crawling. The local mock keeps
-   every control interactive so the complete reference screen is inspectable. */
 export function NewsControls({
-  mode,
   asset,
   refreshMinutes,
-  onMode,
   onAsset,
   onRefresh,
+  sources,
+  selectedSourceIds,
+  sourcesState,
+  onToggleSource,
+  onToggleAllSources,
   onCrawl,
   crawlBusy,
 }: {
-  mode: SourceMode;
   asset: string;
   refreshMinutes: number;
-  onMode: (mode: SourceMode) => void;
   onAsset: (asset: string) => void;
   onRefresh: (minutes: number) => void;
+  sources: NewsSource[];
+  selectedSourceIds: string[];
+  sourcesState: "loading" | "ready" | "error";
+  onToggleSource: (sourceId: string) => void;
+  onToggleAllSources: () => void;
   onCrawl: () => void;
   crawlBusy: boolean;
 }) {
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const selected = useMemo(() => new Set(selectedSourceIds), [selectedSourceIds]);
+  const allSelected = sources.length > 0 && selectedSourceIds.length === sources.length;
+  const sourceLabel = sourceSelectLabel(sources, selectedSourceIds, sourcesState);
+  const sourceMenuDisabled = sourcesState !== "ready" || sources.length === 0;
+
+  useEffect(() => {
+    if (!sourceMenuOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) setSourceMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSourceMenuOpen(false);
+    };
+    window.addEventListener("mousedown", closeOnOutsideClick);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("mousedown", closeOnOutsideClick);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [sourceMenuOpen]);
+
   return (
     <div className={styles.controlStrip}>
-      <Field label="Nguồn">
-        <div className={styles.modeGroup} role="group" aria-label="Chế độ nguồn tin">
-          {SOURCE_MODES.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`${styles.modeButton} ${mode === option.value ? styles.modeActive : ""} ${option.value === "rss" ? styles.modeRss : option.value === "html" ? styles.modeHtml : ""}`}
-              aria-pressed={mode === option.value}
-              onClick={() => onMode(option.value)}
-            >
-              <Icon name={option.icon} aria-hidden="true" />
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </Field>
-
       <Field label="Pair (Asset)">
         <Select value={asset} onChange={(event) => onAsset(event.target.value)}>
           {ASSET_PRESETS.map((preset) => (
-            <option key={preset} value={preset}>{preset}</option>
+            <option key={preset} value={preset}>
+              {preset}
+            </option>
           ))}
         </Select>
       </Field>
 
       <Field label="Auto refresh">
-        <div className={styles.refreshGroup} role="group" aria-label="Chu kỳ tự động làm mới">
+        <div
+          className={styles.refreshGroup}
+          role="group"
+          aria-label="Chu kỳ tự động làm mới"
+        >
           {REFRESH_OPTIONS.map((minutes) => (
             <button
               key={minutes}
@@ -69,24 +88,86 @@ export function NewsControls({
         </div>
       </Field>
 
-      <span />
+      <div className={styles.sourceField}>
+        <span className={styles.sourceFieldLabel}>Nguồn tin cần crawl</span>
+        <div ref={pickerRef} className={styles.sourcePicker}>
+          <button
+            type="button"
+            className={styles.sourceSelectButton}
+            aria-haspopup="listbox"
+            aria-expanded={sourceMenuOpen}
+            disabled={sourceMenuDisabled}
+            onClick={() => setSourceMenuOpen((open) => !open)}
+          >
+            <span>{sourceLabel}</span>
+            <Icon name="chevron-down" aria-hidden="true" />
+          </button>
+
+          {sourceMenuOpen ? (
+            <div className={styles.sourceMenu} role="listbox" aria-label="Chọn nguồn crawl">
+              <label className={`${styles.sourceOption} ${styles.sourceBulkOption}`}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={onToggleAllSources}
+                />
+                <span className={styles.sourceMeta}>
+                  <b>{allSelected ? "Bỏ chọn tất cả" : "Chọn tất cả"}</b>
+                  <em>{sources.length} nguồn đang bật</em>
+                </span>
+              </label>
+
+              {sources.map((source) => (
+                <label key={source.id} className={styles.sourceOption}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(source.id)}
+                    onChange={() => onToggleSource(source.id)}
+                  />
+                  <span className={styles.sourceMeta}>
+                    <b>{source.display_name}</b>
+                    <em>{source.kind.toUpperCase()}</em>
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       <div className={styles.stripActions}>
         <Button
-          variant="secondary"
-        >
-          <Icon name="settings" aria-hidden="true" />
-          Cấu hình nguồn
-        </Button>
-        <Button
           variant="primary"
           onClick={onCrawl}
-          disabled={crawlBusy}
+          disabled={
+            crawlBusy ||
+            selectedSourceIds.length === 0 ||
+            sourcesState !== "ready"
+          }
         >
           <Icon name="play" aria-hidden="true" />
-          {crawlBusy ? "Đang crawl…" : "Bắt đầu crawl"}
+          {crawlBusy ? "Đang crawl..." : "Crawl"}
         </Button>
       </div>
     </div>
   );
+}
+
+function sourceSelectLabel(
+  sources: NewsSource[],
+  selectedSourceIds: string[],
+  state: "loading" | "ready" | "error",
+) {
+  if (state === "loading") return "Đang tải nguồn...";
+  if (state === "error") return "Không tải được nguồn";
+  if (sources.length === 0) return "Chưa có nguồn";
+  if (selectedSourceIds.length === 0) return "Chọn nguồn";
+  if (selectedSourceIds.length === sources.length) return "Tất cả nguồn";
+
+  const selected = new Set(selectedSourceIds);
+  const first = sources.find((source) => selected.has(source.id));
+  if (!first) return "Chọn nguồn";
+  return selectedSourceIds.length === 1
+    ? first.display_name
+    : `${first.display_name} +${selectedSourceIds.length - 1}`;
 }

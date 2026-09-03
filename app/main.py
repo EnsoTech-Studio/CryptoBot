@@ -47,6 +47,7 @@ from .schemas import (
     NewsCollectIn,
     NewsItemOut,
     NewsSourceCreateIn,
+    NewsSourceOut,
     ScorePolicyCreateIn,
     SearchActionIn,
     SearchRunCreateIn,
@@ -796,6 +797,15 @@ def get_news_aggregate(
     _auth: Internal, request: Request, coin: str | None = None
 ) -> dict[str, Any]:
     return _store(request).news_aggregate(coin)
+
+
+@app.get("/api/v1/news/sources", response_model=dict[str, list[NewsSourceOut]])
+def get_news_sources(
+    _auth: Internal,
+    request: Request,
+    active_only: bool = True,
+) -> dict[str, Any]:
+    return {"sources": _store(request).list_news_sources(active_only)}
 
 
 @app.post("/api/v1/admin/news-sources", status_code=201)

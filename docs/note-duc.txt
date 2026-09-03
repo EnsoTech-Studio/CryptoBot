@@ -17,8 +17,9 @@ Note - slide:
     + Strategy với algorithm vẽ class diagram
 
 Slides:
-    + Yêu cầu kiến trúc: ASRs / Architectural Drivers 
-    + Quality Attributes 
+    + Yêu cầu kiến trúc: 
+        + ASRs / Architectural Drivers 
+        + Quality Attributes (nói 2 thôi - realtime + strategy)
     + C4 model + UML + Use case 
         + Use case
         + C3: context, container, component
@@ -39,7 +40,7 @@ Slides:
         + Class của Crawling 
     Note: Chỉnh lại C2-C3, high level cùng format 
     + High-level architecture - Modular monolith (Chỗ này show ra nhiều kỹ thuật): kết nối giữa các components (không vẽ flow nữa)
-        + Middleware (Go API): CQRS, RBAC, 
+        + Middleware (Go API): CQRS, RBAC
         + Frontend: SPA, Micro-Frontends, JAMstack
             + Event Streaming, Kappa Architecture
         + Backend: Plugin Architecture, Event-driven, Job queue
@@ -56,7 +57,7 @@ Slides:
         + Strategy
             + Run strategy: handcraft + auto
             + Add Strategy
-        + Backtest
+        + Backtest: 
         + News Crawling: pipeline chạy new crawling (handcraft + LLM hỗ trợ)
     + Security: Access control, authen
     + Scalability: scale-out, scale-up -> chạy test k6, locust
@@ -103,6 +104,10 @@ Note for check:
 - Strategy phải có version
 - Viết kịch bản testing -> chạy test mô phỏng ra số liệu và show cho thầy xem (chế số liệu cũng được)
 
+
+# Test account:
+Email: demo-admin@cryptobot.local
+Password: DemoAdmin2026!
 
 # Kiến thức:
 
@@ -177,6 +182,9 @@ System prompt của LLM để vào folder config, không gán cứng trong code
 
 #Testing:
 
+- add chosing news to crawl in stead of job queres
+- Chỉnh lại crawling thêm news API, ... vào provider
+- Thêm Discovery slide
 
 ## Strategy 
 
@@ -259,10 +267,8 @@ Visualize in the graph
 - Use LLM models to analyze market
 
 ----------------------------------------------------------
-
 Câu hỏi:
 1. Architectural drivers là gì?
-
 
 2. C4 Context và Container của nhóm?
 
@@ -281,3 +287,43 @@ Câu hỏi:
 9. Duplicate/retry/event order xử lý thế nào?
 
 10. Leaderboard result truy được provenance thế nào?
+
+
+
+Câu hỏi:
+
+1. Strategy mới được thêm vào hệ thống như thế nào?
+
+2. Search algorithm mới được thêm như thế nào?
+
+
+
+3. Market Data Provider mới được thêm như thế nào?
+
+
+4. Nếu số backtest tăng từ 100 lên 100.000 thì kiến trúc thay đổi thế nào?
+
+
+
+5. Nếu News Service bị lỗi thì Chart có còn chạy không?
+
+
+6. Nếu Sentiment Model thay đổi thì Strategy Engine có bị ảnh hưởng không?
+
+
+
+
+
+
+
+
+Run
+
+docker compose `
+  -f docker-compose.stack.yml `
+  -f docker-compose.prod.yml `
+  -f docker-compose.local.yml `
+  --env-file .env `
+  --env-file .runtime\local-docker.env `
+  --profile local-db `
+  up -d --build --remove-orphans
