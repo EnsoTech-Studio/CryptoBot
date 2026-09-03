@@ -1268,6 +1268,7 @@ class Store:
                        d.dataset_version,e.replay_range_from AS range_from,e.replay_range_to AS range_to,
                        d.provider, d.symbol, d.timeframe,d.content_hash,
                        d.bbo_content_hash,r.result_hash,e.candidate_definition,
+                       runtime.spec_json AS strategy_definition,
                        v.strategy_id, v.version AS strategy_version, e.evaluator_version,
                        e.created_at, r.started_at, r.finished_at, r.candles_read,
                        r.signals_count, r.error_code,e.initial_equity,e.fixed_notional,
@@ -1284,6 +1285,8 @@ class Store:
                 FROM experiments e
                 JOIN market_datasets d ON d.id=e.market_dataset_id
                 JOIN strategy_versions v ON v.id=e.strategy_version_id
+                LEFT JOIN strategy_runtime_specs runtime
+                  ON runtime.strategy_id=v.strategy_id AND runtime.version=v.version
                 LEFT JOIN backtest_runs r ON r.experiment_id=e.id
                 LEFT JOIN evaluations ev
                   ON ev.backtest_run_id=r.id AND ev.evaluator_version=e.evaluator_version

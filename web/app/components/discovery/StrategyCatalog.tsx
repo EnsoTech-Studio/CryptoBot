@@ -31,9 +31,9 @@ export function StrategyCatalog({
       className={styles.tallPanel}
     >
       <div className={styles.catalogList}>
-        {entries.length > 0 ? entries.map((entry) => (
+        {entries.length > 0 ? entries.map((entry, index) => (
           <CatalogRow
-            key={entry.label}
+            key={entry.strategyId ?? `${entry.label}-${index}`}
             entry={entry}
             selected={entry.strategyId ? selectedIds.includes(entry.strategyId) : false}
             available={Boolean(entry.strategyId && registryIds.has(entry.strategyId))}

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from "react";
 
 import type { Candle, ExecutionMarker, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
+import { DISPLAY_TIME_ZONE } from "../../../lib/format";
 
 export type ChartSize = "primary" | "context" | "result" | "realtime";
 
@@ -72,6 +73,7 @@ export function ChartCanvas({
   series,
   markers,
   executionMarkers = [],
+  showSignalMarkers = true,
   size = "primary",
   visibleLimit,
   ariaLabel = "Candlestick chart with volume and strategy overlays",
@@ -80,6 +82,7 @@ export function ChartCanvas({
   series: OverlaySeries[];
   markers: OverlayMarker[];
   executionMarkers?: ExecutionMarker[];
+  showSignalMarkers?: boolean;
   size?: ChartSize;
   /* Result charts can opt into an explicit selected window. Other chart roles
      retain their compact trailing viewport. */
@@ -99,7 +102,7 @@ export function ChartCanvas({
   const [panOffset, setPanOffset] = useState(0);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
-  const timeZone = "Asia/Ho_Chi_Minh";
+  const timeZone = DISPLAY_TIME_ZONE;
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ startX: number; startPan: number; moved: boolean } | null>(null);
   const baseVisible = Math.min(candles.length, visibleLimit ?? frame.visible);
@@ -122,7 +125,7 @@ export function ChartCanvas({
     });
   });
   executionMarkers.forEach((marker) => {
-    if (marker.price != null && visibleTimes.has(marker.t)) priceValues.push(marker.price);
+    if (marker.price != null && indexForTime(view, marker.t) >= 0) priceValues.push(marker.price);
   });
 
   const minPrice = Number.isFinite(Math.min(...priceValues)) ? Math.min(...priceValues) : 0;
@@ -268,8 +271,8 @@ export function ChartCanvas({
         );
       })}
       {series.filter((item) => item.pane === "main").flatMap((item, index) => renderMainSeries(item, view, index, x, y))}
-      {renderSignalMarkers(markers, view, x, y, size === "context" ? 0.5 : 1)}
-      {renderExecutionMarkers(executionMarkers, view, x, y, width - pad.right)}
+      {showSignalMarkers ? renderSignalMarkers(markers, view, x, y, size === "context" ? 0.5 : 1) : null}
+      {renderExecutionMarkers(executionMarkers, view, x, y)}
       {subH > 0 ? subSeries.flatMap((item, index) => renderSubSeries(item, view, index, x, subTop, subH, pad.left, width - pad.right)) : null}
       {frame.showAxis ? (
         <>
@@ -438,7 +441,6 @@ function renderExecutionMarkers(
   candles: Candle[],
   x: (index: number) => number,
   y: (value: number) => number,
-  maxX: number,
 ) {
   return markers.flatMap((marker, index): ReactElement[] => {
     if (marker.price == null) return [];
@@ -448,27 +450,37 @@ function renderExecutionMarkers(
     const cy = y(marker.price);
     if (marker.overlay_type === "take_profit" || marker.overlay_type === "stop_loss") {
       const endIndex = clampIndex(indexForTime(candles, marker.line_until ?? marker.t), candles.length, candles.length - 1);
-      const label = marker.overlay_type === "take_profit" ? "Take Profit" : "Stop Loss";
       return [
         <line key={`${marker.overlay_type}-${index}`} x1={cx} x2={x(endIndex)} y1={cy} y2={cy} className={`risk-line ${marker.overlay_type}`} />,
-        <text key={`${marker.overlay_type}-${index}-label`} x={Math.min(x(endIndex) + 5, maxX - 12)} y={cy - 4} className={`risk-label ${marker.overlay_type}`}>{label}</text>,
       ];
     }
     if (marker.overlay_type === "entry" || marker.overlay_type.endsWith("_entry")) {
-      const label = marker.overlay_type.startsWith("short") ? "SHORT Entry" : marker.overlay_type.startsWith("long") ? "LONG Entry" : "ENTRY";
+      const action = executionAction(marker);
+      if (!action) return [];
+      const isBuy = action === "BUY";
+      const iconY = cy + (isBuy ? 12 : -12);
       return [
-        <circle key={`entry-${index}`} cx={cx} cy={cy} r="5" className={`exec-marker entry${marker.selected ? " selected" : ""}`} />,
-        <text key={`entry-${index}-label`} x={cx + 8} y={cy - 8} className={`exec-label${marker.selected ? " selected" : ""}`}>{label}</text>,
+        <path key={`entry-${index}`} d={isBuy ? triangleUp(cx, iconY) : triangleDown(cx, iconY)} className={`exec-marker action-marker ${isBuy ? "buy" : "sell"}${marker.selected ? " selected" : ""}`} />,
       ];
     }
     if (marker.overlay_type === "exit") {
+      const action = executionAction(marker);
+      if (!action) return [];
+      const isBuy = action === "BUY";
+      const iconY = cy + (isBuy ? 12 : -12);
       return [
-        <path key={`exit-${index}`} d={crossPath(cx, cy)} className={`exec-marker exit ${marker.exit_reason ?? ""}${marker.selected ? " selected" : ""}`} />,
-        <text key={`exit-${index}-label`} x={cx + 8} y={cy + 13} className={`exec-label${marker.selected ? " selected" : ""}`}>EXIT</text>,
+        <path key={`exit-${index}`} d={isBuy ? triangleUp(cx, iconY) : triangleDown(cx, iconY)} className={`exec-marker action-marker ${isBuy ? "buy" : "sell"}${marker.selected ? " selected" : ""}`} />,
       ];
     }
     return [];
   });
+}
+
+function executionAction(marker: ExecutionMarker): "BUY" | "SELL" | null {
+  if (marker.action === "BUY" || marker.action === "SELL") return marker.action;
+  if (marker.overlay_type === "long_entry") return "BUY";
+  if (marker.overlay_type === "short_entry") return "SELL";
+  return null;
 }
 
 function pointPath(points: OverlayPoint[], candles: Candle[], x: (index: number) => number, y: (value: number) => number) {
@@ -503,7 +515,11 @@ function indexForTime(candles: Candle[], value: string): number {
   if (direct >= 0) return direct;
   const target = Date.parse(value);
   if (!Number.isFinite(target)) return -1;
-  return candles.findIndex((candle) => Date.parse(candle.open_time) === target);
+  return candles.findIndex((candle) => {
+    const open = Date.parse(candle.open_time);
+    const close = Date.parse(candle.close_time);
+    return Number.isFinite(open) && Number.isFinite(close) && target >= open && target <= close;
+  });
 }
 
 function clampIndex(value: number, length: number, fallback = 0): number {
@@ -527,10 +543,6 @@ function triangleUp(x: number, y: number, s = 1) {
 
 function triangleDown(x: number, y: number, s = 1) {
   return `M${x},${y + 11 * s} L${x - 9 * s},${y - 7 * s} L${x + 9 * s},${y - 7 * s} Z`;
-}
-
-function crossPath(x: number, y: number) {
-  return `M${x - 7},${y - 7} L${x + 7},${y + 7} M${x + 7},${y - 7} L${x - 7},${y + 7}`;
 }
 
 function compactVolume(value: number) {

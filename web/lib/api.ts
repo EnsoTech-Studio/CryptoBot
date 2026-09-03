@@ -59,6 +59,7 @@ export type ExecutionMarker = {
   t: string;
   line_until?: string;
   overlay_type: "entry" | "exit" | "stop_loss" | "take_profit" | string;
+  action?: "BUY" | "SELL" | string;
   trade_id?: string;
   price?: number;
   signal_t?: string;
@@ -151,6 +152,7 @@ export type ExperimentSummary = {
   metrics: Metrics | null;
   execution: Record<string, unknown>;
   candidate_definition: Record<string, unknown>;
+  strategy_definition?: Record<string, unknown> | null;
 };
 
 export type Trade = {
@@ -321,6 +323,7 @@ type ResearchExecutionMarker = {
   line_until?: string;
   overlay_type: string;
   price: number;
+  action?: "BUY" | "SELL";
   exit_reason?: string;
 };
 type ResearchSearchRun = {

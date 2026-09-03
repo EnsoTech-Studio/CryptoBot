@@ -70,17 +70,19 @@ export const MOCK_TRADES: Trade[] = Array.from({ length: MOCK_KPIS.totalTrades }
 export function mockExecutionMarkers(candles: Candle[]): ExecutionMarker[] {
   const longEntry = candles[70];
   const shortEntry = candles[116];
-  const exit = candles[166];
-  if (!longEntry || !shortEntry || !exit) return [];
+  const longExit = candles[100];
+  const shortExit = candles[166];
+  if (!longEntry || !shortEntry || !longExit || !shortExit) return [];
   const chartRange = Math.max(1, Math.max(...candles.map((candle) => candle.high)) - Math.min(...candles.map((candle) => candle.low)));
   const stopLoss = roundMarkerPrice(longEntry.low - chartRange * 0.02);
   const takeProfit = roundMarkerPrice(shortEntry.low - chartRange * 0.02);
   return [
-    { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "long_entry", price: longEntry.close },
-    { sequence_no: 1, t: longEntry.open_time, line_until: candles[135]?.open_time, overlay_type: "stop_loss", price: stopLoss },
-    { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "short_entry", price: shortEntry.close },
-    { sequence_no: 2, t: shortEntry.open_time, line_until: candles[166]?.open_time, overlay_type: "take_profit", price: takeProfit },
-    { sequence_no: 2, t: exit.open_time, overlay_type: "exit", price: exit.close, exit_reason: "take_profit" },
+    { sequence_no: 1, t: longEntry.open_time, line_until: longExit.open_time, overlay_type: "long_entry", action: "BUY", price: longEntry.close },
+    { sequence_no: 1, t: longEntry.open_time, line_until: longExit.open_time, overlay_type: "stop_loss", price: stopLoss },
+    { sequence_no: 1, t: longExit.open_time, overlay_type: "exit", action: "SELL", price: longExit.close, exit_reason: "take_profit" },
+    { sequence_no: 2, t: shortEntry.open_time, line_until: shortExit.open_time, overlay_type: "short_entry", action: "SELL", price: shortEntry.close },
+    { sequence_no: 2, t: shortEntry.open_time, line_until: shortExit.open_time, overlay_type: "take_profit", price: takeProfit },
+    { sequence_no: 2, t: shortExit.open_time, overlay_type: "exit", action: "BUY", price: shortExit.close, exit_reason: "take_profit" },
   ];
 }
 

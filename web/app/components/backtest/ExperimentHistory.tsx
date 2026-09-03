@@ -154,9 +154,9 @@ function ExperimentDetail({ record }: { record: ExperimentHistoryRecord }) {
       <Detail label="Trạng thái" value={record.status} />
       <Detail label="Pair / timeframe" value={`${record.symbol} · ${record.timeframe}`} />
       <Detail label="Khoảng thời gian" value={`${record.rangeFrom} → ${record.rangeTo}`} />
-      <Detail label="Strategy version" value={`${record.strategy} · ${record.strategyVersion}`} />
+      <Detail label="Strategy" value={`${record.strategy} · ${record.strategyVersion}`} />
       <Detail label="Dataset version" value={record.datasetVersion || "Chưa chọn"} />
-      <Detail label="Parameters đã lưu" value={<JsonValue value={parametersOnly(record.parameters)} />} wide />
+      <Detail label="Strategy definition" value={<JsonValue value={record.parameters} />} wide />
       <Detail label="Execution config" value={<JsonValue value={record.execution} />} wide />
       {record.metrics ? <Detail label="Metrics" value={`Return ${formatMetric(record.metrics.total_return_pct)}% · Win rate ${formatMetric(record.metrics.win_rate_pct)}% · PF ${formatMetric(record.metrics.profit_factor)} · Sharpe ${formatMetric(record.metrics.sharpe_ratio)}`} wide /> : null}
     </div>
@@ -165,21 +165,6 @@ function ExperimentDetail({ record }: { record: ExperimentHistoryRecord }) {
 
 function formatMetric(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? "—" : value.toFixed(2);
-}
-
-function parametersOnly(value: Record<string, unknown>): unknown {
-  if (Array.isArray(value.children)) {
-    return value.children.map((child) => {
-      if (!child || typeof child !== "object") return child;
-      const item = child as Record<string, unknown>;
-      return {
-        strategy_id: item.strategy_id,
-        version: item.version,
-        parameters: item.parameters ?? {},
-      };
-    });
-  }
-  return value.parameters ?? value;
 }
 
 function JsonValue({ value }: { value: unknown }) {

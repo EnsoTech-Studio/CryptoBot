@@ -198,6 +198,7 @@ class ExperimentSummaryOut(ContractModel):
     bbo_content_hash: str | None = None
     result_hash: str | None = None
     candidate_definition: dict[str, Any]
+    strategy_definition: dict[str, Any] | None = None
     execution: dict[str, Any]
     metrics: ExperimentMetricsOut | None = None
     created_at: datetime
@@ -268,6 +269,7 @@ class ExecutionMarkerOut(ContractModel):
     line_until: datetime | None = None
     overlay_type: str
     price: float
+    action: Literal["BUY", "SELL"] | None = None
     exit_reason: str | None = None
 
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { createMockPanelData } from "../../../lib/realtime-mock";
 import { mockExecutionMarkers } from "../../../lib/backtest-mock";
+import { DISPLAY_TIME_ZONE } from "../../../lib/format";
 import type { Candle, ExecutionMarker, ExperimentSummary, OverlayMarker, OverlayPoint, OverlaySeries } from "../../../lib/api";
 import type { BacktestDraft } from "../../../lib/backtest";
 import { isExecutionMarkerSelected } from "../../../lib/backtest";
@@ -24,7 +25,6 @@ export function BacktestChart({
   executionMarkers,
   isMock,
   empty,
-  onInspect,
   onRun,
   runDisabled,
   runLabel,
@@ -38,7 +38,6 @@ export function BacktestChart({
   executionMarkers: ExecutionMarker[];
   isMock: boolean;
   empty: boolean;
-  onInspect: () => void;
   onRun: () => void;
   runDisabled: boolean;
   runLabel: string;
@@ -54,18 +53,21 @@ export function BacktestChart({
     ...marker,
     selected: isExecutionMarkerSelected(marker, selectedTradeSequence),
   }));
-  const windowKey = `${shownCandles.length}:${shownCandles[0]?.open_time ?? ""}:${shownCandles.at(-1)?.open_time ?? ""}`;
+  const firstExecutionTime = shownExecutionMarkers[0]?.t ?? "";
+  const lastExecutionTime = shownExecutionMarkers.at(-1)?.t ?? "";
+  const windowKey = `${shownCandles.length}:${shownCandles[0]?.open_time ?? ""}:${shownCandles.at(-1)?.open_time ?? ""}:${shownExecutionMarkers.length}:${firstExecutionTime}:${lastExecutionTime}`;
   const maximum = Math.max(0, shownCandles.length - 1);
-  const [savedWindow, setSavedWindow] = useState(() => defaultWindow(windowKey, maximum));
+  const [savedWindow, setSavedWindow] = useState(() => defaultWindow(windowKey, maximum, shownCandles, shownExecutionMarkers));
   /* A new run is a new visual context. Start on a readable trailing candle
      window until the user moves a thumb, rather than resetting in an effect. */
-  const activeWindow = savedWindow.key === windowKey ? savedWindow : defaultWindow(windowKey, maximum);
+  const activeWindow = savedWindow.key === windowKey ? savedWindow : defaultWindow(windowKey, maximum, shownCandles, shownExecutionMarkers);
   const start = Math.min(activeWindow.start, maximum);
   const end = Math.max(start, Math.min(activeWindow.end, maximum));
   const windowCandles = shownCandles.slice(start, end + 1);
   const windowFrom = windowCandles[0]?.open_time;
   const windowTo = windowCandles.at(-1)?.open_time;
-  const windowExecutionMarkers = shownExecutionMarkers.filter((marker) => isWithinWindow(marker.t, windowFrom, windowTo));
+  const windowClose = windowCandles.at(-1)?.close_time;
+  const windowExecutionMarkers = shownExecutionMarkers.filter((marker) => isWithinWindow(marker.t, windowFrom, windowClose));
   const last = windowCandles.at(-1)?.close ?? 0;
   const windowCount = windowCandles.length;
   const ma20 = lastSeriesValue(shownSeries[0]) ?? last;
@@ -97,9 +99,6 @@ export function BacktestChart({
             <Icon name="play" aria-hidden="true" />
             {runLabel}
           </Button>
-          <button type="button" className={styles.expandButton} onClick={onInspect} aria-label="Xem chi tiết kết quả">
-            <Icon name="expand" />
-          </button>
         </span>
       }
     >
@@ -125,6 +124,7 @@ export function BacktestChart({
           candles={windowCandles}
           series={shownSeries}
           markers={shownMarkers}
+          showSignalMarkers={false}
           executionMarkers={windowExecutionMarkers}
           size="result"
           visibleLimit={windowCount}
@@ -173,7 +173,6 @@ export function BacktestChart({
         <div className={styles.legendRow}>
           <span className={styles.legendLabel}>Dataset</span>
           <b>{experiment.dataset_version}</b>
-          <Button variant="ghost" onClick={onInspect}>Provenance</Button>
         </div>
       ) : null}
     </Panel>
@@ -190,9 +189,34 @@ function createMockMa50(candles: Candle[]): OverlaySeries {
   return { name: "MA(50)", overlay_type: "moving_average_50", pane: "main", points, style: "solid" };
 }
 
-function defaultWindow(key: string, maximum: number) {
+function defaultWindow(key: string, maximum: number, candles: Candle[] = [], executionMarkers: ExecutionMarker[] = []) {
   const defaultVisibleCandles = 80;
-  return { key, start: Math.max(0, maximum - defaultVisibleCandles + 1), end: maximum };
+  const markerIndices = executionMarkers
+    .map((marker) => candleIndexForTime(candles, marker.t))
+    .filter((index): index is number => index >= 0);
+  if (markerIndices.length === 0) {
+    return { key, start: Math.max(0, maximum - defaultVisibleCandles + 1), end: maximum };
+  }
+
+  const markerStart = Math.min(...markerIndices);
+  const markerEnd = Math.max(...markerIndices);
+  const markerSpan = markerEnd - markerStart + 1;
+  const visible = Math.min(maximum + 1, Math.max(defaultVisibleCandles, Math.min(markerSpan, 240)));
+  const start = markerSpan <= 240
+    ? markerStart - Math.floor((visible - markerSpan) / 2)
+    : markerEnd - visible + 1;
+  const boundedStart = Math.max(0, Math.min(maximum - visible + 1, start));
+  return { key, start: boundedStart, end: boundedStart + visible - 1 };
+}
+
+function candleIndexForTime(candles: Candle[], value: string): number {
+  const target = Date.parse(value);
+  if (!Number.isFinite(target)) return -1;
+  return candles.findIndex((candle) => {
+    const open = Date.parse(candle.open_time);
+    const close = Date.parse(candle.close_time);
+    return Number.isFinite(open) && Number.isFinite(close) && target >= open && target <= close;
+  });
 }
 
 function lastSeriesValue(series: OverlaySeries | undefined) {
@@ -218,7 +242,7 @@ function formatWindowTime(value?: string) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return value;
   return new Intl.DateTimeFormat("vi-VN", {
-    timeZone: "UTC",
+    timeZone: DISPLAY_TIME_ZONE,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

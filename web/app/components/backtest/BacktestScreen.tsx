@@ -48,7 +48,7 @@ function BacktestContent() {
     result,
     openExperiment,
     runBacktest,
-    openInspector,
+    savedCompositeStrategies,
     user,
     dataMode,
   } = useWorkspace();
@@ -70,8 +70,6 @@ function BacktestContent() {
   const [submitPending, setSubmitPending] = useState(false);
   const submitLock = useRef(false);
   const submitOriginExperimentId = useRef<string | null>(null);
-  const [datasetAction, setDatasetAction] = useState<"idle" | "creating">("idle");
-  const [datasetActionError, setDatasetActionError] = useState("");
   const backtestStrategies = useMemo(
     () => (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter((strategy) => !strategy.is_composite),
     [dataMode, strategies],
@@ -150,8 +148,14 @@ function BacktestContent() {
   const visibleExperimentStatus = uiCancelled ? "cancelled" : experiment?.status;
   const isMock = dataMode === "mock" && !completed;
   const selectedChildren = useMemo(
-    () => buildBacktestChildren(effectiveDraft.mode, effectiveDraft.strategyId, effectiveDraft.selectedStrategyIds, backtestStrategies),
-    [backtestStrategies, effectiveDraft.mode, effectiveDraft.selectedStrategyIds, effectiveDraft.strategyId],
+    () => {
+      const saved = savedCompositeStrategies.find((item) => item.id === effectiveDraft.selectedCompositeId);
+      if (effectiveDraft.mode === "composite" && saved) {
+        return saved.children.filter((child) => backtestStrategies.some((strategy) => strategy.strategy_id === child.strategy_id));
+      }
+      return buildBacktestChildren(effectiveDraft.mode, effectiveDraft.strategyId, effectiveDraft.selectedStrategyIds, backtestStrategies);
+    },
+    [backtestStrategies, effectiveDraft.mode, effectiveDraft.selectedCompositeId, effectiveDraft.selectedStrategyIds, effectiveDraft.strategyId, savedCompositeStrategies],
   );
   const noRegistry = backtestStrategies.length === 0;
   const noStrategies = selectedChildren.length === 0;
@@ -213,32 +217,6 @@ function BacktestContent() {
 
   function patch(next: Partial<BacktestDraft>) {
     setDraft((current) => ({ ...current, ...next }));
-    if (next.datasetVersion !== undefined || next.market !== undefined || next.timeframe !== undefined) {
-      setDatasetActionError("");
-    }
-  }
-
-  async function createHistoricalDataset() {
-    if (!user || datasetAction === "creating" || !effectiveDraft.rangeFrom || !effectiveDraft.rangeTo) return;
-    setDatasetAction("creating");
-    setDatasetActionError("");
-    try {
-      const dataset = await api.createDataset(effectiveDraft.market, effectiveDraft.timeframe, {
-        from: effectiveDraft.rangeFrom,
-        to: effectiveDraft.rangeTo,
-      });
-      setDatasets((current) => [dataset, ...current.filter((item) => item.dataset_version !== dataset.dataset_version)]);
-      setDraft((current) => ({
-        ...current,
-        datasetVersion: dataset.dataset_version,
-        rangeFrom: dataset.range_from.slice(0, 10),
-        rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
-      }));
-    } catch (error) {
-      setDatasetActionError(error instanceof Error ? error.message : "Không tạo được dataset cho khoảng ngày này.");
-    } finally {
-      setDatasetAction("idle");
-    }
   }
 
   function submit() {
@@ -249,6 +227,12 @@ function BacktestContent() {
     setUiCancelled(false);
     setSubmitted(effectiveDraft);
     const selectedNames = selectedChildren.map((child) => backtestStrategies.find((strategy) => strategy.strategy_id === child.strategy_id)?.display_name ?? child.strategy_id);
+    const saved = savedCompositeStrategies.find((item) => item.id === effectiveDraft.selectedCompositeId);
+    const execution = {
+      ...draftToExecution(effectiveDraft),
+      ...(saved ? { policy: saved.policy, threshold: saved.threshold } : {}),
+    };
+    const candidateDefinition = buildCandidateDefinition(selectedChildren, execution);
     if (dataMode === "mock") {
       setMockRunState("running");
       window.setTimeout(() => {
@@ -265,8 +249,8 @@ function BacktestContent() {
           datasetVersion: effectiveDraft.datasetVersion,
           rangeFrom: effectiveDraft.rangeFrom,
           rangeTo: effectiveDraft.rangeTo,
-          parameters: Object.assign({}, ...selectedChildren.map((child) => child.parameters ?? {})),
-          execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
+          parameters: candidateDefinition,
+          execution: execution as unknown as Record<string, unknown>,
           metrics: null,
         }, ...current]);
         submitLock.current = false;
@@ -287,13 +271,13 @@ function BacktestContent() {
       datasetVersion: effectiveDraft.datasetVersion,
       rangeFrom: effectiveDraft.rangeFrom,
       rangeTo: effectiveDraft.rangeTo,
-      parameters: Object.assign({}, ...selectedChildren.map((child) => child.parameters ?? {})),
-      execution: draftToExecution(effectiveDraft) as unknown as Record<string, unknown>,
+      parameters: candidateDefinition,
+      execution: execution as unknown as Record<string, unknown>,
       metrics: null,
     }, ...current]);
     void runBacktest(
       selectedChildren,
-      draftToExecution(effectiveDraft),
+      execution,
       effectiveDraft.timeframe,
       { from: effectiveDraft.rangeFrom, to: effectiveDraft.rangeTo },
       effectiveDraft.market,
@@ -336,12 +320,9 @@ function BacktestContent() {
           pairs={marketPairs}
           timeframes={backtestTimeframes}
           strategies={backtestStrategies}
+          savedComposites={savedCompositeStrategies}
           datasets={datasets}
           datasetLoadState={datasetLoadState}
-          canCreateDataset={Boolean(user) && !running}
-          creatingDataset={datasetAction === "creating"}
-          datasetActionError={datasetActionError}
-          onCreateDataset={createHistoricalDataset}
           disabled={running}
           onChange={patch}
         />
@@ -356,7 +337,6 @@ function BacktestContent() {
             executionMarkers={completed ? result.executionMarkers : []}
             isMock={isMock}
             empty={!completed && !isMock}
-            onInspect={() => openInspector(completed ? "metrics" : "provenance")}
             onRun={submit}
             runDisabled={!canRunBacktest(dataMode === "mock" || Boolean(user), running, noStrategies, issues)}
             runLabel={running ? "Đang chạy backtest…" : completed || (dataMode === "mock" && mockRunState === "completed") ? "Chạy lại backtest" : "Chạy backtest"}
@@ -405,9 +385,44 @@ function summaryToHistory(summary: NonNullable<ReturnType<typeof useWorkspace>["
     datasetVersion: summary.dataset_version,
     rangeFrom: summary.range_from.slice(0, 10),
     rangeTo: summary.range_to.slice(0, 10),
-    parameters: summary.candidate_definition,
+    parameters: summary.strategy_definition ?? summary.candidate_definition,
     execution: summary.execution,
     metrics: summary.metrics,
+  };
+}
+
+function buildCandidateDefinition(
+  children: Array<{
+    strategy_id: string;
+    strategy_version?: string;
+    parameters?: Record<string, unknown>;
+    weight: number;
+  }>,
+  execution: ReturnType<typeof draftToExecution>,
+): Record<string, unknown> {
+  const definitions = children.map((child) => ({
+    strategy_id: child.strategy_id,
+    version: child.strategy_version ?? "v1",
+    parameters: child.parameters ?? {},
+    weight: child.weight,
+  }));
+  const single = definitions[0];
+  if (definitions.length === 1 && single) {
+    return {
+      strategy_id: single.strategy_id,
+      version: single.version,
+      parameters: single.parameters,
+    };
+  }
+  return {
+    strategy_id: "composite",
+    version: "v1",
+    children: definitions,
+    policy: {
+      name: execution.policy,
+      threshold: execution.threshold,
+      encoding: { BUY: 1, HOLD: 0, SELL: -1 },
+    },
   };
 }
 

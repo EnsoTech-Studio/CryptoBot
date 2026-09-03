@@ -3,6 +3,15 @@ import type { ExecutionMarker, ExecutionSettings, MarketDataset, Strategy, Strat
 
 export type BacktestMode = "single" | "composite";
 
+export type SavedCompositeStrategy = {
+  id: string;
+  displayName: string;
+  children: StrategyExecution[];
+  policy: "weighted_vote" | "majority_vote";
+  threshold: number;
+  createdAt: string;
+};
+
 /* The visible filter strip on ui-reference/backtest.jpg is the request. Before
    this type existed the eight controls were decoration and createExperiment
    posted literals. */
@@ -12,6 +21,7 @@ export type BacktestDraft = {
   timeframe: string;
   mode: BacktestMode;
   selectedStrategyIds: string[];
+  selectedCompositeId?: string;
   datasetVersion: string;
   rangeFrom: string;
   rangeTo: string;

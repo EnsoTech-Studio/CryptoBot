@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { needsMoreTradesForPage, PAGE_SIZES } from "../../../lib/backtest";
 import { api, type Trade } from "../../../lib/api";
+import { DISPLAY_TIME_ZONE } from "../../../lib/format";
 import { Panel, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./backtest.module.css";
@@ -162,7 +163,7 @@ function ledgerDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-    timeZone: "UTC",
+    timeZone: DISPLAY_TIME_ZONE,
   }).replace(",", "");
 }
 

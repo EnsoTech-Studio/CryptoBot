@@ -36,6 +36,7 @@ export function DiscoveryScreen() {
     discoverySessions,
     discoverySessionsState,
     submittedDraft,
+    saveCompositeStrategy,
     startSearch,
     searchAction,
     selectDiscoverySession,
@@ -184,7 +185,7 @@ export function DiscoveryScreen() {
           />
           <BuilderActions
             canSubmit={canSubmit}
-            onSave={() => void startSearch(activeDraft)}
+            onSave={() => saveCompositeStrategy(activeDraft)}
             onBacktest={() => void backtestDiscoveryStrategy()}
           />
         </div>

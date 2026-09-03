@@ -659,8 +659,9 @@ def get_experiment_overlays(
     store.get_experiment(experiment_id, owner_id)
     execution_markers = []
     for trade in store.list_experiment_execution_markers(experiment_id):
+        is_long = str(trade["side"]).upper().startswith("LONG")
         entry_type = (
-            "long_entry" if str(trade["side"]).upper().startswith("LONG") else "short_entry"
+            "long_entry" if is_long else "short_entry"
         )
         execution_markers.append(
             {
@@ -668,6 +669,7 @@ def get_experiment_overlays(
                 "t": trade["entry_time"],
                 "overlay_type": entry_type,
                 "price": trade["entry_price"],
+                "action": "BUY" if is_long else "SELL",
             }
         )
         for overlay_type, price in (
@@ -691,6 +693,7 @@ def get_experiment_overlays(
                     "t": trade["exit_time"],
                     "overlay_type": "exit",
                     "price": trade["exit_price"],
+                    "action": "SELL" if is_long else "BUY",
                     "exit_reason": trade["exit_reason"],
                 }
             )

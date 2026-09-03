@@ -2,7 +2,7 @@
    strip, a 40/60 chart + ledger row, then six KPI cells beside the profit
    formula and assumptions panels. */
 
-.screen { min-width: 0; margin: 0 var(--screen-right-overflow) 0 var(--screen-left-offset); padding-top: 22px; }
+.screen { width: 100%; min-width: 0; margin: 0; padding-top: 22px; }
 
 @media (min-width: 1041px) and (max-height: 800px) {
   .screen { margin-right: 0; margin-left: 0; }
@@ -19,20 +19,20 @@
 .filterStrip {
   display: grid;
   min-width: 0;
-  grid-template-columns: 180px 86px 154px 144px 148px 174px 150px 150px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.6fr) repeat(6, minmax(0, 1fr));
   align-items: end;
-  gap: 18px;
+  gap: 12px;
   border: 1px solid var(--line-1);
   border-radius: 11px;
   background: var(--surface-1);
   box-shadow: var(--elev-1);
   padding: 18px 17px;
-  /* The composite selector opens outside the strip. A horizontal overflow
-     container also clips the dropdown vertically, leaving only a thin sliver
-     of strategy options visible. Responsive grid breakpoints below already
-     remove the need for horizontal scrolling. */
+  /* Composite selector opens outside strip. Keep every control inside main
+     column so it never crosses into the Inspector. */
   overflow: visible;
 }
+
+.filterStrip > * { min-width: 0; }
 
 .coinControl { position: relative; display: block; min-width: 0; }
 
@@ -72,36 +72,7 @@
 
 .dateField input { padding-left: 34px; font-family: var(--font-mono); }
 
-.datasetControl { display: grid; min-width: 0; gap: 4px; }
-.datasetMeta {
-  overflow: hidden;
-  color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.datasetCreateButton {
-  display: inline-flex;
-  min-height: 25px;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 5px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--brand);
-  font-size: 9px;
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-}
-.datasetCreateButton:hover:not(:disabled) { color: var(--brand-hover); text-decoration: underline; }
-.datasetCreateButton:disabled { color: var(--ink-3); cursor: wait; }
-.datasetCreateButton svg { width: 12px; height: 12px; }
-.datasetError { color: var(--status-stale); font-size: 9px; line-height: 1.2; }
-
-.strategyPicker { position: relative; min-width: 0; }
+.strategyPicker { position: relative; min-width: 0; margin-top: 8px; }
 .strategyPicker > summary {
   display: flex;
   min-height: 38px;

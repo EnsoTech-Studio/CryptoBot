@@ -1106,9 +1106,7 @@ td span {
   stroke-width: 1.2;
 }
 
-.signal-text,
-.risk-label,
-.exec-label {
+.signal-text {
   fill: var(--chart-bg);
   font-family: var(--font-mono);
   font-size: 9px;
@@ -1127,13 +1125,9 @@ td span {
   letter-spacing: -0.35px;
 }
 
-.chart-svg--result .risk-label,
-.chart-svg--result .exec-label {
-  font-size: 11px;
-}
-
 .risk-line {
   stroke-width: 1.4;
+  stroke-dasharray: 6 4;
 }
 
 .risk-line.take_profit {
@@ -1142,14 +1136,6 @@ td span {
 
 .risk-line.stop_loss {
   stroke: var(--data-down);
-}
-
-.risk-label.take_profit {
-  fill: var(--data-up);
-}
-
-.risk-label.stop_loss {
-  fill: var(--data-down);
 }
 
 .exec-marker.entry {
@@ -1173,12 +1159,19 @@ td span {
   stroke: var(--data-up);
 }
 
-.exec-label {
-  fill: var(--data-series-1);
+.exec-marker.action-marker.buy {
+  fill: var(--data-up);
+  stroke: var(--chart-bg);
+  stroke-width: 1.2;
+}
+
+.exec-marker.action-marker.sell {
+  fill: var(--data-down);
+  stroke: var(--chart-bg);
+  stroke-width: 1.2;
 }
 
 .exec-marker.selected { stroke-width: 3.5; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-blue) 65%, transparent)); }
-.exec-label.selected { fill: var(--accent-blue); font-weight: 700; }
 
 .axis-label,
 .price-label,

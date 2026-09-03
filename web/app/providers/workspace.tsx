@@ -36,7 +36,8 @@ import {
   type Trade,
   type User,
 } from "../../lib/api";
-import { normalizeWeights, type DiscoveryDraft } from "../../lib/discovery";
+import { displayLabel, normalizeWeights, type DiscoveryDraft } from "../../lib/discovery";
+import { effectiveStrategyParameters, type SavedCompositeStrategy } from "../../lib/backtest";
 import {
   DEFAULT_MARKET,
   DEFAULT_PANEL_TIMEFRAMES,
@@ -104,6 +105,7 @@ const MIN_REALTIME_CHARTS = 1;
 const MAX_REALTIME_CHARTS = 4;
 const referenceModeEnabled = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true";
 const DISCOVERY_SESSION_KEY = "crypto-lab-discovery-session";
+const SAVED_COMPOSITES_KEY = "crypto-lab-saved-composite-strategies";
 const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true" || referenceModeEnabled;
 const panelSeed = DEFAULT_PANEL_TIMEFRAMES.map((timeframe, index) => ({
   id: `chart-${index + 1}`,
@@ -122,6 +124,7 @@ type WorkspaceValue = {
   user: User | null;
   strategies: Strategy[];
   strategyDrafts: StrategyDraft[];
+  savedCompositeStrategies: SavedCompositeStrategy[];
   panels: Panel[];
   chartCount: number;
   setChartCount: (count: number) => void;
@@ -190,6 +193,7 @@ type WorkspaceValue = {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   runBacktest: (children?: StrategyExecution[], execution?: ExecutionSettings, timeframe?: string, range?: { from: string; to: string }, market?: MarketSelection, datasetVersion?: string) => Promise<boolean>;
+  saveCompositeStrategy: (draft: DiscoveryDraft) => void;
   startSearch: (draft: DiscoveryDraft) => Promise<void>;
   searchAction: (action: "pause" | "resume" | "cancel") => Promise<void>;
   selectDiscoverySession: (id: string) => Promise<void>;
@@ -229,6 +233,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [strategyDrafts, setStrategyDrafts] = useState<StrategyDraft[]>([]);
+  const [savedCompositeStrategies, setSavedCompositeStrategies] = useState<SavedCompositeStrategy[]>([]);
   const [panels, setPanels] = useState<Panel[]>(() => createPanels(requiredTimeframes, true, referenceModeEnabled));
   const [chartCount, setChartCountState] = useState(MAX_REALTIME_CHARTS);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -274,7 +279,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>("light");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("metrics");
-  const autoOpened = useRef<string | null>(null);
   const panelRequestIds = useRef([0, 0, 0, 0]);
   const panelsRef = useRef(panels);
   const selectedMarketRef = useRef(selectedMarket);
@@ -282,6 +286,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const dataModeRef = useRef<DataMode>(dataMode);
   const mockTickRef = useRef(0);
   const discoverySessionsRequest = useRef(0);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setSavedCompositeStrategies(readSavedCompositeStrategies());
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
     if (!user || !searchId) return;
@@ -376,9 +387,39 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return {
         ...child,
         strategy_version: child.strategy_version ?? definition?.version ?? "v1",
-        parameters: child.parameters ?? definition?.default_params ?? {},
+        parameters: child.parameters ?? (definition ? effectiveStrategyParameters(definition) : {}),
       };
     });
+  }
+
+  function saveCompositeStrategy(draft: DiscoveryDraft) {
+    const weights = normalizeWeights(draft.selectedStrategyIds, draft.weights);
+    const saved: SavedCompositeStrategy = {
+      id: `saved-composite-${Date.now()}`,
+      displayName: `${draft.policy === "weighted_vote" ? "Weighted Voting" : "Majority Vote"} · ${draft.selectedStrategyIds.map(displayLabel).join(" + ")}`,
+      children: draft.selectedStrategyIds.map((strategy_id) => {
+        const definition = strategies.find((strategy) => strategy.strategy_id === strategy_id);
+        return {
+          strategy_id,
+          strategy_version: definition?.version ?? "v1",
+          parameters: definition ? effectiveStrategyParameters(definition) : undefined,
+          weight: weights[strategy_id] ?? 0,
+        };
+      }),
+      policy: draft.policy,
+      threshold: 0.3,
+      createdAt: new Date().toISOString(),
+    };
+    setSavedCompositeStrategies((current) => {
+      const next = [saved, ...current];
+      try {
+        window.localStorage.setItem(SAVED_COMPOSITES_KEY, JSON.stringify(next));
+      } catch {
+        // Storage can be unavailable; the saved strategy remains available in this session.
+      }
+      return next;
+    });
+    report(`Saved composite strategy: ${saved.displayName}`);
   }
 
   function activateMockMode(market: MarketSelection = selectedMarketRef.current) {
@@ -665,10 +706,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           signalMarkers: overlays.signal_markers ?? [],
           executionMarkers: overlays.execution_markers ?? [],
         });
-        if (autoOpened.current !== id) {
-          autoOpened.current = id;
-          openInspector("metrics");
-        }
         void refreshStaticData();
       }
       return true;
@@ -1050,6 +1087,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     user,
     strategies,
     strategyDrafts,
+    savedCompositeStrategies,
     panels,
     chartCount,
     setChartCount(count) {
@@ -1097,7 +1135,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return loadPanel(index, {}, PANEL_BOOTSTRAP_CANDLE_LIMIT);
     },
     async openExperiment(id) {
-      autoOpened.current = null;
       setActiveExperimentId(id);
       setExperiment(null);
       setResult(null);
@@ -1186,6 +1223,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
+    saveCompositeStrategy,
     async startSearch(draft) {
       try {
         const weights = normalizeWeights(draft.selectedStrategyIds, draft.weights);
@@ -1231,7 +1269,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     async loadProvenance(id) {
       try {
         setProvenance(await api.provenance(id));
-        openInspector("provenance");
+        setInspectorTab("provenance");
       } catch (error) {
         report(messageFromError(error), "error");
       }
@@ -1274,6 +1312,34 @@ function readPersistedMarket(): MarketSelection | null {  try {
   } catch {
     return null;
   }
+}
+
+function readSavedCompositeStrategies(): SavedCompositeStrategy[] {
+  try {
+    if (typeof window === "undefined") return [];
+    const value: unknown = JSON.parse(window.localStorage.getItem(SAVED_COMPOSITES_KEY) ?? "null");
+    if (!Array.isArray(value)) return [];
+    return value.filter(isSavedCompositeStrategy);
+  } catch {
+    return [];
+  }
+}
+
+function isSavedCompositeStrategy(value: unknown): value is SavedCompositeStrategy {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<SavedCompositeStrategy>;
+  return typeof item.id === "string"
+    && typeof item.displayName === "string"
+    && typeof item.createdAt === "string"
+    && (item.policy === "weighted_vote" || item.policy === "majority_vote")
+    && typeof item.threshold === "number"
+    && Array.isArray(item.children)
+    && item.children.every((child) => (
+      !!child
+      && typeof child === "object"
+      && typeof child.strategy_id === "string"
+      && typeof child.weight === "number"
+    ));
 }
 
 function readPersistedDiscoverySession(ownerId: string): {

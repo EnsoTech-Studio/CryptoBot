@@ -1,6 +1,6 @@
-/* Formatting helpers shared by every workspace surface.
-   All timestamps render in UTC: research output must not shift with the
-   viewer's timezone, otherwise two people reading the same run disagree. */
+/* Formatting helpers shared by every workspace surface. */
+
+export const DISPLAY_TIME_ZONE = "Asia/Ho_Chi_Minh";
 
 export function formatNumber(value?: number | null): string {
   if (value == null || Number.isNaN(value)) return "0.00";

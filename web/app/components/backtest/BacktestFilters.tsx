@@ -1,6 +1,6 @@
 "use client";
 
-import { PAGE_SIZES, type BacktestDraft, type BacktestMode } from "../../../lib/backtest";
+import { PAGE_SIZES, type BacktestDraft, type BacktestMode, type SavedCompositeStrategy } from "../../../lib/backtest";
 import { marketKey } from "../../../lib/market";
 import type { MarketDataset, MarketPair, Strategy } from "../../../lib/api";
 import { Field, Select, TextInput } from "../ui/Foundation";
@@ -14,12 +14,9 @@ export function BacktestFilters({
   pairs,
   timeframes,
   strategies,
+  savedComposites,
   datasets,
   datasetLoadState,
-  canCreateDataset,
-  creatingDataset,
-  datasetActionError,
-  onCreateDataset,
   disabled,
   onChange,
 }: {
@@ -27,12 +24,9 @@ export function BacktestFilters({
   pairs: MarketPair[];
   timeframes: string[];
   strategies: Strategy[];
+  savedComposites: SavedCompositeStrategy[];
   datasets: MarketDataset[];
   datasetLoadState: "loading" | "ready" | "empty" | "error";
-  canCreateDataset: boolean;
-  creatingDataset: boolean;
-  datasetActionError: string;
-  onCreateDataset: () => void;
   disabled: boolean;
   onChange: (patch: Partial<BacktestDraft>) => void;
 }) {
@@ -71,54 +65,31 @@ export function BacktestFilters({
       </Field>
 
       <Field label="Dataset lịch sử">
-        <span className={styles.datasetControl}>
-          <Select
-            value={draft.datasetVersion}
-            disabled={disabled || datasetLoadState !== "ready"}
-            onChange={(event) => {
-              const dataset = datasets.find((item) => item.dataset_version === event.target.value);
-              onChange({
-                datasetVersion: event.target.value,
-                /* Selecting a snapshot also selects its legal date bounds.
-                   The user can still narrow the range with From/To fields. */
-                ...(dataset ? {
-                  rangeFrom: dataset.range_from.slice(0, 10),
-                  rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
-                } : {}),
-              });
-            }}
-          >
-            {datasets.length === 0 ? <option value="">
-              {datasetLoadState === "loading" ? "Đang tải dataset…" : datasetLoadState === "empty" ? "Không có dataset cho timeframe này" : "Không tải được dataset"}
-            </option> : null}
-            {datasets.map((dataset) => (
-              <option key={dataset.dataset_version} value={dataset.dataset_version}>
-                {dataset.range_from.slice(0, 10)} → {dataset.range_to.slice(0, 10)} · {dataset.candle_count.toLocaleString("en-US")} nến · r{dataset.revision_no}
-              </option>
-            ))}
-          </Select>
-          {datasets.length > 0 && draft.datasetVersion ? (
-            <small className={styles.datasetMeta} title={draft.datasetVersion}>
-              Snapshot bất biến · {draft.datasetVersion}
-            </small>
-          ) : null}
-          {canCreateDataset ? (
-            <button
-              type="button"
-              className={styles.datasetCreateButton}
-              disabled={disabled || creatingDataset || !draft.rangeFrom || !draft.rangeTo || draft.rangeFrom > draft.rangeTo}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onCreateDataset();
-              }}
-            >
-              <Icon name="refresh" />
-              {creatingDataset ? "Đang tạo snapshot…" : "Tạo snapshot từ khoảng ngày"}
-            </button>
-          ) : null}
-          {datasetActionError ? <small className={styles.datasetError}>{datasetActionError}</small> : null}
-        </span>
+        <Select
+          value={draft.datasetVersion}
+          disabled={disabled || datasetLoadState !== "ready"}
+          onChange={(event) => {
+            const dataset = datasets.find((item) => item.dataset_version === event.target.value);
+            onChange({
+              datasetVersion: event.target.value,
+              /* Selecting a snapshot also selects its legal date bounds.
+                 The user can still narrow the range with From/To fields. */
+              ...(dataset ? {
+                rangeFrom: dataset.range_from.slice(0, 10),
+                rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+              } : {}),
+            });
+          }}
+        >
+          {datasets.length === 0 ? <option value="">
+            {datasetLoadState === "loading" ? "Đang tải dataset…" : datasetLoadState === "empty" ? "Không có dataset cho timeframe này" : "Không tải được dataset"}
+          </option> : null}
+          {datasets.map((dataset) => (
+            <option key={dataset.dataset_version} value={dataset.dataset_version}>
+              {dataset.range_from.slice(0, 10)} → {dataset.range_to.slice(0, 10)} · {dataset.candle_count.toLocaleString("en-US")} nến · r{dataset.revision_no}
+            </option>
+          ))}
+        </Select>
       </Field>
 
       <DateField
@@ -162,10 +133,29 @@ export function BacktestFilters({
           </Select>
         </Field>
       ) : (
-        <Field label="Composite strategies" hint="Chọn từ 2 strategy; trọng số chia đều khi gửi.">
+        <Field label="Strategy kết hợp" hint="Chọn strategy đã lưu hoặc tự chọn từ registry.">
+          {savedComposites.length > 0 ? (
+            <Select
+              aria-label="Strategy kết hợp đã lưu"
+              value={draft.selectedCompositeId ?? ""}
+              disabled={disabled}
+              onChange={(event) => {
+                const selected = savedComposites.find((item) => item.id === event.target.value);
+                onChange({
+                  selectedCompositeId: event.target.value,
+                  ...(selected ? { selectedStrategyIds: selected.children.map((child) => child.strategy_id) } : {}),
+                });
+              }}
+            >
+              <option value="">Tự chọn strategy</option>
+              {savedComposites.map((composite) => (
+                <option key={composite.id} value={composite.id}>{composite.displayName}</option>
+              ))}
+            </Select>
+          ) : null}
           <details className={styles.strategyPicker}>
             <summary>
-              {draft.selectedStrategyIds.length} strategy đã chọn
+              {draft.selectedStrategyIds.length} strategy tự chọn
             </summary>
             <div className={styles.strategyChecks} aria-label="Strategy khả dụng trong registry">
               {strategies.map((strategy) => (
@@ -175,6 +165,7 @@ export function BacktestFilters({
                     checked={draft.selectedStrategyIds.includes(strategy.strategy_id)}
                     disabled={disabled}
                     onChange={(event) => onChange({
+                      selectedCompositeId: "",
                       selectedStrategyIds: event.target.checked
                         ? [...new Set([...draft.selectedStrategyIds, strategy.strategy_id])]
                         : draft.selectedStrategyIds.filter((id) => id !== strategy.strategy_id),

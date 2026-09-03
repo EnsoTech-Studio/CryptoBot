@@ -179,8 +179,14 @@ export function DiscoveryLeaderboard({
 
 function StrategyLink({ entry, onOpenExperiment }: { entry: LeaderboardEntry; onOpenExperiment: (id: string) => void }) {
   return (
-    <button type="button" className={styles.leaderStrategyButton} onClick={() => onOpenExperiment(entry.experiment_id)} aria-label={`Xem biểu đồ ${entry.strategy_id}`}>
-      <PartList parts={[shortLabel(entry.strategy_id)]} />
+    <button
+      type="button"
+      className={styles.leaderStrategyButton}
+      onClick={() => onOpenExperiment(entry.experiment_id)}
+      aria-label={`Xem biểu đồ ${entry.strategy_id}`}
+      title={entry.strategy_id}
+    >
+      <span className={styles.leaderStrategyName}>{shortLabel(entry.strategy_id)}</span>
     </button>
   );
 }

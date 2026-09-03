@@ -374,7 +374,16 @@
 
 .loopReturn > svg { width: 18px; height: 18px; }
 
-.leaderTable { width: 100%; border-collapse: collapse; }
+.leaderTable { width: 100%; table-layout: fixed; border-collapse: collapse; }
+
+.leaderTable th:first-child,
+.leaderTable td:first-child { width: 62px; }
+.leaderTable th:nth-child(2),
+.leaderTable td:nth-child(2) { width: 45%; min-width: 0; overflow: hidden; }
+.leaderTable th:nth-child(3),
+.leaderTable td:nth-child(3) { width: 100px; }
+.leaderTable th:nth-child(4),
+.leaderTable td:nth-child(4) { width: 112px; }
 
 .leaderTable th {
   border-bottom: 1px solid var(--line-1);
@@ -418,7 +427,21 @@
 .rankPlain { color: var(--ink-2); font-size: 13px; font-weight: var(--weight-semibold); }
 
 .partList { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-.leaderStrategyButton { min-height: auto; border: 0; background: transparent; padding: 0; color: inherit; text-align: left; }
+.leaderStrategyButton {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: auto;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leaderStrategyName { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leaderStrategyButton:hover em { filter: brightness(0.94); }
 .leaderStrategyButton:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 .partPlus { color: var(--ink-3); font-size: 12px; }

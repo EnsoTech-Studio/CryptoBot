@@ -287,17 +287,30 @@ def test_experiment_overlays_include_trade_execution_markers() -> None:
 
         def list_experiment_execution_markers(self, received_id):
             assert received_id == experiment_id
-            return [{
-                "sequence_no": 7,
-                "entry_time": datetime(2026, 1, 1, tzinfo=UTC),
-                "entry_price": 100.0,
-                "exit_time": datetime(2026, 1, 1, 0, 5, tzinfo=UTC),
-                "exit_price": 101.0,
-                "side": "LONG",
-                "exit_reason": "take_profit",
-                "sl_price": 98.0,
-                "tp_price": 104.0,
-            }]
+            return [
+                {
+                    "sequence_no": 7,
+                    "entry_time": datetime(2026, 1, 1, tzinfo=UTC),
+                    "entry_price": 100.0,
+                    "exit_time": datetime(2026, 1, 1, 0, 5, tzinfo=UTC),
+                    "exit_price": 101.0,
+                    "side": "LONG",
+                    "exit_reason": "take_profit",
+                    "sl_price": 98.0,
+                    "tp_price": 104.0,
+                },
+                {
+                    "sequence_no": 8,
+                    "entry_time": datetime(2026, 1, 1, 0, 10, tzinfo=UTC),
+                    "entry_price": 110.0,
+                    "exit_time": datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+                    "exit_price": 109.0,
+                    "side": "SHORT",
+                    "exit_reason": "stop_loss",
+                    "sl_price": 112.0,
+                    "tp_price": 106.0,
+                },
+            ]
 
     previous = app.state.store
     app.state.store = OverlayStore()
@@ -311,10 +324,14 @@ def test_experiment_overlays_include_trade_execution_markers() -> None:
 
     assert response.status_code == 200
     assert response.json()["execution_markers"] == [
-        {"sequence_no": 7, "t": "2026-01-01T00:00:00Z", "overlay_type": "long_entry", "price": 100.0},
+        {"sequence_no": 7, "t": "2026-01-01T00:00:00Z", "overlay_type": "long_entry", "price": 100.0, "action": "BUY"},
         {"sequence_no": 7, "t": "2026-01-01T00:00:00Z", "line_until": "2026-01-01T00:05:00Z", "overlay_type": "stop_loss", "price": 98.0},
         {"sequence_no": 7, "t": "2026-01-01T00:00:00Z", "line_until": "2026-01-01T00:05:00Z", "overlay_type": "take_profit", "price": 104.0},
-        {"sequence_no": 7, "t": "2026-01-01T00:05:00Z", "overlay_type": "exit", "price": 101.0, "exit_reason": "take_profit"},
+        {"sequence_no": 7, "t": "2026-01-01T00:05:00Z", "overlay_type": "exit", "price": 101.0, "action": "SELL", "exit_reason": "take_profit"},
+        {"sequence_no": 8, "t": "2026-01-01T00:10:00Z", "overlay_type": "short_entry", "price": 110.0, "action": "SELL"},
+        {"sequence_no": 8, "t": "2026-01-01T00:10:00Z", "line_until": "2026-01-01T00:15:00Z", "overlay_type": "stop_loss", "price": 112.0},
+        {"sequence_no": 8, "t": "2026-01-01T00:10:00Z", "line_until": "2026-01-01T00:15:00Z", "overlay_type": "take_profit", "price": 106.0},
+        {"sequence_no": 8, "t": "2026-01-01T00:15:00Z", "overlay_type": "exit", "price": 109.0, "action": "BUY", "exit_reason": "stop_loss"},
     ]
 
 

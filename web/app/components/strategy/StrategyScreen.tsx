@@ -8,7 +8,7 @@ import { SAMPLE_PROMPT, SAMPLE_URL, SAVE_FORM } from "../../../lib/strategy-auth
 import { strategyDraftReview } from "../../../lib/strategy-authoring-review";
 import { useWorkspace } from "../../providers/workspace";
 import { AuthoringInputs } from "./AuthoringInputs";
-import { DefinitionJson, ParsedSummary } from "./ParsedSummary";
+import { DefinitionJson } from "./ParsedSummary";
 import { RecentImports } from "./RecentImports";
 import { SaveLibraryPanel, ValidationPanel } from "./ValidationPanel";
 import styles from "./strategy.module.css";
@@ -31,6 +31,9 @@ export function StrategyScreen() {
   const review = strategyDraftReview(draft);
   const draftId = draft?.draft_id;
   const draftStatus = draft?.status;
+  const recentDrafts = draft
+    ? [draft, ...strategyDrafts.filter((item) => item.draft_id !== draft.draft_id)]
+    : strategyDrafts;
 
   useEffect(() => {
     const terminal = ["APPROVED", "REJECTED", "FAILED"].includes(draftStatus ?? "");
@@ -127,7 +130,6 @@ export function StrategyScreen() {
             />
           </div>
 
-          <ParsedSummary spec={draft?.strategy_spec ?? null} />
           <DefinitionJson spec={draft?.strategy_spec ?? null} />
 
           <div className={styles.railColumn}>
@@ -153,7 +155,7 @@ export function StrategyScreen() {
         </div>
 
         <RecentImports
-          drafts={strategyDrafts}
+          drafts={recentDrafts}
           referenceMode={dataMode === "mock"}
           onRun={(strategyId) => void backtestStrategy(strategyId)}
           onReview={(draftId) => void openReview(draftId)}

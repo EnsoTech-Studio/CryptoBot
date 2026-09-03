@@ -1,6 +1,5 @@
-/* Strategy Engine — matches ui-reference/strategy.jpg: four authoring columns
-   (input 360 / parsed 250 / JSON 400 / validation rail 330), with the recent
-   imports table spanning the first three beneath. */
+/* Strategy Engine — input, JSON definition and validation rail, with the
+   recent imports table spanning the first two columns beneath. */
 
 .screen { min-width: 0; margin: 0 var(--screen-right-overflow) 0 var(--screen-left-offset); padding-top: 32px; }
 
@@ -11,7 +10,7 @@
 .stack {
   display: grid;
   min-width: 0;
-  grid-template-columns: 370px 248px minmax(0, 1fr) 334px;
+  grid-template-columns: 370px minmax(0, 1fr) 334px;
   gap: 12px;
 }
 
@@ -35,16 +34,13 @@
   grid-template-rows: 388px auto;
   align-content: start;
   gap: 14px;
-  grid-column: 4;
+  grid-column: 3;
   grid-row: 1 / span 2;
 }
 
 .railColumn > section:nth-child(2) { height: 416px; overflow: hidden; }
 
-.parsedPanel { grid-column: 2; grid-row: 1; }
-.jsonPanel { grid-column: 3; grid-row: 1; }
-
-.parsedPanel > div { padding-top: 26px; }
+.jsonPanel { grid-column: 2; grid-row: 1; }
 
 /* --- column 1: prompt + URL ----------------------------------------------- */
 
@@ -115,52 +111,14 @@
 
 .extractButton > svg { width: 16px; height: 16px; }
 
-/* --- column 2: parsed summary --------------------------------------------- */
-
-.parsedList { display: grid; gap: 11px; }
-
-.parsedBlock {
-  display: grid;
-  gap: 7px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  padding: 15px 11px;
-}
-
-.parsedTitle {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
-  font-weight: var(--weight-semibold);
-}
-
-.parsedTitle > svg { width: 15px; height: 15px; }
-
-.parsedLines { display: grid; gap: 5px; margin: 0; padding: 0 0 0 14px; }
-
-.parsedLines > li {
-  color: var(--ink-2);
-  font-size: 11.5px;
-  line-height: var(--leading-snug);
-}
-
-.blockGreen { border-color: var(--tint-green-line); background: var(--tint-green-bg); }
-.blockGreen .parsedTitle { color: var(--tint-green-ink); }
-.blockRed { border-color: var(--tint-red-line); background: var(--tint-red-bg); }
-.blockRed .parsedTitle { color: var(--tint-red-ink); }
-.blockViolet { border-color: var(--tint-violet-line); background: var(--tint-violet-bg); }
-.blockViolet .parsedTitle { color: var(--tint-violet-ink); }
-.blockBrand { border-color: var(--tint-brand-line); background: var(--tint-brand-bg); }
-.blockBrand .parsedTitle { color: var(--tint-brand-ink); }
-
-/* --- column 3: JSON definition -------------------------------------------- */
+/* --- column 2: JSON definition -------------------------------------------- */
 
 .jsonBlock {
+  flex: 1;
   margin: 0;
-  max-height: none;
   min-height: 0;
-  overflow: hidden auto;
+  max-height: 100%;
+  overflow: auto;
   border: 1px solid var(--line-1);
   border-radius: 9px;
   background: var(--surface-2);
@@ -178,10 +136,9 @@
 
 .jsonPanel { height: 639px; min-height: 639px; overflow: hidden; }
 
-.jsonBlock { scrollbar-width: none; }
-.jsonBlock::-webkit-scrollbar { display: none; }
+.jsonPanel > div { min-height: 0; overflow: hidden; }
 
-.importsPanel { grid-column: 1 / span 3; grid-row: 2; height: 157px; overflow: hidden; }
+.importsPanel { grid-column: 1 / span 2; grid-row: 2; height: 300px; min-height: 0; overflow: hidden; }
 
 .jsonKey { color: var(--code-string); }
 .jsonString { color: var(--tint-brand-ink); }
@@ -204,7 +161,7 @@
 .copyButton:hover { border-color: var(--line-3); color: var(--ink-1); }
 .copyButton > svg { width: 14px; height: 14px; }
 
-/* --- column 4: validation + save ------------------------------------------ */
+/* --- column 3: validation + save ------------------------------------------ */
 
 .checkList { display: grid; gap: 11px; }
 
@@ -301,8 +258,8 @@
 /* --- recent imports table ------------------------------------------------- */
 
 .importsPanel { min-width: 0; }
-.importsPanel > div { padding: 8px 16px; }
-.importsWrap { min-width: 0; overflow-x: auto; }
+.importsPanel > div { min-height: 0; overflow: hidden; padding: 8px 16px; }
+.importsWrap { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
 
 .importsTable { width: 100%; border-collapse: collapse; }
 
@@ -404,30 +361,31 @@
 /* --- responsive ----------------------------------------------------------- */
 
 @media (max-width: 1560px) {
-  .stack { grid-template-columns: 320px 236px minmax(0, 1fr) 300px; }
+  .stack { grid-template-columns: 320px minmax(0, 1fr) 300px; }
 }
 
 @media (max-width: 1360px) {
-  .stack { grid-template-columns: 320px minmax(0, 1fr) 300px; }
-  .parsedPanel { grid-column: 1; grid-row: 2; }
-  .importsPanel { grid-row: 3; }
+  .stack { grid-template-columns: 320px minmax(0, 1fr); }
+  .railColumn { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; }
+  .jsonPanel { grid-column: 2; grid-row: 1; }
+  .importsPanel { grid-column: 1 / -1; grid-row: 3; }
 }
 
 @media (max-width: 1100px) {
   .stack { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .inputColumn, .parsedPanel, .jsonPanel, .importsPanel { grid-column: auto; grid-row: auto; }
+  .inputColumn, .jsonPanel, .importsPanel { grid-column: auto; grid-row: auto; }
   .inputColumn { grid-template-rows: none; gap: 14px; }
   .railColumn { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .railColumn { grid-template-rows: none; }
-  .railColumn > section:nth-child(2) { height: auto; overflow: visible; }
+  .railColumn > section:nth-child(2) { height: 416px; overflow: hidden; }
   .importsPanel { grid-column: 1 / -1; margin-top: 0; }
-  .importsPanel { height: auto; overflow: visible; }
+  .importsPanel { height: 300px; overflow: hidden; }
 }
 
 @media (max-width: 760px) {
   .screen { margin: 0; }
   .stack { grid-template-columns: minmax(0, 1fr); }
-  .inputColumn, .parsedPanel, .jsonPanel, .railColumn, .importsPanel { grid-column: 1; grid-row: auto; }
+  .inputColumn, .jsonPanel, .railColumn, .importsPanel { grid-column: 1; grid-row: auto; }
   .inputColumn { grid-template-rows: none; gap: 14px; }
   .jsonPanel { min-height: 0; }
   .importsPanel { margin-top: 0; }
