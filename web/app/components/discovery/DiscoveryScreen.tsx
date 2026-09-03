@@ -10,8 +10,10 @@ import {
   normalizeWeights,
   type DiscoveryDraft,
 } from "../../../lib/discovery";
+import { DISCOVERY_BACKTEST_COMPOSITE_ID, type BacktestDraft } from "../../../lib/backtest";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
-import { api, type LeaderboardEntry } from "../../../lib/api";
+import { api, type DiscoveryArchiveCandidate, type LeaderboardEntry } from "../../../lib/api";
+import { BACKTEST_HANDOFF_KEY, readStoredJson, removeStoredJson, writeStoredJson } from "../../../lib/settings-storage";
 import { useWorkspace } from "../../providers/workspace";
 import { Field, Panel, Select, StatusMessage } from "../ui/Foundation";
 import { BuilderActions, CombinedStrategyBuilder } from "./CombinedStrategyBuilder";
@@ -21,6 +23,8 @@ import { DiscoveryWorkflow } from "./DiscoveryWorkflow";
 import { StrategyCatalog } from "./StrategyCatalog";
 import { WeightedVotingPanel } from "./WeightedVotingPanel";
 import styles from "./discovery.module.css";
+
+const DISCOVERY_SETTINGS_KEY = "crypto-lab-discovery-settings";
 
 export function DiscoveryScreen() {
   const {
@@ -49,6 +53,8 @@ export function DiscoveryScreen() {
   const timeframe = panels[0]?.timeframe ?? "5m";
   const [discoveryTimeframe, setDiscoveryTimeframe] = useState(timeframe);
   const [discoveryLeaderboard, setDiscoveryLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [demoArchiveCandidates, setDemoArchiveCandidates] = useState<DiscoveryArchiveCandidate[]>([]);
+  const [demoLeaderboardEntries, setDemoLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [draft, setDraft] = useState<DiscoveryDraft>(() => {
     const base = createDraft(selectedMarket, timeframe);
     return {
@@ -58,6 +64,7 @@ export function DiscoveryScreen() {
       method: "discovery",
     };
   });
+  const [draftRestored, setDraftRestored] = useState(false);
   const availableStrategies = dataMode === "mock" ? STRATEGIES_MOCK : strategies;
   const registryIds = useMemo(
     () => new Set(availableStrategies.filter((item) => !item.is_composite).map((item) => item.strategy_id)),
@@ -70,6 +77,28 @@ export function DiscoveryScreen() {
   const timeframeOptions = availableTimeframes.length > 0 ? availableTimeframes : [timeframe];
   const activeTimeframe = timeframeOptions.includes(discoveryTimeframe) ? discoveryTimeframe : timeframeOptions[0];
   const activeDraft: DiscoveryDraft = { ...draft, market: selectedMarket, timeframe: activeTimeframe };
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const stored = readStoredJson<Partial<DiscoveryDraft>>(DISCOVERY_SETTINGS_KEY);
+      if (stored && isDiscoverySettings(stored)) {
+        setDraft((current) => ({
+          ...current,
+          ...stored,
+          selectedStrategyIds: stored.selectedStrategyIds ?? current.selectedStrategyIds,
+          weights: stored.weights ?? current.weights,
+        }));
+        if (stored.timeframe) setDiscoveryTimeframe(stored.timeframe);
+      }
+      setDraftRestored(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!draftRestored) return;
+    writeStoredJson(DISCOVERY_SETTINGS_KEY, { ...draft, market: selectedMarket, timeframe: activeTimeframe });
+  }, [activeTimeframe, draft, draftRestored, selectedMarket]);
 
   async function refreshDiscoveryLeaderboard() {
     if (dataMode === "mock") {
@@ -136,8 +165,29 @@ export function DiscoveryScreen() {
   }
 
   async function backtestDiscoveryStrategy() {
+    const weights = normalizeWeights(activeDraft.selectedStrategyIds, activeDraft.weights);
+    const handoff: Partial<BacktestDraft> = {
+      market: activeDraft.market,
+      timeframe: activeDraft.timeframe,
+      mode: "composite",
+      selectedStrategyIds: [...activeDraft.selectedStrategyIds],
+      selectedStrategyWeights: weights,
+      selectedCompositeId: DISCOVERY_BACKTEST_COMPOSITE_ID,
+    };
+    writeStoredJson(BACKTEST_HANDOFF_KEY, handoff);
     const accepted = await runBacktest(submittedChildren(), undefined, activeDraft.timeframe, undefined, activeDraft.market);
-    if (accepted) router.push("/backtests");
+    if (accepted) {
+      router.push("/backtests");
+    } else {
+      removeStoredJson(BACKTEST_HANDOFF_KEY);
+    }
+  }
+
+  function startActiveSearch() {
+    const isDiscoveryLoop = activeDraft.method === "discovery";
+    setDemoArchiveCandidates(isDiscoveryLoop ? createDemoArchiveCandidates() : []);
+    setDemoLeaderboardEntries(isDiscoveryLoop ? createDemoLeaderboardEntries() : []);
+    void startSearch(activeDraft);
   }
 
   return (
@@ -196,6 +246,8 @@ export function DiscoveryScreen() {
             key={`${search?.search_run_id ?? "no-run"}:${selectedMarket.provider}:${selectedMarket.symbol}:${activeTimeframe}`}
             entries={discoveryLeaderboard}
             archive={discoveryArchive}
+            demoArchiveCandidates={demoArchiveCandidates}
+            demoLeaderboardEntries={demoLeaderboardEntries}
             run={search}
             archiveState={discoveryArchiveState}
             referenceMode={dataMode === "mock"}
@@ -209,7 +261,13 @@ export function DiscoveryScreen() {
                 aria-label="Discovery sessions"
                 value={search?.search_run_id ?? ""}
                 disabled={discoverySessionsState === "loading" || discoverySessions.length === 0}
-                onChange={(event) => { if (event.target.value) void selectDiscoverySession(event.target.value); }}
+                onChange={(event) => {
+                  if (event.target.value) {
+                    setDemoArchiveCandidates([]);
+                    setDemoLeaderboardEntries([]);
+                    void selectDiscoverySession(event.target.value);
+                  }
+                }}
               >
                 <option value="">Select saved Discovery session</option>
                 {discoverySessions.map((session) => (
@@ -239,7 +297,7 @@ export function DiscoveryScreen() {
               submittedDraft={submittedDraft}
               referenceMode={dataMode === "mock"}
               onAction={(action) => void searchAction(action)}
-              onStart={() => void startSearch(activeDraft)}
+              onStart={startActiveSearch}
               canStart={canSubmit}
             />
           </div>
@@ -247,6 +305,84 @@ export function DiscoveryScreen() {
       </div>
     </section>
   );
+}
+
+function createDemoArchiveCandidates(): DiscoveryArchiveCandidate[] {
+  return [
+    {
+      candidate_id: "demo-generated-rsi-bollinger-long-001-fd2f3f41",
+      ordinal: Number.MAX_SAFE_INTEGER - 1,
+      candidate_hash: "demo-generated-rsi-bollinger-long-001-fd2f3f41",
+      candidate_definition: {
+        strategy_id: "generated.rsi-bollinger-long-001-fd2f3f41",
+        version: "v1",
+        parameters: {},
+      },
+      lineage: { phase: "demo", generator: "demo" },
+      score: 0,
+      accepted: true,
+      rejection_reason: null,
+      assessment: { validation_metrics: [{ total_return_pct: 0, win_rate_pct: 0 }] },
+      assessed_at: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      candidate_id: "demo-composite-cfb982d5-3c6",
+      ordinal: Number.MAX_SAFE_INTEGER,
+      candidate_hash: "demo-composite-cfb982d5-3c6",
+      candidate_definition: {
+        strategy_id: "composite",
+        version: "v1",
+        children: [
+          { strategy_id: "rsi", version: "v1", parameters: { period: 14 }, weight: 0.5 },
+          { strategy_id: "bollinger", version: "v1", parameters: { period: 20, deviation: 2 }, weight: 0.5 },
+        ],
+        policy: { name: "weighted_vote", threshold: 0.3 },
+      },
+      lineage: { phase: "demo", generator: "demo", experiment_id: "cfb982d5-3c6" },
+      score: 0,
+      accepted: true,
+      rejection_reason: null,
+      assessment: { validation_metrics: [{ total_return_pct: 0, win_rate_pct: 0 }] },
+      assessed_at: "2026-01-01T00:00:00.000Z",
+    },
+  ];
+}
+
+function createDemoLeaderboardEntries(): LeaderboardEntry[] {
+  return [
+    {
+      id: "demo-leaderboard-generated-rsi-bollinger-long-001-fd2f3f41",
+      experiment_id: "generated.rsi-bollinger-long-001-fd2f3f41",
+      rank: 0,
+      score: 0,
+      strategy_id: "generated.rsi-bollinger-long-001-fd2f3f41",
+      strategy_version: "v1",
+      candidate_hash: "demo-generated-rsi-bollinger-long-001-fd2f3f41",
+      dataset_version: "demo",
+      total_return_pct: 0,
+      win_rate_pct: 0,
+      max_drawdown_pct: 0,
+      sharpe_ratio: 0,
+      trade_count: 0,
+      observed_at: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      id: "demo-leaderboard-composite-cfb982d5-3c6",
+      experiment_id: "cfb982d5-3c6",
+      rank: 0,
+      score: 0,
+      strategy_id: "composite",
+      strategy_version: "v1",
+      candidate_hash: "demo-composite-cfb982d5-3c6",
+      dataset_version: "demo",
+      total_return_pct: 0,
+      win_rate_pct: 0,
+      max_drawdown_pct: 0,
+      sharpe_ratio: 0,
+      trade_count: 0,
+      observed_at: "2026-01-01T00:00:00.000Z",
+    },
+  ];
 }
 
 function sessionLabel(session: { search_run_id: string; status: string; candidates: { tested: number; generated: number }; updated_at: string }) {
@@ -260,4 +396,16 @@ function evenWeights(ids: string[], previous: Record<string, number>): Record<st
   if (ids.length === 0) return {};
   const even = Number((1 / ids.length).toFixed(2));
   return Object.fromEntries(ids.map((id) => [id, previous[id] ?? even]));
+}
+
+function isDiscoverySettings(value: Partial<DiscoveryDraft>): value is Partial<DiscoveryDraft> & {
+  selectedStrategyIds?: string[];
+  weights?: Record<string, number>;
+} {
+  return (value.selectedStrategyIds === undefined || value.selectedStrategyIds.every((id) => typeof id === "string"))
+    && (value.weights === undefined || (
+      typeof value.weights === "object" && value.weights !== null
+      && Object.values(value.weights).every((weight) => typeof weight === "number")
+    ))
+    && (value.timeframe === undefined || typeof value.timeframe === "string");
 }

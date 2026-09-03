@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { LEADERBOARD_MOCK, type MockLeaderRow } from "../../../lib/discovery-mock";
 import { shortLabel } from "../../../lib/discovery";
-import type { DiscoveryArchive, LeaderboardEntry, SearchRun } from "../../../lib/api";
+import type { DiscoveryArchive, DiscoveryArchiveCandidate, LeaderboardEntry, SearchRun } from "../../../lib/api";
 import { Button, Panel } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import { Pagination } from "../ui/Pagination";
@@ -21,6 +21,8 @@ const LEADERBOARD_PAGE_SIZE = 5;
 export function DiscoveryLeaderboard({
   entries,
   archive,
+  demoArchiveCandidates,
+  demoLeaderboardEntries,
   run,
   archiveState,
   referenceMode,
@@ -30,6 +32,8 @@ export function DiscoveryLeaderboard({
 }: {
   entries: LeaderboardEntry[];
   archive: DiscoveryArchive | null;
+  demoArchiveCandidates: DiscoveryArchiveCandidate[];
+  demoLeaderboardEntries?: LeaderboardEntry[];
   run: SearchRun | null;
   archiveState: "idle" | "loading" | "ready" | "unavailable";
   referenceMode: boolean;
@@ -39,24 +43,28 @@ export function DiscoveryLeaderboard({
 }) {
   const [leaderboardPage, setLeaderboardPage] = useState(1);
   const [archivePage, setArchivePage] = useState(1);
-  const archiveRows = archive
-    ? [...archive.candidates]
-        .sort((left, right) => (right.score ?? -Infinity) - (left.score ?? -Infinity))
-    : [];
-  const discoveryRun = run?.generator_id === "discovery";
+  const archiveRows = [
+    ...(archive ? [...archive.candidates].sort((left, right) => (validationReturn(right.assessment) ?? -Infinity) - (validationReturn(left.assessment) ?? -Infinity)) : []),
+    ...demoArchiveCandidates,
+  ];
+  const leaderboardRows = [
+    ...entries.map((entry) => ({ entry, demo: false })),
+    ...(demoLeaderboardEntries ?? []).map((entry) => ({ entry, demo: true })),
+  ];
+  const discoveryRun = run?.generator_id === "discovery" || demoArchiveCandidates.length > 0;
   const live = !discoveryRun && entries.length > 0;
-  const hasLiveLeaderboard = entries.length > 0;
+  const hasLiveLeaderboard = leaderboardRows.length > 0;
   const showMock = referenceMode && !discoveryRun && !live;
   const archiveTotalPages = Math.max(1, Math.ceil(archiveRows.length / LEADERBOARD_PAGE_SIZE));
   const currentArchivePage = Math.min(archivePage, archiveTotalPages);
   const archiveStart = (currentArchivePage - 1) * LEADERBOARD_PAGE_SIZE;
   const visibleArchiveRows = archiveRows.slice(archiveStart, archiveStart + LEADERBOARD_PAGE_SIZE);
-  const leaderboardCount = showMock ? LEADERBOARD_MOCK.length : entries.length;
+  const leaderboardCount = showMock ? LEADERBOARD_MOCK.length : leaderboardRows.length;
   const leaderboardTotalPages = Math.max(1, Math.ceil(leaderboardCount / LEADERBOARD_PAGE_SIZE));
   const currentLeaderboardPage = Math.min(leaderboardPage, leaderboardTotalPages);
   const leaderboardStart = (currentLeaderboardPage - 1) * LEADERBOARD_PAGE_SIZE;
   const visibleMockRows = LEADERBOARD_MOCK.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE);
-  const visibleLiveRows = entries.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE);
+  const visibleLiveRows = leaderboardRows.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE);
   const archiveMessage = archiveState === "unavailable"
     ? "Không tải được Discovery archive."
     : archiveState === "loading"
@@ -78,7 +86,7 @@ export function DiscoveryLeaderboard({
           <tr>
             <th>Rank</th>
             <th>Strategy</th>
-            <th>{showMock || live ? (showMock ? "Profit (USDT)" : "Return (%)") : "Score"}</th>
+            <th>{showMock || live ? (showMock ? "Profit (USDT)" : "Return (%)") : "Return (%)"}</th>
             <th>{discoveryRun ? "State / Winrate" : "Winrate"}</th>
           </tr>
         </thead>
@@ -89,8 +97,8 @@ export function DiscoveryLeaderboard({
                   <tr key={candidate.candidate_id}>
                     <RankCell rank={archiveStart + index + 1} />
                     <td><PartList parts={candidateParts(candidate.candidate_definition)} /></td>
-                    <td className={`${styles.profitCell} ${(candidate.score ?? 0) < 0 ? styles.profitNegative : ""}`}>
-                      {candidate.score === null ? "—" : `${candidate.score >= 0 ? "+" : ""}${candidate.score.toFixed(4)}`}
+                    <td className={`${styles.profitCell} ${(validationReturn(candidate.assessment) ?? 0) < 0 ? styles.profitNegative : ""}`}>
+                      {formatPercent(validationReturn(candidate.assessment))}
                     </td>
                     <td className={styles.winrateCell}>
                       <span>{candidateState(candidate.accepted, candidate.lineage)}</span>
@@ -100,11 +108,11 @@ export function DiscoveryLeaderboard({
                 ))
               : <tr><td className={styles.leaderEmpty} colSpan={4}>{archiveMessage}</td></tr>
             : live
-              ? visibleLiveRows.map((entry) => (
+              ? visibleLiveRows.map(({ entry, demo }, index) => (
                   <tr key={entry.id}>
-                    <RankCell rank={entry.rank} />
+                    <RankCell rank={leaderboardStart + index + 1} />
                     <td>
-                      <StrategyLink entry={entry} onOpenExperiment={onOpenExperiment} />
+                      <StrategyLink entry={entry} interactive={!demo} onOpenExperiment={onOpenExperiment} />
                     </td>
                     <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
                       {entry.total_return_pct >= 0 ? "+" : ""}
@@ -149,10 +157,10 @@ export function DiscoveryLeaderboard({
             </tr>
           </thead>
           <tbody>
-            {entries.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE).map((entry) => (
+            {leaderboardRows.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE).map(({ entry, demo }, index) => (
               <tr key={entry.id}>
-                <RankCell rank={entry.rank} />
-                <td><StrategyLink entry={entry} onOpenExperiment={onOpenExperiment} /></td>
+                <RankCell rank={leaderboardStart + index + 1} />
+                <td><StrategyLink entry={entry} interactive={!demo} onOpenExperiment={onOpenExperiment} /></td>
                 <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
                   {entry.total_return_pct >= 0 ? "+" : ""}
                   {entry.total_return_pct.toFixed(2)}%
@@ -163,7 +171,7 @@ export function DiscoveryLeaderboard({
           </tbody>
         </table>
         <div className={styles.paginationFoot}>
-          <span>{leaderboardStart + 1}–{Math.min(leaderboardStart + LEADERBOARD_PAGE_SIZE, entries.length)} của {entries.length} strategies</span>
+          <span>{leaderboardStart + 1}–{Math.min(leaderboardStart + LEADERBOARD_PAGE_SIZE, leaderboardRows.length)} của {leaderboardRows.length} strategies</span>
           <Pagination page={currentLeaderboardPage} totalPages={leaderboardTotalPages} onPage={setLeaderboardPage} ariaLabel="Phân trang leaderboard" />
         </div>
         <div className={styles.runActions}>
@@ -177,16 +185,20 @@ export function DiscoveryLeaderboard({
   );
 }
 
-function StrategyLink({ entry, onOpenExperiment }: { entry: LeaderboardEntry; onOpenExperiment: (id: string) => void }) {
+function StrategyLink({ entry, interactive = true, onOpenExperiment }: { entry: LeaderboardEntry; interactive?: boolean; onOpenExperiment: (id: string) => void }) {
+  const content = <span className={styles.leaderStrategyName}>{shortLabel(entry.strategy_id)}</span>;
+  if (!interactive) {
+    return <span className={styles.leaderStrategyButton} title={`${entry.strategy_id} · experiment ${entry.experiment_id}`}>{content}</span>;
+  }
   return (
     <button
       type="button"
       className={styles.leaderStrategyButton}
       onClick={() => onOpenExperiment(entry.experiment_id)}
       aria-label={`Xem biểu đồ ${entry.strategy_id}`}
-      title={entry.strategy_id}
+      title={`${entry.strategy_id} · experiment ${entry.experiment_id}`}
     >
-      <span className={styles.leaderStrategyName}>{shortLabel(entry.strategy_id)}</span>
+      {content}
     </button>
   );
 }
@@ -208,15 +220,34 @@ function candidateParts(definition: Record<string, unknown>): string[] {
 }
 
 function validationWinRate(assessment: Record<string, unknown> | null): string {
-  const metrics = assessment?.validation_metrics;
-  if (!Array.isArray(metrics) || metrics.length === 0) return "Winrate —";
-  const values = metrics
+  const value = validationMetricAverage(assessment, "win_rate_pct");
+  return value === null ? "Winrate —" : `Winrate ${value.toFixed(2)}%`;
+}
+
+function validationReturn(assessment: Record<string, unknown> | null): number | null {
+  return validationMetricAverage(assessment, "total_return_pct");
+}
+
+function validationMetricAverage(assessment: Record<string, unknown> | null, key: string): number | null {
+  const values = metricValues(assessment?.validation_metrics, key);
+  if (values.length > 0) return values.reduce((sum, value) => sum + value, 0) / values.length;
+  const trainValue = metricValues(assessment?.train_metrics, key);
+  if (trainValue.length > 0) return trainValue[0] ?? null;
+  const directValue = Number(assessment?.[key]);
+  return Number.isFinite(directValue) ? directValue : null;
+}
+
+function metricValues(source: unknown, key: string): number[] {
+  if (!Array.isArray(source)) return [];
+  return source
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-    .map((item) => Number(item.win_rate_pct))
+    .map((item) => Number(item[key]))
     .filter((value) => Number.isFinite(value));
-  if (values.length === 0) return "Winrate —";
-  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  return `Winrate ${average.toFixed(2)}%`;
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
 function MockRow({ row }: { row: MockLeaderRow }) {

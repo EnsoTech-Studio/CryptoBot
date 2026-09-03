@@ -3,6 +3,9 @@ import type { ExecutionMarker, ExecutionSettings, MarketDataset, Strategy, Strat
 
 export type BacktestMode = "single" | "composite";
 
+/* Temporary option used when Discovery opens Backtest with an unsaved combo. */
+export const DISCOVERY_BACKTEST_COMPOSITE_ID = "discovery-backtest-composite";
+
 export type SavedCompositeStrategy = {
   id: string;
   displayName: string;
@@ -21,6 +24,7 @@ export type BacktestDraft = {
   timeframe: string;
   mode: BacktestMode;
   selectedStrategyIds: string[];
+  selectedStrategyWeights?: Record<string, number>;
   selectedCompositeId?: string;
   datasetVersion: string;
   rangeFrom: string;
@@ -82,6 +86,7 @@ export function buildBacktestChildren(
   singleStrategyId: string,
   selectedStrategyIds: string[],
   strategies: Strategy[],
+  selectedStrategyWeights?: Record<string, number>,
 ): StrategyExecution[] {
   const ids = mode === "single" ? [singleStrategyId] : selectedStrategyIds;
   const valid = ids.filter((id, index) => id && ids.indexOf(id) === index && strategies.some((strategy) => strategy.strategy_id === id));
@@ -92,7 +97,7 @@ export function buildBacktestChildren(
       strategy_id: strategyId,
       strategy_version: definition?.version ?? "v1",
       parameters: definition ? effectiveStrategyParameters(definition) : {},
-      weight: mode === "single" ? 1 : Number(weight.toFixed(6)),
+      weight: mode === "single" ? 1 : Number((selectedStrategyWeights?.[strategyId] ?? weight).toFixed(6)),
     };
   });
 }

@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { messageFromError } from "../../lib/format";
+import { readStoredJson, writeStoredJson } from "../../lib/settings-storage";
 import {
   api,
   wsURL,
@@ -106,6 +107,7 @@ const MAX_REALTIME_CHARTS = 4;
 const referenceModeEnabled = process.env.NEXT_PUBLIC_UI_REFERENCE_MODE === "true";
 const DISCOVERY_SESSION_KEY = "crypto-lab-discovery-session";
 const SAVED_COMPOSITES_KEY = "crypto-lab-saved-composite-strategies";
+const REALTIME_SETTINGS_KEY = "crypto-lab-realtime-settings";
 const marketMockEnabled = process.env.NEXT_PUBLIC_ENABLE_MARKET_MOCK === "true" || referenceModeEnabled;
 const panelSeed = DEFAULT_PANEL_TIMEFRAMES.map((timeframe, index) => ({
   id: `chart-${index + 1}`,
@@ -119,6 +121,14 @@ const compositeChildren = [
   { strategy_id: "rsi", weight: 0.33 },
   { strategy_id: "support_resistance", weight: 0.33 },
 ];
+
+type PersistedRealtimeSettings = {
+  selectedMarket?: MarketSelection;
+  realtimeEnabled?: boolean;
+  chartCount?: number;
+  focusIndex?: number;
+  panels?: Array<{ timeframe?: string; strategy?: string }>;
+};
 
 type WorkspaceValue = {
   user: User | null;
@@ -248,6 +258,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     referenceModeEnabled ? REFERENCE_MARKET : DEFAULT_MARKET
   ));
   const [realtimeEnabled, setRealtimeEnabledState] = useState(true);
+  const [realtimeSettingsRestored, setRealtimeSettingsRestored] = useState(false);
   const [recentMarketEvents, setRecentMarketEvents] = useState<RecentMarketEvent[]>([]);
   const [recentTicks, setRecentTicks] = useState<DisplayTick[]>(() => referenceModeEnabled ? createMockTicks(REFERENCE_MARKET.symbol) : []);
   const [lastFrameAt, setLastFrameAt] = useState<string | undefined>(() => referenceModeEnabled ? "2025-04-29T10:45:38.123Z" : undefined);
@@ -292,6 +303,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setSavedCompositeStrategies(readSavedCompositeStrategies());
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const stored = readStoredJson<PersistedRealtimeSettings>(REALTIME_SETTINGS_KEY);
+    if (stored?.selectedMarket && isMarketSelection(stored.selectedMarket)) {
+      setSelectedMarket({
+        provider: stored.selectedMarket.provider,
+        symbol: stored.selectedMarket.symbol.toUpperCase(),
+      });
+      writeStoredJson("crypto-lab-market", stored.selectedMarket);
+    }
+    if (typeof stored?.realtimeEnabled === "boolean") setRealtimeEnabledState(stored.realtimeEnabled);
+    if (typeof stored?.chartCount === "number" && Number.isFinite(stored.chartCount)) {
+      setChartCountState(Math.max(MIN_REALTIME_CHARTS, Math.min(MAX_REALTIME_CHARTS, Math.round(stored.chartCount))));
+    }
+    if (Array.isArray(stored?.panels)) {
+      setPanels((current) => current.map((panel, index) => {
+        const preference = stored.panels?.[index];
+        return preference ? {
+          ...panel,
+          ...(typeof preference.timeframe === "string" ? { timeframe: preference.timeframe } : {}),
+          ...(typeof preference.strategy === "string" ? { strategy: preference.strategy } : {}),
+        } : panel;
+      }));
+    }
+    if (typeof stored?.focusIndex === "number" && Number.isFinite(stored.focusIndex)) {
+      setFocusIndex(Math.max(0, Math.min(MAX_REALTIME_CHARTS - 1, Math.round(stored.focusIndex))));
+    }
+    setRealtimeSettingsRestored(true);
   }, []);
 
   useEffect(() => {
@@ -754,11 +794,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const marketSignature = marketKey(selectedMarket);
   const timeframeSignature = availableTimeframes.join("|");
+  const panelSettingsSignature = panels.map((panel) => `${panel.timeframe}:${panel.strategy}`).join("|");
   useEffect(() => {
+    if (!realtimeSettingsRestored) return;
+    writeStoredJson(REALTIME_SETTINGS_KEY, {
+      selectedMarket,
+      realtimeEnabled,
+      chartCount,
+      focusIndex,
+      panels: panels.map((panel) => ({ timeframe: panel.timeframe, strategy: panel.strategy })),
+    });
+    // panelSettingsSignature prevents market ticks from rewriting preferences.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartCount, focusIndex, panelSettingsSignature, realtimeEnabled, realtimeSettingsRestored, selectedMarket]);
+
+  useEffect(() => {
+    if (!realtimeSettingsRestored) return;
     const resetFrame = window.requestAnimationFrame(() => {
-      const nextPanels = createPanels(availableTimeframes, realtimeEnabled, dataModeRef.current === "mock");
+      const configuredPanels = panelsRef.current;
+      const nextPanels = createPanels(availableTimeframes, realtimeEnabled, dataModeRef.current === "mock").map((panel, index) => {
+        const configured = configuredPanels[index];
+        return configured ? {
+          ...panel,
+          timeframe: availableTimeframes.includes(configured.timeframe) ? configured.timeframe : panel.timeframe,
+          strategy: configured.strategy,
+        } : panel;
+      });
       setPanels(nextPanels);
-      setFocusIndex(0);
+      setFocusIndex((current) => Math.min(current, nextPanels.length - 1));
       setRecentMarketEvents([]);
       const mockMode = dataModeRef.current === "mock";
       setRecentTicks(mockMode ? createMockTicks(selectedMarket.symbol) : []);
@@ -783,7 +846,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => window.cancelAnimationFrame(resetFrame);
     // Pair or supported timeframe changes require a clean, guarded reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marketSignature, timeframeSignature, dataMode]);
+  }, [dataMode, marketSignature, realtimeSettingsRestored, timeframeSignature]);
 
   const currentPrimaryTimeframe = panels[0]?.timeframe;
   const primaryTimeframe = currentPrimaryTimeframe && availableTimeframes.includes(currentPrimaryTimeframe)
@@ -1312,6 +1375,13 @@ function readPersistedMarket(): MarketSelection | null {  try {
   } catch {
     return null;
   }
+}
+
+function isMarketSelection(value: unknown): value is MarketSelection {
+  return !!value
+    && typeof value === "object"
+    && typeof (value as Partial<MarketSelection>).provider === "string"
+    && typeof (value as Partial<MarketSelection>).symbol === "string";
 }
 
 function readSavedCompositeStrategies(): SavedCompositeStrategy[] {

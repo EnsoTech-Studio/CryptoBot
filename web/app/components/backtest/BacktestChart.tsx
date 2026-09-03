@@ -67,7 +67,9 @@ export function BacktestChart({
   const windowFrom = windowCandles[0]?.open_time;
   const windowTo = windowCandles.at(-1)?.open_time;
   const windowClose = windowCandles.at(-1)?.close_time;
-  const windowExecutionMarkers = shownExecutionMarkers.filter((marker) => isWithinWindow(marker.t, windowFrom, windowClose));
+  const windowExecutionMarkers = shownExecutionMarkers
+    .filter((marker) => isWithinWindow(marker.t, windowFrom, windowClose))
+    .filter((marker) => marker.overlay_type !== "stop_loss" && marker.overlay_type !== "take_profit");
   const last = windowCandles.at(-1)?.close ?? 0;
   const windowCount = windowCandles.length;
   const ma20 = lastSeriesValue(shownSeries[0]) ?? last;

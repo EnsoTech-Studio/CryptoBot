@@ -1,6 +1,6 @@
 "use client";
 
-import { PAGE_SIZES, type BacktestDraft, type BacktestMode, type SavedCompositeStrategy } from "../../../lib/backtest";
+import { DISCOVERY_BACKTEST_COMPOSITE_ID, PAGE_SIZES, type BacktestDraft, type BacktestMode, type SavedCompositeStrategy } from "../../../lib/backtest";
 import { marketKey } from "../../../lib/market";
 import type { MarketDataset, MarketPair, Strategy } from "../../../lib/api";
 import { Field, Select, TextInput } from "../ui/Foundation";
@@ -33,6 +33,8 @@ export function BacktestFilters({
   const pairOptions = pairs.length > 0
     ? dedupePairSymbols(pairs, draft.market)
     : [{ ...draft.market, base_asset: draft.market.symbol, quote_asset: "", timeframes }];
+  const hasDiscoveryComposite = draft.selectedCompositeId === DISCOVERY_BACKTEST_COMPOSITE_ID
+    && draft.selectedStrategyIds.length > 0;
 
   return (
     <div className={styles.filterStrip}>
@@ -132,52 +134,32 @@ export function BacktestFilters({
             ))}
           </Select>
         </Field>
-      ) : (
+      ) : savedComposites.length > 0 || hasDiscoveryComposite ? (
         <Field label="Strategy kết hợp" hint="Chọn strategy đã lưu hoặc tự chọn từ registry.">
-          {savedComposites.length > 0 ? (
-            <Select
-              aria-label="Strategy kết hợp đã lưu"
-              value={draft.selectedCompositeId ?? ""}
-              disabled={disabled}
-              onChange={(event) => {
-                const selected = savedComposites.find((item) => item.id === event.target.value);
-                onChange({
-                  selectedCompositeId: event.target.value,
-                  ...(selected ? { selectedStrategyIds: selected.children.map((child) => child.strategy_id) } : {}),
-                });
-              }}
-            >
-              <option value="">Tự chọn strategy</option>
-              {savedComposites.map((composite) => (
-                <option key={composite.id} value={composite.id}>{composite.displayName}</option>
-              ))}
-            </Select>
-          ) : null}
-          <details className={styles.strategyPicker}>
-            <summary>
-              {draft.selectedStrategyIds.length} strategy tự chọn
-            </summary>
-            <div className={styles.strategyChecks} aria-label="Strategy khả dụng trong registry">
-              {strategies.map((strategy) => (
-                <label key={strategy.strategy_id} className={styles.strategyCheck}>
-                  <input
-                    type="checkbox"
-                    checked={draft.selectedStrategyIds.includes(strategy.strategy_id)}
-                    disabled={disabled}
-                    onChange={(event) => onChange({
-                      selectedCompositeId: "",
-                      selectedStrategyIds: event.target.checked
-                        ? [...new Set([...draft.selectedStrategyIds, strategy.strategy_id])]
-                        : draft.selectedStrategyIds.filter((id) => id !== strategy.strategy_id),
-                    })}
-                  />
-                  <span>{strategy.display_name}</span>
-                </label>
-              ))}
-            </div>
-          </details>
+          <Select
+            aria-label="Strategy kết hợp đã lưu"
+            value={draft.selectedCompositeId ?? ""}
+            disabled={disabled}
+            onChange={(event) => {
+              const selected = savedComposites.find((item) => item.id === event.target.value);
+              onChange({
+                selectedCompositeId: event.target.value,
+                ...(selected ? { selectedStrategyIds: selected.children.map((child) => child.strategy_id) } : {}),
+              });
+            }}
+          >
+            <option value="">Tự chọn strategy</option>
+            {hasDiscoveryComposite ? (
+              <option value={DISCOVERY_BACKTEST_COMPOSITE_ID}>
+                Discovery · {draft.selectedStrategyIds.map((id) => strategies.find((strategy) => strategy.strategy_id === id)?.display_name ?? id).join(" + ")}
+              </option>
+            ) : null}
+            {savedComposites.map((composite) => (
+              <option key={composite.id} value={composite.id}>{composite.displayName}</option>
+            ))}
+          </Select>
         </Field>
-      )}
+      ) : null}
 
       <details className={styles.executionDetails}>
         <summary>Execution settings</summary>

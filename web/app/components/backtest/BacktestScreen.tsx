@@ -6,6 +6,7 @@ import { api, apiUrl, type MarketDataset } from "../../../lib/api";
 import { MOCK_DATASETS, MOCK_TRADES } from "../../../lib/backtest-mock";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
 import { marketKey } from "../../../lib/market";
+import { BACKTEST_HANDOFF_KEY, readStoredJson, removeStoredJson, writeStoredJson } from "../../../lib/settings-storage";
 import {
   backtestIssues,
   buildBacktestChildren,
@@ -28,6 +29,7 @@ import { TradeLedger } from "./TradeLedger";
 import styles from "./backtest.module.css";
 
 const EXPERIMENT_HISTORY_KEY = "crypto-lab-experiment-history";
+const BACKTEST_SETTINGS_KEY = "crypto-lab-backtest-settings";
 
 type DatasetLoadState = "loading" | "ready" | "empty" | "error";
 
@@ -57,6 +59,7 @@ function BacktestContent() {
   const [draft, setDraft] = useState<BacktestDraft>(() =>
     createBacktestDraft(selectedMarket, "5m"),
   );
+  const [draftRestored, setDraftRestored] = useState(false);
   /* Frozen at submit time so the chart title and ledger keep describing the run
      that produced the numbers, even while the user edits the strip again. */
   const [submitted, setSubmitted] = useState<BacktestDraft | null>(null);
@@ -89,6 +92,32 @@ function BacktestContent() {
     : { ...draft, strategyId: effectiveStrategyId, timeframe: effectiveTimeframe };
 
   useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const handoff = readStoredJson<Partial<BacktestDraft>>(BACKTEST_HANDOFF_KEY);
+      const stored = handoff && isBacktestSettings(handoff)
+        ? handoff
+        : readStoredJson<Partial<BacktestDraft>>(BACKTEST_SETTINGS_KEY);
+      if (stored && isBacktestSettings(stored)) {
+        setDraft((current) => ({
+          ...current,
+          ...stored,
+          market: stored.market ?? current.market,
+          selectedStrategyIds: stored.selectedStrategyIds ?? current.selectedStrategyIds,
+        }));
+      }
+      if (handoff) removeStoredJson(BACKTEST_HANDOFF_KEY);
+      setDraftRestored(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!draftRestored) return;
+    writeStoredJson(BACKTEST_SETTINGS_KEY, draft);
+  }, [draft, draftRestored]);
+
+  useEffect(() => {
+    if (!draftRestored) return;
     if (dataMode === "mock") {
       const dataset = MOCK_DATASETS[0];
       const frame = window.requestAnimationFrame(() => {
@@ -97,9 +126,11 @@ function BacktestContent() {
         setDatasetLoadState("ready");
         setDraft((current) => ({
           ...current,
-          datasetVersion: dataset.dataset_version,
-          rangeFrom: dataset.range_from.slice(0, 10),
-          rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+          ...(current.datasetVersion === dataset.dataset_version ? {} : {
+            datasetVersion: dataset.dataset_version,
+            rangeFrom: dataset.range_from.slice(0, 10),
+            rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+          }),
         }));
       });
       return () => window.cancelAnimationFrame(frame);
@@ -124,8 +155,10 @@ function BacktestContent() {
         return {
           ...current,
           datasetVersion: dataset.dataset_version,
-          rangeFrom: dataset.range_from.slice(0, 10),
-          rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+          ...(current.datasetVersion === dataset.dataset_version ? {} : {
+            rangeFrom: dataset.range_from.slice(0, 10),
+            rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
+          }),
         };
       });
     }).catch(() => {
@@ -140,7 +173,7 @@ function BacktestContent() {
       window.cancelAnimationFrame(loadingFrame);
       controller.abort();
     };
-  }, [dataMode, effectiveTimeframe, market]);
+  }, [dataMode, draftRestored, effectiveTimeframe, market]);
 
   const issues = backtestIssues(effectiveDraft);
   const running = !uiCancelled && (submitPending || experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
@@ -153,9 +186,15 @@ function BacktestContent() {
       if (effectiveDraft.mode === "composite" && saved) {
         return saved.children.filter((child) => backtestStrategies.some((strategy) => strategy.strategy_id === child.strategy_id));
       }
-      return buildBacktestChildren(effectiveDraft.mode, effectiveDraft.strategyId, effectiveDraft.selectedStrategyIds, backtestStrategies);
+      return buildBacktestChildren(
+        effectiveDraft.mode,
+        effectiveDraft.strategyId,
+        effectiveDraft.selectedStrategyIds,
+        backtestStrategies,
+        effectiveDraft.selectedStrategyWeights,
+      );
     },
-    [backtestStrategies, effectiveDraft.mode, effectiveDraft.selectedCompositeId, effectiveDraft.selectedStrategyIds, effectiveDraft.strategyId, savedCompositeStrategies],
+    [backtestStrategies, effectiveDraft.mode, effectiveDraft.selectedCompositeId, effectiveDraft.selectedStrategyIds, effectiveDraft.selectedStrategyWeights, effectiveDraft.strategyId, savedCompositeStrategies],
   );
   const noRegistry = backtestStrategies.length === 0;
   const noStrategies = selectedChildren.length === 0;
@@ -389,6 +428,24 @@ function summaryToHistory(summary: NonNullable<ReturnType<typeof useWorkspace>["
     execution: summary.execution,
     metrics: summary.metrics,
   };
+}
+
+function isBacktestSettings(value: Partial<BacktestDraft>): value is Partial<BacktestDraft> & {
+  market?: BacktestDraft["market"];
+  selectedStrategyIds?: string[];
+} {
+  return (value.market === undefined || (
+    typeof value.market === "object" && value.market !== null
+    && typeof value.market.provider === "string"
+    && typeof value.market.symbol === "string"
+  ))
+    && (value.selectedStrategyIds === undefined || value.selectedStrategyIds.every((id) => typeof id === "string"))
+    && (value.selectedStrategyWeights === undefined || (
+      typeof value.selectedStrategyWeights === "object"
+      && value.selectedStrategyWeights !== null
+      && Object.values(value.selectedStrategyWeights).every((weight) => typeof weight === "number" && Number.isFinite(weight))
+    ))
+    && (value.selectedCompositeId === undefined || typeof value.selectedCompositeId === "string");
 }
 
 function buildCandidateDefinition(
