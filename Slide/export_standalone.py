@@ -63,11 +63,17 @@ def get_slide_markdowns(slide_dir, sec_dir, section_files, inline_images=True):
                     disk_path = os.path.normpath(os.path.join(slide_dir, img_rel))
 
                 if not os.path.exists(disk_path):
-                    # Try looking directly in blueprint/assets/diagrams-png/
+                    # Try looking directly in sec_dir, slide_dir, or blueprint/assets/diagrams-png/
                     base_name = os.path.basename(img_rel)
-                    alt_path = os.path.normpath(os.path.join(slide_dir, '..', 'blueprint', 'assets', 'diagrams-png', base_name))
-                    if os.path.exists(alt_path):
-                        disk_path = alt_path
+                    candidates = [
+                        os.path.normpath(os.path.join(sec_dir, img_rel)),
+                        os.path.normpath(os.path.join(slide_dir, base_name)),
+                        os.path.normpath(os.path.join(slide_dir, '..', 'blueprint', 'assets', 'diagrams-png', base_name))
+                    ]
+                    for cand in candidates:
+                        if os.path.exists(cand):
+                            disk_path = cand
+                            break
 
                 if os.path.exists(disk_path):
                     if disk_path not in image_cache:
@@ -432,6 +438,42 @@ def build_standalone_html(output_file='standalone.html'):
       justify-content: center;
       align-items: center;
       background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }}
+    .slide-body.lead img {{
+      width: 80px;
+      height: 80px;
+      max-height: 80px;
+      max-width: 80px;
+      object-fit: contain;
+      border-radius: 14px;
+      border: 1.5px solid #cbd5e1;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+      margin-bottom: 12px;
+      background-color: #ffffff;
+      padding: 5px;
+    }}
+    .slide-body.lead .lead-institution {{
+      margin-top: 0;
+      margin-bottom: 14px;
+      text-align: center;
+    }}
+    .slide-body.lead .lead-uni {{
+      font-size: 16.5px;
+      font-weight: 700;
+      color: #1e293b;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin: 0 0 4px 0;
+      line-height: 1.3;
+    }}
+    .slide-body.lead .lead-faculty {{
+      font-size: 14.5px;
+      font-weight: 600;
+      color: #2563eb;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 0;
+      line-height: 1.3;
     }}
     .slide-body.lead h1 {{
       font-size: 38px;

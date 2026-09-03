@@ -194,6 +194,15 @@ def _owner_id(x_user_id: Annotated[str | None, Header()] = None) -> UUID:
         ) from exc
 
 
+def _optional_owner_id(x_user_id: Annotated[str | None, Header()] = None) -> UUID | None:
+    if not x_user_id:
+        return None
+    try:
+        return UUID(x_user_id)
+    except ValueError:
+        return None
+
+
 def _admin_role(x_user_role: Annotated[str | None, Header()] = None) -> None:
     if x_user_role != "ADMIN":
         raise ApplicationError("forbidden", "ADMIN role required", 403)
@@ -201,6 +210,7 @@ def _admin_role(x_user_role: Annotated[str | None, Header()] = None) -> None:
 
 Internal = Annotated[None, Depends(require_internal_service)]
 OwnerID = Annotated[UUID, Depends(_owner_id)]
+OptionalOwnerID = Annotated[UUID | None, Depends(_optional_owner_id)]
 Admin = Annotated[None, Depends(_admin_role)]
 
 
@@ -751,6 +761,7 @@ def get_leaderboard(
     dataset_version: Annotated[str, Query(min_length=1)],
     _auth: Internal,
     request: Request,
+    owner_id: OptionalOwnerID,
     score_policy_version: str | None = None,
     sort_by: str = "score",
     limit: Annotated[int, Query(ge=1)] = 10,
@@ -759,6 +770,9 @@ def get_leaderboard(
     entries = _store(request).list_leaderboard(
         dataset_version, score_policy_version, applied_limit, sort_by
     )
+    for entry in entries:
+        entry_owner_id = entry.pop("owner_id", None)
+        entry["can_open"] = owner_id is not None and entry_owner_id == owner_id
     return {
         "entries": [LeaderboardEntryOut.model_validate(item) for item in entries],
         "limit_applied": applied_limit,

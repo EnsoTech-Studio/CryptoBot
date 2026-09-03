@@ -1,4 +1,11 @@
 <!-- _class: lead -->
+<div class="lead-institution">
+  <div class="lead-uni">Trường Đại học Khoa học Tự nhiên - ĐHQG HCM</div>
+  <div class="lead-faculty">Khoa Công nghệ thông tin</div>
+</div>
+
+![SELab Logo](../selab.jpeg)
+
 # CRYPTO STRATEGY LAB (CryptoBot)
 ## Báo Cáo Thiết Kế Kiến Trúc Phần Mềm (Software Architecture)
 **Đề tài:** Nền tảng Research, Auto-Discovery & Đánh giá Trading Strategy Tự động

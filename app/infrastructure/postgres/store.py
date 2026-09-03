@@ -2567,15 +2567,21 @@ class Store:
                 policy = active["version"]
             rows = connection.execute(
                 f"""
-                SELECT entry_id,evaluation_id,experiment_id,score,
+                SELECT leaderboard.entry_id,leaderboard.evaluation_id,leaderboard.experiment_id,
+                       owner.owner_id,leaderboard.score,
                        row_number() OVER (
                            ORDER BY {sort_columns[sort_by]},observed_at,evaluation_id
                        ) AS rank,
-                       score_policy_version,dataset_version,strategy_id,strategy_version,
-                       candidate_hash,total_return_pct,win_rate_pct,max_drawdown_pct,
-                       trade_count,profit_factor,sharpe_ratio,observed_at
-                FROM read.leaderboard_v1
-                WHERE dataset_version=%s AND score_policy_version=%s
+                       leaderboard.score_policy_version,leaderboard.dataset_version,
+                       leaderboard.strategy_id,leaderboard.strategy_version,
+                       leaderboard.candidate_hash,leaderboard.total_return_pct,
+                       leaderboard.win_rate_pct,leaderboard.max_drawdown_pct,
+                       leaderboard.trade_count,leaderboard.profit_factor,
+                       leaderboard.sharpe_ratio,leaderboard.observed_at
+                FROM read.leaderboard_v1 leaderboard
+                JOIN experiments owner ON owner.id=leaderboard.experiment_id
+                WHERE leaderboard.dataset_version=%s
+                  AND leaderboard.score_policy_version=%s
                 ORDER BY {sort_columns[sort_by]}, observed_at, evaluation_id
                 LIMIT %s
                 """,

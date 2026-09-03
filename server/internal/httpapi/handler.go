@@ -834,6 +834,21 @@ func (h *Handler) experimentByID(w http.ResponseWriter, r *http.Request) {
 	h.callResearch(w, r, http.MethodGet, "/api/v1/experiments/"+strings.Join(parts, "/"), nil, &principal)
 }
 
+func (h *Handler) optionalAuth(r *http.Request) *principal {
+	cookie, err := r.Cookie("access_token")
+	if err != nil || cookie.Value == "" || h.authService == nil {
+		return nil
+	}
+	authenticated, err := h.authService.Authenticate(r.Context(), cookie.Value)
+	if err != nil {
+		return nil
+	}
+	return &principal{
+		ID: authenticated.UserID.String(), Email: authenticated.Email,
+		DisplayName: authenticated.DisplayName, Role: string(authenticated.Role),
+	}
+}
+
 func (h *Handler) searchRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		principal, ok := h.requireAuth(w, r)
@@ -962,7 +977,7 @@ func (h *Handler) leaderboard(w http.ResponseWriter, r *http.Request) {
 		query.Set("dataset_version", version)
 		r.URL.RawQuery = query.Encode()
 	}
-	h.callResearch(w, r, http.MethodGet, "/api/v1/leaderboard", nil, nil)
+	h.callResearch(w, r, http.MethodGet, "/api/v1/leaderboard", nil, h.optionalAuth(r))
 }
 
 func (h *Handler) leaderboardByID(w http.ResponseWriter, r *http.Request) {

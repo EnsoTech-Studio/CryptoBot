@@ -366,6 +366,7 @@ class LeaderboardEntryOut(ContractModel):
     entry_id: UUID
     evaluation_id: UUID
     experiment_id: UUID
+    can_open: bool = False
     score: float
     rank: int
     score_policy_version: str

@@ -99,6 +99,42 @@ style: |
     align-items: center;
     background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
   }
+  section.lead img {
+    width: 80px;
+    height: 80px;
+    max-height: 80px;
+    max-width: 80px;
+    object-fit: contain;
+    border-radius: 14px;
+    border: 1.5px solid #cbd5e1;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    margin-bottom: 12px;
+    background-color: #ffffff;
+    padding: 5px;
+  }
+  section.lead .lead-institution {
+    margin-top: 0;
+    margin-bottom: 14px;
+    text-align: center;
+  }
+  section.lead .lead-uni {
+    font-size: 17px;
+    font-weight: 700;
+    color: #1e293b;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 0 0 3px 0;
+    line-height: 1.3;
+  }
+  section.lead .lead-faculty {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2563eb;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0;
+    line-height: 1.3;
+  }
   section.lead h1 {
     font-size: 42px;
     color: #1e3a8a;
@@ -111,6 +147,13 @@ style: |
 ---
 
 <!-- _class: lead -->
+<div class="lead-institution">
+  <div class="lead-uni">Trường Đại học Khoa học Tự nhiên - ĐHQG HCM</div>
+  <div class="lead-faculty">Khoa Công nghệ thông tin</div>
+</div>
+
+![SELab Logo](./selab.jpeg)
+
 # CRYPTO STRATEGY LAB (CryptoBot)
 ## Báo Cáo Thiết Kế Kiến Trúc Phần Mềm (Software Architecture)
 **Đề tài:** Nền tảng Research, Auto-Discovery & Đánh giá Trading Strategy Tự động
@@ -710,8 +753,8 @@ style: |
   * Distribute jobs qua PostgreSQL B-Tree indexed Leased Job Queue.
 * **Đo thực tế (isolated PostgreSQL benchmark, 2026-09-03):**
   * 100.000 jobs / 4 workers / 50 candles: hoàn tất 100%, không failed/cancelled.
-  * Thời gian **1.519,209 giây** (~25 phút 19 giây), throughput **65,824 jobs/s** (~3.949 jobs/phút).
-  * Queue-to-persisted-result latency: p50 **746.604 ms** (~12 phút 27 giây), p95 **1.438.430 ms** (~23 phút 58 giây).
+  * Thời gian **1.519,209 giây**, throughput **~3.949 jobs/phút**.
+  * Queue-to-persisted-result latency: p50 **746.604 ms**, p95 **~23 phút 58 giây**.
   * Đã ghi **4.700.000 signals** và **15.000.000 equity points**.
   * Phạm vi đo: PostgreSQL queue → Python worker → deterministic engine → persisted facts; không bao gồm Go/API/event evaluation.
 * **Các mốc 8 và 16 workers:** chưa đo, không suy diễn từ mốc 4 workers.

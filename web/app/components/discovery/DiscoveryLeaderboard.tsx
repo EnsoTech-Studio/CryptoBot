@@ -112,7 +112,12 @@ export function DiscoveryLeaderboard({
                   <tr key={entry.id}>
                     <RankCell rank={leaderboardStart + index + 1} />
                     <td>
-                      <StrategyLink entry={entry} interactive={!demo} onOpenExperiment={onOpenExperiment} />
+                      <StrategyLink
+                        entry={entry}
+                        interactive={!demo}
+                        onOpenExperiment={onOpenExperiment}
+                        onTrace={onTrace}
+                      />
                     </td>
                     <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
                       {entry.total_return_pct >= 0 ? "+" : ""}
@@ -160,7 +165,14 @@ export function DiscoveryLeaderboard({
             {leaderboardRows.slice(leaderboardStart, leaderboardStart + LEADERBOARD_PAGE_SIZE).map(({ entry, demo }, index) => (
               <tr key={entry.id}>
                 <RankCell rank={leaderboardStart + index + 1} />
-                <td><StrategyLink entry={entry} interactive={!demo} onOpenExperiment={onOpenExperiment} /></td>
+                <td>
+                  <StrategyLink
+                    entry={entry}
+                    interactive={!demo}
+                    onOpenExperiment={onOpenExperiment}
+                    onTrace={onTrace}
+                  />
+                </td>
                 <td className={`${styles.profitCell} ${entry.total_return_pct < 0 ? styles.profitNegative : ""}`}>
                   {entry.total_return_pct >= 0 ? "+" : ""}
                   {entry.total_return_pct.toFixed(2)}%
@@ -185,10 +197,33 @@ export function DiscoveryLeaderboard({
   );
 }
 
-function StrategyLink({ entry, interactive = true, onOpenExperiment }: { entry: LeaderboardEntry; interactive?: boolean; onOpenExperiment: (id: string) => void }) {
+function StrategyLink({
+  entry,
+  interactive = true,
+  onOpenExperiment,
+  onTrace,
+}: {
+  entry: LeaderboardEntry;
+  interactive?: boolean;
+  onOpenExperiment: (id: string) => void;
+  onTrace: (id: string) => void;
+}) {
   const content = <span className={styles.leaderStrategyName}>{shortLabel(entry.strategy_id)}</span>;
   if (!interactive) {
     return <span className={styles.leaderStrategyButton} title={`${entry.strategy_id} · experiment ${entry.experiment_id}`}>{content}</span>;
+  }
+  if (entry.can_open !== true) {
+    return (
+      <button
+        type="button"
+        className={styles.leaderStrategyButton}
+        onClick={() => onTrace(entry.id)}
+        aria-label={`Xem provenance ${entry.strategy_id}`}
+        title="Experiment public — mở provenance"
+      >
+        {content}
+      </button>
+    );
   }
   return (
     <button

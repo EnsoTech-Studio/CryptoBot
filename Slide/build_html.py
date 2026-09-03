@@ -118,6 +118,42 @@ style: |
     align-items: center;
     background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
   }
+  section.lead img {
+    width: 80px;
+    height: 80px;
+    max-height: 80px;
+    max-width: 80px;
+    object-fit: contain;
+    border-radius: 14px;
+    border: 1.5px solid #cbd5e1;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    margin-bottom: 12px;
+    background-color: #ffffff;
+    padding: 5px;
+  }
+  section.lead .lead-institution {
+    margin-top: 0;
+    margin-bottom: 14px;
+    text-align: center;
+  }
+  section.lead .lead-uni {
+    font-size: 17px;
+    font-weight: 700;
+    color: #1e293b;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 0 0 3px 0;
+    line-height: 1.3;
+  }
+  section.lead .lead-faculty {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2563eb;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0;
+    line-height: 1.3;
+  }
   section.lead h1 {
     font-size: 42px;
     color: #1e3a8a;
@@ -135,7 +171,7 @@ style: |
         with open(path, 'r', encoding='utf-8') as f:
             text = f.read().strip()
             # In main.md (sitting in Slide/), diagrams are at ../blueprint/...
-            text_for_main = text.replace('../../blueprint/', '../blueprint/')
+            text_for_main = text.replace('../../blueprint/', '../blueprint/').replace('../selab.jpeg', './selab.jpeg')
             section_texts.append(text_for_main)
 
     combined = header + '\n\n' + '\n\n---\n\n'.join(section_texts)
@@ -415,6 +451,42 @@ style: |
       justify-content: center;
       align-items: center;
       background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }}
+    .slide-body.lead img {{
+      width: 80px;
+      height: 80px;
+      max-height: 80px;
+      max-width: 80px;
+      object-fit: contain;
+      border-radius: 14px;
+      border: 1.5px solid #cbd5e1;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+      margin-bottom: 12px;
+      background-color: #ffffff;
+      padding: 5px;
+    }}
+    .slide-body.lead .lead-institution {{
+      margin-top: 0;
+      margin-bottom: 14px;
+      text-align: center;
+    }}
+    .slide-body.lead .lead-uni {{
+      font-size: 16.5px;
+      font-weight: 700;
+      color: #1e293b;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin: 0 0 4px 0;
+      line-height: 1.3;
+    }}
+    .slide-body.lead .lead-faculty {{
+      font-size: 14.5px;
+      font-weight: 600;
+      color: #2563eb;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 0;
+      line-height: 1.3;
     }}
     .slide-body.lead h1 {{
       font-size: 38px;

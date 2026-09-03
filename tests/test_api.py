@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 TOKEN_HEADERS = {"Authorization": "Bearer development-internal-token"}
+LEADERBOARD_OWNER_ID = uuid4()
 
 
 class FakeStore:
@@ -31,6 +32,7 @@ class FakeStore:
                 "entry_id": uuid4(),
                 "evaluation_id": uuid4(),
                 "experiment_id": uuid4(),
+                "owner_id": LEADERBOARD_OWNER_ID,
                 "score": 72.5,
                 "rank": 1,
                 "score_policy_version": "v1",
@@ -504,7 +506,18 @@ def test_leaderboard_returns_persisted_ranking_shape() -> None:
     body = response.json()
     assert body["entries"][0]["rank"] == 1
     assert body["entries"][0]["dataset_version"] == "fixture-v1"
+    assert body["entries"][0]["can_open"] is False
+    assert "owner_id" not in body["entries"][0]
     assert body["limit_applied"] == 10
+
+
+def test_leaderboard_marks_owned_experiments_openable() -> None:
+    response = client.get(
+        "/api/v1/leaderboard?dataset_version=fixture-v1&limit=10",
+        headers={**TOKEN_HEADERS, "X-User-ID": str(LEADERBOARD_OWNER_ID)},
+    )
+    assert response.status_code == 200
+    assert response.json()["entries"][0]["can_open"] is True
 
 
 def test_request_body_limit_is_enforced_before_validation() -> None:

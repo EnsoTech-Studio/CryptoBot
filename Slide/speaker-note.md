@@ -256,7 +256,7 @@ Về scalability, hệ thống dùng stateless horizontal scale-out cho Python W
 
 Benchmark trên slide là mốc đo thực tế ngày 2026-09-03 trong phạm vi isolated PostgreSQL benchmark. Với 100,000 jobs, 4 workers và mỗi job 50 candles, hệ thống hoàn tất 100%, không failed và không cancelled.
 
-Tổng thời gian là khoảng 1,519.209 giây, tức khoảng 25 phút 19 giây. Throughput đạt 65.824 jobs mỗi giây, khoảng 3,949 jobs mỗi phút. Queue-to-persisted-result latency theo cách ghi trên slide là p50 khoảng 746.604 ms, tương đương 12 phút 27 giây, và p95 khoảng 1.438.430 ms, gần 23 phút 58 giây.
+Thời gian hoàn thành là 1.519,209 giây, throughput đạt khoảng 3.949 jobs mỗi phút. Queue-to-persisted-result latency ghi nhận p50 là 746.604 ms và p95 khoảng 23 phút 58 giây.
 
 Benchmark cũng ghi 4,700,000 signals và 15,000,000 equity points. Phạm vi đo là PostgreSQL queue đến Python worker, deterministic engine và persisted facts, chưa bao gồm Go/API/event evaluation. Các mốc 8 và 16 workers chưa đo nên không suy diễn.
 

@@ -190,6 +190,7 @@ export type EquityPoint = { t: string; equity: number; drawdown_pct: number };
 export type LeaderboardEntry = {
   id: string;
   experiment_id: string;
+  can_open?: boolean;
   rank: number;
   score: number;
   strategy_id: string;

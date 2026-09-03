@@ -30,8 +30,8 @@
   * Distribute jobs qua PostgreSQL B-Tree indexed Leased Job Queue.
 * **Đo thực tế (isolated PostgreSQL benchmark, 2026-09-03):**
   * 100.000 jobs / 4 workers / 50 candles: hoàn tất 100%, không failed/cancelled.
-  * Thời gian **1.519,209 giây** (~25 phút 19 giây), throughput **65,824 jobs/s** (~3.949 jobs/phút).
-  * Queue-to-persisted-result latency: p50 **746.604 ms** (~12 phút 27 giây), p95 **1.438.430 ms** (~23 phút 58 giây).
+  * Thời gian **1.519,209 giây**, throughput **~3.949 jobs/phút**.
+  * Queue-to-persisted-result latency: p50 **746.604 ms**, p95 **~23 phút 58 giây**.
   * Đã ghi **4.700.000 signals** và **15.000.000 equity points**.
   * Phạm vi đo: PostgreSQL queue → Python worker → deterministic engine → persisted facts; không bao gồm Go/API/event evaluation.
 * **Các mốc 8 và 16 workers:** chưa đo, không suy diễn từ mốc 4 workers.
