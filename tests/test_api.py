@@ -183,6 +183,40 @@ def test_chart_overlays_are_computed_from_live_candles() -> None:
     assert payload["series"][0]["points"][-1]["v"] == 149.5
 
 
+def test_current_signals_evaluate_selected_strategies_from_live_candles() -> None:
+    from app.domain.market import Candle
+
+    class CurrentSignalsStore(FakeStore):
+        def list_live_candles(self, provider, symbol, timeframe, limit):
+            assert (provider, symbol, timeframe, limit) == ("binance_usdm", "ETHUSDT", "5m", 60)
+            start = datetime(2026, 1, 1, tzinfo=UTC)
+            return [
+                Candle(
+                    provider=provider, symbol=symbol, timeframe=timeframe,
+                    open_time=start + timedelta(minutes=5 * index),
+                    close_time=start + timedelta(minutes=5 * (index + 1)),
+                    open=100 + index, high=101 + index, low=99 + index,
+                    close=100 + index, volume=1.0,
+                )
+                for index in range(60)
+            ]
+
+    previous = app.state.store
+    app.state.store = CurrentSignalsStore()
+    try:
+        response = client.get(
+            "/api/v1/markets/current-signals?provider=binance_usdm&symbol=ETHUSDT&timeframe=5m&strategies=rsi@v1,ma_cross@v1&limit=60",
+            headers=TOKEN_HEADERS,
+        )
+    finally:
+        app.state.store = previous
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["strategy_id"] for item in payload["signals"]] == ["rsi", "ma_cross"]
+    assert all(item["action"] in {"BUY", "SELL", "HOLD"} for item in payload["signals"])
+
+
 def test_chart_overlay_delta_returns_empty_payload_without_live_candles() -> None:
     class EmptyChartStore(FakeStore):
         def list_live_candles(self, provider, symbol, timeframe, limit):

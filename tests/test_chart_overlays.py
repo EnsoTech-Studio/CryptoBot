@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from app.domain.market import Candle
-from app.services.chart_overlays import build_chart_overlay_delta, build_chart_overlays
+from app.services.chart_overlays import build_chart_overlay_delta, build_chart_overlays, build_current_signals
 
 
 def _candles() -> list[Candle]:
@@ -57,3 +57,11 @@ def test_overlay_delta_contains_only_the_latest_candle_values() -> None:
         {"t": "2026-01-01T00:25:00+00:00", "v": 104.5}
     ]
     assert payload["markers"] == []
+
+
+def test_current_signals_return_one_runtime_signal_per_strategy() -> None:
+    signals = build_current_signals(_candles(), [("rsi", "v1"), ("ma_cross", "v1")])
+
+    assert [item["strategy_id"] for item in signals] == ["rsi", "ma_cross"]
+    assert all(item["action"] in {"BUY", "SELL", "HOLD"} for item in signals)
+    assert all(item["observed_at"] == "2026-01-01T00:30:00+00:00" for item in signals)

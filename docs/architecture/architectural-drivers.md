@@ -55,6 +55,14 @@ attempt 2 exactly once. A companion test does the same for a real
 event-worker/outbox claim and verifies exactly one evaluation is persisted.
 This is controlled crash/recovery evidence in an isolated PostgreSQL setup.
 
+The measured end-to-end benchmark is recorded in
+[`../benchmark-100k-2026-09-03.json`](../benchmark-100k-2026-09-03.json):
+100,000 jobs, 4 workers, and 50 candles completed with no failed/cancelled
+jobs in 1519.209 seconds (65.824 jobs/second; p50 746604.202 ms; p95
+1438429.875 ms). It covers PostgreSQL queue → worker → deterministic engine
+→ persisted results only; Go/API and event evaluation are outside the run.
+Runs with 8 and 16 workers have not been measured.
+
 ## Presentation evidence
 
 ```powershell
