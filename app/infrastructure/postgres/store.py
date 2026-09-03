@@ -37,6 +37,7 @@ from ...services.search import (
 from ...services.discovery.generators import flat_leaves
 from ...infrastructure.ai import DiscoveryLLMUnavailable
 from ...services.discovery.llm import DiscoveryProposalError
+from ...services.ranking import ScoreRanker
 
 
 def _float(value: Any) -> float | None:
@@ -2289,7 +2290,7 @@ class Store:
         )
 
     def reconcile_discovery(self) -> int:
-        """Replay completed partitions after worker/controller restart without requeueing them."""
+        """Replay discovery partitions and backfill legacy final-test rankings."""
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT p.experiment_id FROM discovery_candidate_experiments p
@@ -2300,9 +2301,75 @@ class Store:
                    WHERE r.status='failed' OR e.id IS NOT NULL
                    ORDER BY p.created_at"""
             ).fetchall()
+            legacy_rankings = connection.execute(
+                """SELECT e.id AS evaluation_id,x.market_dataset_id,x.correlation_id,
+                          e.total_return_pct,e.win_rate_pct,e.max_drawdown_pct,
+                          e.trade_count,e.profit_factor,e.sharpe_ratio
+                   FROM discovery_candidate_experiments p
+                   JOIN backtest_runs r ON r.experiment_id=p.experiment_id
+                   JOIN evaluations e ON e.backtest_run_id=r.id
+                   JOIN experiments x ON x.id=r.experiment_id
+                   JOIN search_candidates c ON c.id=p.search_candidate_id
+                   JOIN search_runs s ON s.id=c.search_run_id
+                   WHERE p.partition='test' AND r.status='completed'
+                     AND s.status IN ('running','completed')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM leaderboard_entries l
+                         WHERE l.evaluation_id=e.id
+                     )
+                   ORDER BY p.created_at"""
+            ).fetchall()
         for item in rows:
             self.advance_discovery_for_experiment(item["experiment_id"])
-        return len(rows)
+        ranked = sum(self._backfill_discovery_ranking(item) for item in legacy_rankings)
+        return len(rows) + ranked
+
+    def _backfill_discovery_ranking(self, row: dict[str, Any]) -> bool:
+        """Rank an eligible sealed-test evaluation missed by pre-fix workers."""
+        with self._connect() as connection:
+            policy = connection.execute(
+                "SELECT version,min_trades,weights FROM score_policies WHERE is_active"
+            ).fetchone()
+            if policy is None or row["trade_count"] < policy["min_trades"]:
+                return False
+            score = ScoreRanker().score(
+                {
+                    "total_return_pct": row["total_return_pct"],
+                    "win_rate_pct": row["win_rate_pct"],
+                    "max_drawdown_pct": row["max_drawdown_pct"],
+                    "profit_factor": row["profit_factor"],
+                    "sharpe_ratio": row["sharpe_ratio"],
+                },
+                policy["weights"],
+            )
+            entry = connection.execute(
+                """INSERT INTO leaderboard_entries(
+                       evaluation_id,market_dataset_id,score_policy_version,score
+                   ) VALUES (%s,%s,%s,%s)
+                   ON CONFLICT(evaluation_id,score_policy_version) DO NOTHING
+                   RETURNING id""",
+                (row["evaluation_id"], row["market_dataset_id"], policy["version"], score),
+            ).fetchone()
+            if entry is None:
+                return False
+            connection.execute(
+                """INSERT INTO domain_events(
+                       event_type,aggregate_type,aggregate_id,correlation_id,payload
+                   ) VALUES ('LeaderboardUpdated','leaderboard_entry',%s,%s,%s)""",
+                (
+                    entry["id"],
+                    row["correlation_id"],
+                    Jsonb(
+                        {
+                            "evaluation_id": str(row["evaluation_id"]),
+                            "score_policy_version": policy["version"],
+                            "score": score,
+                            "occurred_at": datetime.now(tz=UTC).isoformat(),
+                        }
+                    ),
+                ),
+            )
+        return True
 
     @staticmethod
     def _search_row(row: dict[str, Any], reused: bool = False) -> dict[str, Any]:

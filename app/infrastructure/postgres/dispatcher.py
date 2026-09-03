@@ -973,16 +973,17 @@ class PostgresJobDispatcher:
                 evaluation_id = inserted[0]
                 cur.execute(
                     """
-                    SELECT e.id,e.correlation_id,s.generator_id
+                    SELECT e.id,e.correlation_id,s.generator_id,p.partition AS discovery_partition
                     FROM backtest_runs r
                     JOIN experiments e ON e.id=r.experiment_id
                     LEFT JOIN search_candidates c ON c.id=e.search_candidate_id
                     LEFT JOIN search_runs s ON s.id=c.search_run_id
+                    LEFT JOIN discovery_candidate_experiments p ON p.experiment_id=r.id
                     WHERE r.id=%s
                     """,
                     (run_id,),
                 )
-                experiment_id, correlation_id, generator_id = cur.fetchone()
+                experiment_id, correlation_id, generator_id, discovery_partition = cur.fetchone()
                 cur.execute(
                     """
                     INSERT INTO domain_events (
@@ -1001,39 +1002,46 @@ class PostgresJobDispatcher:
                         ),
                     ),
                 )
-                if generator_id == "discovery":
-                    return
-                cur.execute(
-                    """
-                    UPDATE search_runs s
-                    SET tested=s.tested+1,current_candidate_hash=c.candidate_hash,
-                        status=CASE
-                            WHEN extract(epoch FROM now()-s.created_at) >=
-                                 COALESCE((s.stop_conditions->>'max_duration_sec')::int,2147483647)
-                                THEN 'completed'
-                            WHEN s.tested+s.failed+1 >= s.generated THEN 'completed'
-                            ELSE s.status END,
-                        stop_reason=CASE
-                            WHEN extract(epoch FROM now()-s.created_at) >=
-                                 COALESCE((s.stop_conditions->>'max_duration_sec')::int,2147483647)
-                                THEN 'max_duration'
-                            WHEN s.tested+s.failed+1 >= s.generated THEN
-                                CASE
-                                    WHEN s.generated >=
-                                         COALESCE((s.stop_conditions->>'max_candidates')::int,2147483647)
-                                        THEN 'max_candidates'
-                                    WHEN s.generator_exhausted THEN 'space_exhausted'
-                                    ELSE 'completed'
-                                END
-                            ELSE s.stop_reason END,
-                        updated_at=now()
-                    FROM search_candidates c
-                    JOIN experiments e ON e.id=c.experiment_id
-                    JOIN backtest_runs r ON r.experiment_id=e.id
-                    WHERE c.search_run_id=s.id AND r.id=%s
-                    """,
-                    (run_id,),
+                # Discovery train/validation metrics are private evidence for
+                # archive assessment. Only the selected sealed test has the
+                # same ranking semantics as an ordinary completed experiment.
+                is_discovery_final_test = (
+                    generator_id == "discovery" and discovery_partition == "test"
                 )
+                if generator_id == "discovery" and not is_discovery_final_test:
+                    return
+                if not is_discovery_final_test:
+                    cur.execute(
+                        """
+                        UPDATE search_runs s
+                        SET tested=s.tested+1,current_candidate_hash=c.candidate_hash,
+                            status=CASE
+                                WHEN extract(epoch FROM now()-s.created_at) >=
+                                     COALESCE((s.stop_conditions->>'max_duration_sec')::int,2147483647)
+                                    THEN 'completed'
+                                WHEN s.tested+s.failed+1 >= s.generated THEN 'completed'
+                                ELSE s.status END,
+                            stop_reason=CASE
+                                WHEN extract(epoch FROM now()-s.created_at) >=
+                                     COALESCE((s.stop_conditions->>'max_duration_sec')::int,2147483647)
+                                    THEN 'max_duration'
+                                WHEN s.tested+s.failed+1 >= s.generated THEN
+                                    CASE
+                                        WHEN s.generated >=
+                                             COALESCE((s.stop_conditions->>'max_candidates')::int,2147483647)
+                                            THEN 'max_candidates'
+                                        WHEN s.generator_exhausted THEN 'space_exhausted'
+                                        ELSE 'completed'
+                                    END
+                                ELSE s.stop_reason END,
+                            updated_at=now()
+                        FROM search_candidates c
+                        JOIN experiments e ON e.id=c.experiment_id
+                        JOIN backtest_runs r ON r.experiment_id=e.id
+                        WHERE c.search_run_id=s.id AND r.id=%s
+                        """,
+                        (run_id,),
+                    )
 
                 if not rank:
                     self._cancel_terminal_search_queue(cur, experiment_id)
@@ -1092,6 +1100,10 @@ class PostgresJobDispatcher:
                         ),
                     ),
                 )
+                if is_discovery_final_test:
+                    # Final-test score is a public result, but must not feed
+                    # discovery acceptance, parent selection, or stop state.
+                    return
                 cur.execute(
                     """
                     UPDATE search_runs s
