@@ -577,8 +577,10 @@ def test_heartbeat_extends_lease_by_configured_length(dispatcher) -> None:
     job = dispatcher.claim("itest-worker", timedelta(seconds=120))
     assert dispatcher.heartbeat(job.id, job.lease_token, timedelta(seconds=300))
     after = _rows(dispatcher, "SELECT lease_expires_at FROM backtest_jobs WHERE id = %s", (job_id,))[0][0]
-    now = datetime.now(tz=UTC)
-    remaining = (after - now).total_seconds()
+    # Compare clocks in PostgreSQL. Docker's clock can lead the Windows host
+    # by a fraction of a second, making a correct 300-second lease look long.
+    observed_at = _rows(dispatcher, "SELECT clock_timestamp()")[0][0]
+    remaining = (after - observed_at).total_seconds()
     assert 290 <= remaining <= 300  # lease now expires at now+300s, never shrinks
     # stale token beat: rejected
     assert dispatcher.heartbeat(job.id, uuid4(), timedelta(seconds=300)) is False
@@ -680,6 +682,90 @@ def test_search_run_uses_its_immutable_dataset_range(dispatcher) -> None:
         """,
         (created["search_run_id"],),
     ) == [(T0, T0 + timedelta(minutes=59, seconds=59, milliseconds=999), T0, T0 + timedelta(minutes=59, seconds=59, milliseconds=999))]
+
+
+def test_discovery_loop_runs_train_validation_and_sealed_final_test(dispatcher, monkeypatch) -> None:
+    """A worker + outbox worker can carry a bounded Discovery run to completion."""
+    from app.event_worker import EventWorker
+    from app.infrastructure.postgres.store import Store
+    from app.schemas import SearchRunCreateIn
+    from app.worker import BacktestWorker, WorkerConfig
+
+    _, bootstrap_experiment_id = seed_experiment(dispatcher, COMPOSITE_CANDIDATE)
+    owner_id, dataset_version = _rows(
+        dispatcher,
+        "SELECT owner_id,dataset_version FROM experiments e JOIN market_datasets d ON d.id=e.market_dataset_id WHERE e.id=%s",
+        (bootstrap_experiment_id,),
+    )[0]
+    with dispatcher._conn.cursor() as cur:
+        # Immutable experiments cannot be deleted. Keep this bootstrap job at
+        # lower priority than every Discovery partition created by the test.
+        cur.execute("UPDATE backtest_jobs SET priority=10000 WHERE experiment_id=%s", (bootstrap_experiment_id,))
+    dispatcher._conn.commit()
+
+    request = SearchRunCreateIn.model_validate({
+        "owner_id": owner_id,
+        "generator_id": "discovery",
+        "search_space": {
+            "strategy_ids": ["ma_cross", "ema_cross"],
+            "cardinality": [1, 2],
+            "policies": ["weighted_vote"],
+            "combination_threshold": 0.3,
+            "parameter_grid": {
+                "ma_cross": {"fast": [3, 5], "slow": [8, 10]},
+                "ema_cross": {"fast": [3, 5], "slow": [8, 10]},
+            },
+        },
+        "stop_conditions": {"max_candidates": 2, "max_duration_sec": 300, "max_non_improving": 8},
+        "dataset_version": dataset_version,
+        "seed": 42,
+    })
+    created = Store(DATABASE_URL, discovery_llm=None, discovery_demo_mode=True).create_search_run(request)
+    assert created["status"] == "running"
+
+    monkeypatch.setenv("DISCOVERY_DEMO_MODE", "true")
+    event_worker = EventWorker(DATABASE_URL, "discovery-itest-events")
+    event_worker._store._discovery_llm = None
+    worker = BacktestWorker(
+        dispatcher,
+        config=WorkerConfig(worker_id="discovery-itest-worker", event_consumers=()),
+    )
+    try:
+        for _ in range(12):
+            job = dispatcher.claim("discovery-itest-worker", timedelta(seconds=120))
+            assert job is not None, "Discovery left no job before completing its run"
+            worker._process(job)
+            while event := event_worker._outbox.claim():
+                event_worker._handle(event)
+                event_worker._outbox.complete(event.event_id)
+            status, stop_reason = _rows(
+                dispatcher,
+                "SELECT status,stop_reason FROM search_runs WHERE id=%s",
+                (created["search_run_id"],),
+            )[0]
+            if status == "completed":
+                break
+        else:
+            pytest.fail("Discovery did not reach a terminal state")
+    finally:
+        event_worker.close()
+
+    assert (status, stop_reason) == ("completed", "final_test_completed")
+    assert _rows(
+        dispatcher,
+        "SELECT generated,tested,failed FROM search_runs WHERE id=%s",
+        (created["search_run_id"],),
+    ) == [(2, 2, 0)]
+    assert _rows(
+        dispatcher,
+        "SELECT partition,count(*) FROM discovery_candidate_experiments p JOIN search_candidates c ON c.id=p.search_candidate_id WHERE c.search_run_id=%s GROUP BY partition ORDER BY partition",
+        (created["search_run_id"],),
+    ) == [("test", 1), ("train", 2), ("validation", 6)]
+    assert _rows(
+        dispatcher,
+        "SELECT count(DISTINCT candidate_hash) FROM search_candidates WHERE search_run_id=%s",
+        (created["search_run_id"],),
+    ) == [(2,)]
 
 
 def test_lost_lease_mid_persist_rolls_back_completely(dispatcher) -> None:

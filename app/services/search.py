@@ -100,6 +100,18 @@ def discovery_propose(
         for item in (research or {}).get("catalog", [])
         if item.get("strategy_id")
     }
+
+    def admit_or_resample(
+        candidate: dict[str, Any] | None,
+        source: str,
+    ) -> dict[str, Any] | None:
+        admitted = _admit_discovery_proposal(candidate, archive, set(catalog))
+        if admitted is not None:
+            return admitted
+        # A mutation/crossover can reproduce an archived hash. It must not
+        # terminate a run while the bounded random pool still has legal work.
+        return _random_unseen_proposal(search_space, seed, archive, set(catalog), source)
+
     if generator == "llm":
         proposal = llm_propose(search_space, archive, research or {}) if llm_propose else None
         if not isinstance(proposal, dict):
@@ -116,40 +128,62 @@ def discovery_propose(
             [],
             {key: proposal[key] for key in ("hypothesis", "operation", "provider", "model", "model_version", "prompt_version", "request_hash") if key in proposal},
         )
-        return _admit_discovery_proposal(candidate, archive, set(catalog))
+        return admit_or_resample(candidate, "llm")
     if generator == "random":
-        candidates = RandomGenerator().generate(search_space, 1, seed)
-        candidate = (
-            _discovery_candidate(candidates[0]["candidate_definition"], "random", [])
-            if candidates
-            else None
-        )
-        return _admit_discovery_proposal(candidate, archive, set(catalog))
+        return _random_unseen_proposal(search_space, seed, archive, set(catalog))
     if generator == "mutation":
         parent = parent_pool[0]
         definition = mutate_definition(parent["candidate_definition"], search_space, randomizer)
-        return _admit_discovery_proposal(
-            _discovery_candidate(definition, "mutation", [parent]), archive, set(catalog)
-        )
+        return admit_or_resample(_discovery_candidate(definition, "mutation", [parent]), "mutation")
     if generator == "crossover":
         first, second = parent_pool[:2]
         definition = crossover_definition(
             first["candidate_definition"], second["candidate_definition"], randomizer
         )
-        return _admit_discovery_proposal(
-            _discovery_candidate(definition, "crossover", [first, second]), archive, set(catalog)
-        )
+        return admit_or_resample(_discovery_candidate(definition, "crossover", [first, second]), "crossover")
     parents = parent_pool[: min(5, max(2, len(parent_pool)))]
     definition = ensemble_definition([parent["candidate_definition"] for parent in parents])
-    return _admit_discovery_proposal(
-        _discovery_candidate(definition, "ensemble", parents), archive, set(catalog)
-    )
+    return admit_or_resample(_discovery_candidate(definition, "ensemble", parents), "ensemble")
 
 
 def _discovery_parents(
     accepted: list[dict[str, Any]], randomizer: random.Random
 ) -> list[dict[str, Any]]:
     return select_parents(accepted, randomizer)
+
+
+def _random_unseen_proposal(
+    search_space: dict[str, Any],
+    seed: int,
+    archive: list[dict[str, Any]],
+    catalog_ids: set[str],
+    fallback_from: str | None = None,
+) -> dict[str, Any] | None:
+    """Pick the first admissible item from a deterministic shuffled pool.
+
+    Asking RandomGenerator for one item made a duplicate hash look like an
+    exhausted search space. The pool grows with the archive, so after N
+    archived candidates it inspects at least N+1 distinct grid variants before
+    declaring the configured space exhausted.
+    """
+    pool_limit = min(500, max(8, len(archive) + 1))
+    candidates = RandomGenerator().generate(search_space, pool_limit, seed)
+    for sample_rank, item in enumerate(candidates, start=1):
+        generation_meta = {
+            key: value
+            for key, value in dict(item.get("generation_meta") or {}).items()
+            if key != "generator"
+        }
+        generation_meta["sample_rank"] = sample_rank
+        if fallback_from is not None:
+            generation_meta["fallback_from"] = fallback_from
+        candidate = _discovery_candidate(
+            item["candidate_definition"], "random", [], generation_meta
+        )
+        admitted = _admit_discovery_proposal(candidate, archive, catalog_ids)
+        if admitted is not None:
+            return admitted
+    return None
 
 
 def _discovery_candidate(

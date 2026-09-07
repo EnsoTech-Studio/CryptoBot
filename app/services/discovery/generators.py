@@ -10,6 +10,8 @@ from typing import Any
 
 from ...domain.common import hash_canonical_json
 
+DEFAULT_COMBINATION_THRESHOLD = 0.3
+
 
 def _parameter_sets(parameters: dict[str, list[Any]]) -> Iterator[dict[str, Any]]:
     names = sorted(parameters)
@@ -45,26 +47,49 @@ def flat_leaves(definition: dict[str, Any]) -> list[dict[str, Any]]:
     return [{**definition, "weight": 1.0}]
 
 
-def composite_from_leaves(leaves: list[dict[str, Any]], policy: str = "weighted_vote") -> dict[str, Any]:
+def _combination_threshold(search_space: dict[str, Any] | None = None) -> float:
+    value = (search_space or {}).get("combination_threshold", DEFAULT_COMBINATION_THRESHOLD)
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_COMBINATION_THRESHOLD
+    if not 0 <= threshold <= 1:
+        return DEFAULT_COMBINATION_THRESHOLD
+    return threshold
+
+
+def composite_from_leaves(
+    leaves: list[dict[str, Any]],
+    policy: str = "weighted_vote",
+    threshold: float | None = None,
+) -> dict[str, Any]:
     if len(leaves) < 2:
         raise ValueError("composite needs at least two unique leaves")
     weight = 1.0 / len(leaves)
+    effective_threshold = DEFAULT_COMBINATION_THRESHOLD if threshold is None else threshold
+
+    # Strategy
     return {
         "strategy_id": "composite",
         "version": "v1",
         "children": [{**leaf, "weight": weight} for leaf in leaves],
         "policy": {
             "name": policy,
-            "threshold": 0.5,
+            "threshold": effective_threshold,
             "encoding": {"BUY": 1, "HOLD": 0, "SELL": -1},
         },
     }
 
 
-def _composite_candidate(child_specs: tuple[tuple[str, dict[str, Any]], ...], policy: str) -> dict[str, Any]:
+def _composite_candidate(
+    child_specs: tuple[tuple[str, dict[str, Any]], ...],
+    policy: str,
+    threshold: float,
+) -> dict[str, Any]:
     definition = composite_from_leaves(
         [{"strategy_id": strategy_id, "version": "v1", "parameters": parameters} for strategy_id, parameters in child_specs],
         policy,
+        threshold,
     )
     return {
         "strategy_id": "composite",
@@ -123,6 +148,7 @@ class GridGenerator:
         strategy_ids = sorted(set(search_space.get("strategy_ids") or []))
         cardinalities = sorted(set(search_space.get("cardinality") or [1]))
         policies = sorted(set(search_space.get("policies") or ["weighted_vote"]))
+        threshold = _combination_threshold(search_space)
         output: list[dict[str, Any]] = []
         for cardinality in cardinalities:
             if cardinality < 1 or cardinality > len(strategy_ids):
@@ -138,7 +164,7 @@ class GridGenerator:
                 variant_sets = [[(strategy_id, params) for params in _parameter_variants(search_space, strategy_id)] for strategy_id in selected]
                 for child_specs in itertools.product(*variant_sets):
                     for policy in policies:
-                        output.append(_composite_candidate(child_specs, policy))
+                        output.append(_composite_candidate(child_specs, policy, threshold))
                         if len(output) >= limit:
                             return output
         return output
@@ -173,8 +199,8 @@ class DomainGuidedGenerator:
                     if int(fast) >= int(slow):
                         return False, applied
             if strategy_id == "rsi":
-                buy = params.get("buy_below", params.get("buy_threshold"))
-                sell = params.get("sell_above", params.get("sell_threshold"))
+                buy = params.get("oversold", params.get("buy_below", params.get("buy_threshold")))
+                sell = params.get("overbought", params.get("sell_above", params.get("sell_threshold")))
                 if buy is not None and sell is not None:
                     applied.append("rsi_buy_lt_sell")
                     if float(buy) >= float(sell):

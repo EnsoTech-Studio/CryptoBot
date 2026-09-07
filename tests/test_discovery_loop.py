@@ -90,8 +90,19 @@ def test_discovery_generator_selection_and_lineage_are_seeded() -> None:
     assert first["generation_meta"]["generator"] in {"random", "mutation"}
 
 
-def test_discovery_archives_duplicate_without_queue_candidate() -> None:
+def test_discovery_resamples_when_the_first_random_candidate_is_archived() -> None:
     first = discovery_propose(SPACE, 1, [])
     assert first is not None
     archive = [{**first, "terminal": True, "accepted": False}]
-    assert discovery_propose(SPACE, 1, archive) is None
+    second = discovery_propose(SPACE, 1, archive)
+    assert second is not None
+    assert second["candidate_hash"] != first["candidate_hash"]
+
+
+def test_discovery_keeps_admitting_unique_candidates_until_its_space_is_exhausted() -> None:
+    archive = []
+    for offset in range(8):
+        candidate = discovery_propose(SPACE, 42 + offset, archive)
+        assert candidate is not None
+        archive.append({**candidate, "terminal": True, "accepted": False})
+    assert len({item["candidate_hash"] for item in archive}) == 8

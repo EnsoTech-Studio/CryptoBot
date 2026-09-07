@@ -439,6 +439,8 @@ test("discovery submission uses the durable generator and archive endpoint", asy
     const run = await api.startSearch(draft);
     const archive = await api.discoveryArchive(run.search_run_id);
     assert.equal(submitted[0]?.generator_id, "discovery");
+    assert.equal((submitted[0]?.stop_conditions as { max_candidates: number }).max_candidates, 3);
+    assert.equal((submitted[0]?.search_space as { combination_threshold: number }).combination_threshold, 0.3);
     assert.equal((submitted[0]?.market as { dataset_version: string }).dataset_version, "binance_usdm:SOLUSDT:1m:2026-03-04");
     assert.equal(archive.candidates[0]?.accepted, true);
     assert.ok(requested.some((url) => url.endsWith("/api/v1/search-runs/discovery-1/archive")));
