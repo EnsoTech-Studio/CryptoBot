@@ -503,12 +503,21 @@ class StrategyAuthoringService:
         if self._backtest_verifier is not None:
             report["fixture_backtest"] = self._backtest_verifier(spec)
         if self._sandbox is not None:
-            sandbox_report = self._sandbox.run_contract(artifact)
-            report = {
-                **report,
-                **sandbox_report,
-                "checks": [*report["checks"], *sandbox_report.get("checks", [])],
-            }
+            try:
+                sandbox_report = self._sandbox.run_contract(artifact)
+                report = {
+                    **report,
+                    **sandbox_report,
+                    "checks": [*report["checks"], *sandbox_report.get("checks", [])],
+                }
+            except ApplicationError as exc:
+                if exc.code != "sandbox_unavailable":
+                    raise
+                report["sandbox"] = {
+                    "status": "skipped",
+                    "reason": "sandbox_unavailable",
+                    "message": "Docker sandbox is unavailable in this runtime; internal DSL preflight passed.",
+                }
         report_hash = _sha256(_canonical(report))
         require("StrategyImplementationAgent", "draft.mark_review_required")
         advance("REVIEW_REQUIRED")
