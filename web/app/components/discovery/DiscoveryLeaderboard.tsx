@@ -21,8 +21,8 @@ const LEADERBOARD_PAGE_SIZE = 5;
 export function DiscoveryLeaderboard({
   entries,
   archive,
-  demoArchiveCandidates,
-  demoLeaderboardEntries,
+  demoArchiveCandidates = [],
+  demoLeaderboardEntries = [],
   run,
   archiveState,
   referenceMode,
@@ -32,7 +32,7 @@ export function DiscoveryLeaderboard({
 }: {
   entries: LeaderboardEntry[];
   archive: DiscoveryArchive | null;
-  demoArchiveCandidates: DiscoveryArchiveCandidate[];
+  demoArchiveCandidates?: DiscoveryArchiveCandidate[];
   demoLeaderboardEntries?: LeaderboardEntry[];
   run: SearchRun | null;
   archiveState: "idle" | "loading" | "ready" | "unavailable";
@@ -49,7 +49,7 @@ export function DiscoveryLeaderboard({
   ];
   const leaderboardRows = [
     ...entries.map((entry) => ({ entry, demo: false })),
-    ...(demoLeaderboardEntries ?? []).map((entry) => ({ entry, demo: true })),
+    ...demoLeaderboardEntries.map((entry) => ({ entry, demo: true })),
   ];
   const discoveryRun = run?.generator_id === "discovery" || demoArchiveCandidates.length > 0;
   const live = !discoveryRun && entries.length > 0;

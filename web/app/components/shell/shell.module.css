@@ -453,6 +453,7 @@
 .inspectorToggle svg { width: 16px; height: 16px; }
 
 .headerIcon { position: relative; }
+.headerIcon { display: none; }
 .headerIcon::after {
   position: absolute;
   top: 6px;

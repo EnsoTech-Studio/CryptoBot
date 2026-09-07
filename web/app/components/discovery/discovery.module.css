@@ -34,6 +34,11 @@
 .sessionHistory { display: grid; gap: 8px; }
 .sessionHint { margin: 0; color: var(--ink-3); font-size: 12px; line-height: var(--leading-normal); }
 
+.sourceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.sourceHint { margin: 0; color: var(--ink-3); font-size: 12px; line-height: var(--leading-normal); }
+.activityLog { display: grid; gap: 5px; max-height: 148px; overflow: auto; margin: 0; padding-left: 19px; color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; line-height: var(--leading-normal); }
+.activityLog li::marker { color: var(--brand); }
+
 .builderColumn {
   display: grid;
   min-width: 0;
@@ -63,7 +68,7 @@
 .catalogRow {
   display: grid;
   width: 100%;
-  grid-template-columns: 44px minmax(0, 1fr) 16px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line-1);
@@ -97,6 +102,7 @@
 
 .catalogCopy { display: grid; min-width: 0; gap: 3px; }
 .catalogCopy > strong { font-size: 14px; font-weight: var(--weight-semibold); }
+.catalogCopy > small { color: var(--ink-3); font-family: var(--font-mono); font-size: 10px; }
 .catalogCopy > span { color: var(--ink-3); font-size: 11px; line-height: var(--leading-snug); }
 .catalogEmpty { margin: 0; color: var(--ink-3); font-size: 13px; line-height: var(--leading-normal); text-align: center; }
 
@@ -178,11 +184,11 @@
 .comboButton:hover { border-color: var(--line-3); color: var(--ink-1); }
 .comboActive { border-color: var(--brand); background: var(--brand-soft); color: var(--tint-brand-ink); }
 
-/* Weighted voting table: indicator / weight / signal */
+/* Weighted voting table: indicator / weight */
 .voteHead,
 .voteRow {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 148px 40px;
+  grid-template-columns: 26px minmax(0, 1fr) 148px;
   align-items: center;
   gap: 10px;
 }
@@ -194,7 +200,6 @@
 }
 
 .voteHead > span:nth-child(3) { text-align: center; }
-.voteHead > span:last-child { text-align: right; }
 
 .voteRow { min-height: 46px; }
 
@@ -226,88 +231,22 @@
 
 .voteIcon > svg { width: 15px; height: 15px; }
 
-.voteSignal {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  justify-self: end;
-  border-radius: 8px;
-  background: var(--surface-3);
-  color: var(--ink-3);
-}
-
-.voteSignal > svg { width: 15px; height: 15px; }
-.signalLong { background: var(--tint-green-bg); color: var(--data-up); }
-.signalShort { background: var(--tint-red-bg); color: var(--data-down); }
-
 .disabledWeights { opacity: 0.45; pointer-events: none; }
 
-/* Aggregate signal: three tiles inside one inner surface */
-.aggregateCard {
-  display: grid;
-  gap: 11px;
-  border: 1px solid var(--line-1);
-  border-radius: 10px;
-  background: var(--surface-2);
-  padding: 13px;
-}
-
-.aggregateTitle { font-size: 13px; font-weight: var(--weight-semibold); }
-
-.aggregateTiles {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.aggregateTile {
-  display: grid;
-  justify-items: center;
-  gap: 5px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  padding: 12px 6px;
-  text-align: center;
-}
-
-.aggregateTile > strong { font-size: 14px; font-weight: var(--weight-bold); letter-spacing: 0.01em; }
-.aggregateTile > svg { width: 17px; height: 17px; }
-.aggregateTile > b { font-family: var(--font-mono); font-size: 15px; font-weight: var(--weight-semibold); }
-
-.tileLong { border-color: var(--tint-green-line); background: var(--tint-green-bg); color: var(--data-up); }
-.tileHold { border-color: var(--line-2); background: var(--surface-1); color: var(--ink-2); }
-.tileShort { border-color: var(--tint-red-line); background: var(--tint-red-bg); color: var(--data-down); }
-
-.aggregateFoot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--ink-3);
-  font-size: 12px;
-}
-
-.aggregateFoot em { display: inline-flex; align-items: center; gap: 6px; font-style: normal; }
-
-.liveDot {
-  display: block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--status-live);
-}
-
+.builderActionBlock { display: grid; gap: 10px; margin-top: auto; padding-top: 4px; }
 .builderActions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-top: auto;
-  padding-top: 4px;
 }
 
 .builderActions button { min-height: 46px; font-size: 14px; }
 .builderActions button > svg { width: 16px; height: 16px; }
+.scheduledStrategies { display: grid; gap: 5px; border-top: 1px solid var(--line-1); padding-top: 9px; color: var(--ink-2); font-size: 12px; }
+.scheduledStrategies > strong { color: var(--ink-1); font-size: 12px; font-weight: var(--weight-semibold); }
+.scheduledStrategies > ul { display: grid; gap: 3px; margin: 0; padding-left: 18px; }
+.scheduledStrategies li::marker { color: var(--brand); }
+.scheduledStrategies code { color: var(--ink-3); font-family: var(--font-mono); font-size: 10px; }
 
 /* --- column 3: loop discovery, leaderboard, method, progress -------------- */
 
@@ -521,6 +460,7 @@
 .methodCopy > span { color: var(--ink-3); font-size: 12px; line-height: var(--leading-snug); }
 
 .methodRow input[type="radio"] { width: 18px; height: 18px; accent-color: var(--brand); justify-self: end; }
+.addMethodButton { width: 100%; min-height: 36px; font-size: 12px; }
 
 .unsupportedTag {
   border-radius: 5px;
@@ -534,6 +474,18 @@
 
 .progressBlock { display: grid; gap: 6px; }
 .progressLabel { color: var(--ink-2); font-size: 12px; }
+
+.discoveryStrategyList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: var(--leading-normal);
+}
+
+.discoveryStrategyList li::marker { color: var(--brand); font-family: var(--font-mono); font-weight: var(--weight-semibold); }
 
 .iterationValue {
   display: flex;
@@ -570,7 +522,7 @@
    three discovery columns without forcing the right panels to overlap. */
 @media (max-width: 1499px) {
   .workspace { grid-template-columns: 280px 400px minmax(0, 1fr); }
-  .voteHead, .voteRow { grid-template-columns: 26px minmax(0, 1fr) 124px 36px; }
+  .voteHead, .voteRow { grid-template-columns: 26px minmax(0, 1fr) 124px; }
   .tallPanel { min-height: 0; }
 }
 
@@ -587,6 +539,7 @@
   .methodProgressRow { height: auto; overflow: visible; }
   .methodProgressRow > section { height: auto; overflow: visible; }
   .progressMockActions { gap: 12px; }
+  .sourceGrid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 700px) {
@@ -604,19 +557,17 @@
     line-height: 24px;
   }
   .comboRow { grid-template-columns: minmax(0, 1fr); }
-  .aggregateTiles { grid-template-columns: minmax(0, 1fr); }
   .builderActions { grid-template-columns: minmax(0, 1fr); }
   .voteHead { display: none; }
   .voteRow {
-    grid-template-columns: 26px minmax(0, 1fr) 40px;
-    grid-template-areas: "check name signal" ". weight weight";
+    grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-areas: "check name" ". weight";
     row-gap: 8px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--line-1);
   }
   .voteRow > input[type="checkbox"] { grid-area: check; }
   .voteRow > .voteName { grid-area: name; }
-  .voteRow > .voteSignal { grid-area: signal; }
   .voteRow > span:nth-child(3) { grid-area: weight; }
   .leaderTable th:nth-child(4), .leaderTable td:nth-child(4) { display: none; }
 }
