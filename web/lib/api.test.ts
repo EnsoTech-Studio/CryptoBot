@@ -360,12 +360,67 @@ test("search submission preserves the catalog strategy version and defaults", as
     await api.startSearch(draft, [
       { strategy_id: "generated.rsi-9f3c", strategy_version: "v2", parameters: { period: 21 }, weight: 1 },
     ]);
+    assert.equal(submitted[0]?.generator_id, "random_search");
     assert.deepEqual((submitted[0]?.execution as { children: unknown[] }).children, [{
       strategy_id: "generated.rsi-9f3c",
       version: "v2",
       parameters: { period: 21 },
       weight: 1,
     }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("every enabled Discovery method submits its matching backend generator", async () => {
+  const originalFetch = globalThis.fetch;
+  const submitted: Record<string, unknown>[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/markets/datasets")) {
+      return new Response(JSON.stringify({
+        datasets: [{
+          id: "dataset-methods",
+          dataset_version: "fixture:BTCUSDT:15m:v1",
+          market: { provider: "binance_usdm", symbol: "BTCUSDT", timeframe: "15m" },
+          range_from: "2026-01-01T00:00:00Z",
+          range_to: "2026-01-02T00:00:00Z",
+          revision_no: 1,
+          candle_count: 96,
+          content_hash: "candle-hash",
+          bbo_content_hash: "bbo-hash",
+        }],
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    submitted.push(body);
+    return new Response(JSON.stringify({
+      search_run_id: `search-${submitted.length}`,
+      status: "queued",
+      generator_id: body.generator_id,
+      generated: 0,
+      tested: 0,
+      failed: 0,
+      best_score: null,
+      current_candidate_hash: null,
+      dataset_version: "fixture:BTCUSDT:15m:v1",
+      content_hash: "candle-hash",
+      stop_reason: null,
+      updated_at: "2026-01-01T00:00:00Z",
+    }), { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const methods = ["discovery", "random_search", "domain_guided", "genetic"] as const;
+    for (const method of methods) {
+      await api.startSearch({
+        ...createDraft({ provider: "binance_usdm", symbol: "BTCUSDT" }, "15m"),
+        selectedStrategyIds: ["ma_cross", "rsi"],
+        weights: { ma_cross: 0.5, rsi: 0.5 },
+        method,
+      });
+    }
+    assert.deepEqual(submitted.map((body) => body.generator_id), methods);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -4,8 +4,9 @@ import test from "node:test";
 import { createDraft, DISCOVERY_METHODS } from "./discovery";
 
 
-test("unsupported discovery generators stay disabled instead of submitting a 422", () => {
-  assert.equal(DISCOVERY_METHODS.find((method) => method.value === "genetic")?.supported, true);
+test("all Discovery methods backed by generators remain selectable", () => {
+  const enabled = DISCOVERY_METHODS.filter((method) => method.supported).map((method) => method.value);
+  assert.deepEqual(enabled, ["discovery", "random_search", "domain_guided", "genetic"]);
 });
 
 test("new discovery drafts default to the durable discovery loop", () => {

@@ -594,8 +594,7 @@ def _legacy_rule(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         raw_operation = str(value.get("op") or value.get("type") or value.get("condition") or "").lower()
         if raw_operation in {"false", "always_false", "never", "none"}:
-            # Preserve a disabled direction without extending runtime operators.
-            return {"op": "equals", "left": 0, "right": 1}
+            raise ValueError("disabled strategy direction is not supported")
         if raw_operation in {"and", "all", "or", "any"}:
             items = value.get("items")
             if not isinstance(items, list):
@@ -619,6 +618,8 @@ def _legacy_rule(value: object) -> dict[str, object]:
         if right == "price":
             right = "close"
         if operation in {"crosses_above", "crosses_below", "above", "below", "equals"} and isinstance(left, (str, int, float)) and isinstance(right, (str, int, float)):
+            if operation == "equals" and isinstance(left, (int, float)) and isinstance(right, (int, float)) and left != right:
+                raise ValueError("constant inequality is not an executable strategy rule")
             return {"op": operation, "left": left, "right": right}
         condition = str(value.get("condition", ""))
     else:

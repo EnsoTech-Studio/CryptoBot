@@ -178,4 +178,4 @@ function formatImportedAt(value: string): string {
   }).format(date);
 }
 
-export const PROMPT_LIMIT = 1000;
+export const PROMPT_LIMIT = 8000;

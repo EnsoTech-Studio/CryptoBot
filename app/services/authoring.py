@@ -138,6 +138,11 @@ def _validate_rule(rule: Any, references: set[str], *, entry: bool) -> None:
         return
     if op not in _COMPARISON_OPERATORS:
         raise ApplicationError("invalid_strategy_spec", f"rule operation {op!r} is not supported", 422)
+    if op == "equals" and all(
+        isinstance(rule.get(side), (int, float)) and not isinstance(rule.get(side), bool)
+        for side in ("left", "right")
+    ) and rule["left"] != rule["right"]:
+        raise ApplicationError("invalid_strategy_spec", "constant inequality is not an executable strategy rule", 422)
     for side in ("left", "right"):
         value = rule.get(side)
         if not isinstance(value, (str, int, float)) or (isinstance(value, str) and value not in references):

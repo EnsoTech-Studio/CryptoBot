@@ -24,10 +24,14 @@ export function StrategyScreen() {
     user,
     refreshStaticData,
     runBacktest,
+    strategyAuthoringPrompt,
+    setStrategyAuthoringPrompt,
   } = useWorkspace();
   const router = useRouter();
 
-  const [prompt, setPrompt] = useState(SAMPLE_PROMPT);
+  const [prompt, setPrompt] = useState(
+    () => strategyAuthoringPrompt ?? SAMPLE_PROMPT,
+  );
   const [url, setUrl] = useState(SAMPLE_URL);
   const [name, setName] = useState(SAVE_FORM.name);
   const [version, setVersion] = useState(SAVE_FORM.version);
@@ -186,10 +190,16 @@ export function StrategyScreen() {
             <AuthoringInputs
               prompt={prompt}
               url={url}
-              onPrompt={setPrompt}
+              onPrompt={(value) => {
+                setPrompt(value);
+                setStrategyAuthoringPrompt(null);
+              }}
               onUrl={setUrl}
               busy={busy}
-              onAnalyze={() => void createDraft({ type: "text", text: prompt })}
+              onAnalyze={() => {
+                setStrategyAuthoringPrompt(null);
+                void createDraft({ type: "text", text: prompt });
+              }}
               onExtract={() => void createDraft({ type: "approved_url", url })}
             />
           </div>

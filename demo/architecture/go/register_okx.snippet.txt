@@ -1,0 +1,4 @@
+Documentation snippet for server/cmd/api/main.go. Paste the provider line into
+the existing NewProviderRegistry call; this is not a standalone Go file.
+
+marketadapter.NewOKXFixtureProvider(okxCandles),

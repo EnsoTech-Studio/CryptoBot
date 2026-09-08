@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { api, type NewsStrategyAnalysisModel } from "../../../lib/api";
 import {
@@ -12,6 +13,7 @@ import {
   NEWS_SENTIMENT_STRATEGY,
   newsStrategyEnginePrompt,
 } from "../../../lib/news-strategy-export";
+import { useWorkspace } from "../../providers/workspace";
 import { Button, Field, Panel, ProgressBar, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./news.module.css";
@@ -50,6 +52,8 @@ export function AnalysisRail({
   averageScore: number | null;
   referenceMode: boolean;
 }) {
+  const router = useRouter();
+  const { setStrategyAuthoringPrompt } = useWorkspace();
   const [exportStatus, setExportStatus] = useState("");
   const [strategyBusy, setStrategyBusy] = useState(false);
   const [strategyModel, setStrategyModel] =
@@ -148,6 +152,12 @@ export function AnalysisRail({
         ? "Đã tải news-strategy-analysis.json."
         : "Đã tải news-sentiment.strategy.json.",
     );
+  };
+
+  const useInStrategyAuthoring = () => {
+    if (!strategyAnalysis.result) return;
+    setStrategyAuthoringPrompt(strategyAnalysis.result);
+    router.push("/strategies");
   };
 
   return (
@@ -323,6 +333,15 @@ export function AnalysisRail({
           </label>
 
           <div className={styles.stripActions}>
+            <Button
+              type="button"
+              variant="primary"
+              disabled={!strategyAnalysis.result}
+              onClick={useInStrategyAuthoring}
+            >
+              <Icon name="strategy" aria-hidden="true" />
+              Tạo strategy từ kết quả
+            </Button>
             <Button type="button" onClick={copyStrategy}>
               <Icon name="copy" aria-hidden="true" />
               Sao chép

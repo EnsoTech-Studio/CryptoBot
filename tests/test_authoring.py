@@ -123,6 +123,19 @@ def test_validate_rejects_a_warmup_shorter_than_its_indicator_period():
         validate_spec(valid_spec(warmup_bars=13))
 
 
+def test_validate_rejects_a_constant_inequality_entry_rule():
+    with pytest.raises(ApplicationError, match="constant inequality"):
+        validate_spec(
+            valid_spec(
+                rules={
+                    "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                    "short_entry": {"op": "equals", "left": 0, "right": 1},
+                    "exit": {"op": "opposite_signal"},
+                }
+            )
+        )
+
+
 @pytest.mark.parametrize(
     "rule",
     [

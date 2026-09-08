@@ -33,6 +33,7 @@ export function NewsScreen() {
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [analysisStatus, setAnalysisStatus] = useState<{ tone: "status" | "alert"; text: string } | null>(null);
+  const [updatedAt, setUpdatedAt] = useState("-");
 
   const selectedSourceKeys = useMemo(() => {
     const ids = new Set(selectedSourceIds);
@@ -77,6 +78,14 @@ export function NewsScreen() {
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshMinutes]);
+
+  useEffect(() => {
+    if (isMock) return;
+    const frame = window.requestAnimationFrame(() => {
+      setUpdatedAt(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isMock, news]);
 
   function toggleSource(sourceId: string) {
     setSelectedSourceIds((current) => (
@@ -175,7 +184,7 @@ export function NewsScreen() {
           <NewsFeed
             items={visibleItems}
             state={newsState}
-            updatedAt={isMock ? "10:45:18" : new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            updatedAt={isMock ? "10:45:18" : updatedAt}
             isMock={isMock}
             onShowAll={() => void refreshStaticData()}
           />

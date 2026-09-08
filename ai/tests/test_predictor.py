@@ -123,7 +123,7 @@ def test_llm_boolean_bollinger_rule_shape_is_canonicalized() -> None:
                     "left": {"op": "cross_below", "left": {"indicator_id": "rsi_14"}, "right": {"value": 30}},
                     "right": {"op": "below", "left": {"series": "close"}, "right": {"indicator_id": "bb", "component": "lower"}},
                 },
-                "short_entry": {"op": "always_false"},
+                "short_entry": {"op": "above", "left": "close", "right": {"indicator_id": "bb", "component": "upper"}},
             },
         }
     )
@@ -139,7 +139,35 @@ def test_llm_boolean_bollinger_rule_shape_is_canonicalized() -> None:
             {"op": "below", "left": "close", "right": "bb.lower"},
         ],
     }
-    assert result["rules"]["short_entry"] == {"op": "equals", "left": 0, "right": 1}
+    assert result["rules"]["short_entry"] == {"op": "above", "left": "close", "right": "bb.upper"}
+
+
+def test_llm_disabled_direction_is_rejected() -> None:
+    with pytest.raises(ValueError, match="disabled strategy direction"):
+        _canonicalize_strategy_spec(
+            {
+                "strategy_id": "generated_rsi_001",
+                "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+                "rules": {
+                    "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                    "short_entry": {"op": "always_false"},
+                },
+            }
+        )
+
+
+def test_llm_constant_inequality_direction_is_rejected() -> None:
+    with pytest.raises(ValueError, match="constant inequality"):
+        _canonicalize_strategy_spec(
+            {
+                "strategy_id": "generated_rsi_001",
+                "indicators": [{"id": "rsi14", "kind": "rsi", "period": 14}],
+                "rules": {
+                    "long_entry": {"op": "below", "left": "rsi14", "right": 30},
+                    "short_entry": {"op": "equals", "left": 0, "right": 1},
+                },
+            }
+        )
 
 
 def test_design_prompt_requires_the_runtime_dsl_shape(monkeypatch) -> None:

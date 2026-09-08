@@ -125,6 +125,7 @@ export function DiscoveryScreen() {
     ...(missingStrategies.length > 0 ? ["Một hoặc nhiều strategy đã chọn không còn trong registry."] : []),
   ];
   const canSubmit = issues.length === 0;
+  const searchActive = ["queued", "running", "paused"].includes(search?.status ?? "");
 
   function toggleStrategy(strategyId: string) {
     setDraft((current) => {
@@ -269,7 +270,7 @@ export function DiscoveryScreen() {
           <div className={styles.methodProgressRow}>
             <DiscoveryMethodSelector
               method={activeDraft.method}
-              disabled={search?.status === "running"}
+              disabled={searchActive}
               onChange={(method) => setDraft((current) => ({ ...current, method }))}
             />
             <DiscoveryProgress

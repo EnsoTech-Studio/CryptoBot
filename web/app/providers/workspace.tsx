@@ -191,6 +191,8 @@ type WorkspaceValue = {
   prediction: Prediction | null;
   predictionText: string;
   setPredictionText: (text: string) => void;
+  strategyAuthoringPrompt: string | null;
+  setStrategyAuthoringPrompt: (text: string | null) => void;
   notice: Notice;
   theme: Theme;
   chooseTheme: (theme: Theme) => void;
@@ -283,6 +285,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [coverage, setCoverage] = useState<WorkspaceValue["coverage"]>(null);
   const [newsDistribution, setNewsDistribution] = useState<WorkspaceValue["newsDistribution"]>(null);
   const [newsAverageScore, setNewsAverageScore] = useState<number | null>(null);
+  const [strategyAuthoringPrompt, setStrategyAuthoringPrompt] = useState<string | null>(null);
   const [provenance, setProvenance] = useState<Record<string, unknown> | null>(null);
   const [predictionText, setPredictionText] = useState("Ethereum inflows look positive, but volatility risk remains.");
   const [prediction, setPrediction] = useState<Prediction | null>(null);
@@ -1222,6 +1225,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     prediction,
     predictionText,
     setPredictionText,
+    strategyAuthoringPrompt,
+    setStrategyAuthoringPrompt,
     notice,
     theme,
     chooseTheme,
@@ -1332,7 +1337,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     async loadProvenance(id) {
       try {
         setProvenance(await api.provenance(id));
-        setInspectorTab("provenance");
+        openInspector("provenance");
       } catch (error) {
         report(messageFromError(error), "error");
       }
