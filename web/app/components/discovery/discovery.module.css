@@ -188,7 +188,7 @@
 .voteHead,
 .voteRow {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 148px;
+  grid-template-columns: 26px minmax(0, 1fr) 174px;
   align-items: center;
   gap: 10px;
 }
@@ -231,7 +231,16 @@
 
 .voteIcon > svg { width: 15px; height: 15px; }
 
-.disabledWeights { opacity: 0.45; pointer-events: none; }
+/* Keep the configured values legible when Majority Vote makes the controls
+   inactive. Previously opacity on this wrapper faded labels and numeric values
+   together, which made the weight table look like text was missing. */
+.disabledWeights { pointer-events: none; }
+.disabledWeights .voteRow > :last-child { opacity: 0.62; }
+.disabledWeights .voteRow > :last-child input[type="number"]:disabled {
+  color: var(--ink-2);
+  font-weight: var(--weight-semibold);
+  opacity: 1;
+}
 
 .builderActionBlock { display: grid; gap: 10px; margin-top: auto; padding-top: 4px; }
 .builderActions {
@@ -428,6 +437,8 @@
 
 .progressMockActions { display: grid; gap: 8px; }
 
+.methodSelect { display: grid; gap: 8px; }
+.methodSelect p { margin: 0; color: var(--ink-3); font-size: 12px; line-height: var(--leading-snug); }
 .methodList { display: grid; gap: 4px; }
 
 .methodRow {
@@ -460,7 +471,7 @@
 .methodCopy > span { color: var(--ink-3); font-size: 12px; line-height: var(--leading-snug); }
 
 .methodRow input[type="radio"] { width: 18px; height: 18px; accent-color: var(--brand); justify-self: end; }
-.addMethodButton { width: 100%; min-height: 36px; font-size: 12px; }
+.addMethodButton { display: none; }
 
 .unsupportedTag {
   border-radius: 5px;
@@ -522,7 +533,7 @@
    three discovery columns without forcing the right panels to overlap. */
 @media (max-width: 1499px) {
   .workspace { grid-template-columns: 280px 400px minmax(0, 1fr); }
-  .voteHead, .voteRow { grid-template-columns: 26px minmax(0, 1fr) 124px; }
+  .voteHead, .voteRow { grid-template-columns: 26px minmax(0, 1fr) 152px; }
   .tallPanel { min-height: 0; }
 }
 

@@ -26,8 +26,8 @@ const ROW_ICON: Record<string, IconName> = {
 
 /* Column 2, middle: the weight editor plus the aggregate signal tiles.
    Weights only apply to weighted_vote — the backend majority_vote combiner
-   ignores them (app/domain/strategy/composite/contract.py), so the rows dim
-   instead of pretending the value matters. */
+   ignores them, so only the controls are visually subdued while the configured
+   strategy names and numeric values remain readable. */
 export function WeightedVotingPanel({
   draft,
   strategies,

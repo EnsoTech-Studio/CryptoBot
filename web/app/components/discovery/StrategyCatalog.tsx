@@ -64,7 +64,7 @@ function catalogEntryFor(strategy: Strategy): CatalogEntry {
     : "neutral";
   return {
     strategyId: strategy.strategy_id,
-    label: strategy.display_name,
+    label: strategy.strategy_id,
     description: strategy.description || "Chưa có mô tả strategy.",
     icon,
     version: strategy.version,

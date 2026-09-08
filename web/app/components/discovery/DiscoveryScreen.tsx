@@ -583,7 +583,7 @@ export function DiscoveryScreen() {
           <div className={styles.methodProgressRow}>
             <DiscoveryMethodSelector
               method={activeDraft.method}
-disabled={searchActive}
+              disabled={searchActive}
               onChange={(method) =>
                 setDraft((current) => ({ ...current, method }))
               }
@@ -603,6 +603,20 @@ disabled={searchActive}
               {activityLog.length > 0 ? activityLog.map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>) : <li>Chưa có hoạt động Discovery.</li>}
             </ol>
           </Panel> */}
+          <Panel
+            title="Nhật ký Discovery"
+            info="Cập nhật từ snapshot và trạng thái search run."
+          >
+            <ol className={styles.activityLog} aria-live="polite">
+              {activityLog.length > 0 ? (
+                activityLog.map((entry, index) => (
+                  <li key={`${entry}-${index}`}>{entry}</li>
+                ))
+              ) : (
+                <li>Chưa có hoạt động Discovery.</li>
+              )}
+            </ol>
+          </Panel>
         </div>
       </div>
     </section>

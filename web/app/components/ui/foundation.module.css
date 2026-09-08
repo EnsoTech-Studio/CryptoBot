@@ -337,7 +337,7 @@
 .range:disabled::-webkit-slider-thumb { background: var(--ink-3); box-shadow: none; }
 
 .weightNumber {
-  width: 58px;
+    width: 76px;
   min-height: 32px;
   flex: none;
   padding: 0 7px;

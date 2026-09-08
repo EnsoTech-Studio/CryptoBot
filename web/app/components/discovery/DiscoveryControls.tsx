@@ -10,7 +10,7 @@ import {
   type DiscoveryMethod,
 } from "../../../lib/discovery";
 import type { SearchRun } from "../../../lib/api";
-import { Button, Panel, PlannedNotice, ProgressBar } from "../ui/Foundation";
+import { Button, Panel, PlannedNotice, ProgressBar, Select } from "../ui/Foundation";
 import { Icon } from "../ui/Icon";
 import styles from "./discovery.module.css";
 
@@ -25,12 +25,29 @@ export function DiscoveryMethodSelector({
   disabled: boolean;
   onChange: (method: DiscoveryMethod) => void;
 }) {
+  const selectedMethod = DISCOVERY_METHODS.find((option) => option.value === method);
   return (
     <Panel
       title="Phương pháp Discovery"
       info="Bộ sinh biến thể được backend hỗ trợ."
     >
+      <div className={styles.methodSelect}>
+        <Select
+          aria-label="Discovery method"
+          value={method}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value as DiscoveryMethod)}
+        >
+          {DISCOVERY_METHODS.map((option) => (
+            <option key={option.value} value={option.value} disabled={!option.supported}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+        {selectedMethod ? <p>{selectedMethod.description}</p> : null}
+      </div>
       <div
+        hidden
         className={styles.methodList}
         role="radiogroup"
         aria-label="Phương pháp Discovery"
@@ -65,7 +82,12 @@ export function DiscoveryMethodSelector({
       {/* <p className={styles.progressLabel}>
         LLM agent dùng archive và research context; test data vẫn được niêm phong.
       </p> */}
-      <Button variant="secondary" className={styles.addMethodButton} disabled title="A new method must be registered in the backend before it can run.">
+      <Button
+        variant="secondary"
+        className={styles.addMethodButton}
+        disabled
+        title="A new method must be registered in the backend before it can run."
+      >
         Thêm phương pháp
       </Button>
     </Panel>
@@ -237,9 +259,7 @@ export function DiscoveryProgress({
               liệu thật.
             </PlannedNotice>
           ) : live ? (
-            <span className={styles.progressLabel}>
-              Run trước đã kết thúc. Có thể bắt đầu Discovery mới.
-            </span>
+            <span className={styles.progressLabel}></span>
           ) : null}
           <div className={styles.runActions}>
             <Button variant="primary" disabled={!canStart} onClick={onStart}>
