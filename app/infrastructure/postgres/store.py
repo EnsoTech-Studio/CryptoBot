@@ -17,7 +17,7 @@ from ...domain.common import hash_canonical_json
 from ...domain.market import Candle
 from ...domain.news import ApprovedSource, CollectedItem
 from ...domain.sentiment import Result as SentimentResult
-from ...errors import conflict, not_found, validation
+from ...errors import ApplicationError, conflict, not_found, validation
 from ..news.security import canonical_url, sha256_text
 from ...schemas import (
     ExperimentCreateIn,
@@ -274,6 +274,78 @@ class Store:
             }
             for row in rows
         ]
+
+    def delete_generated_strategy(self, strategy_id: str, owner_id: UUID) -> None:
+        """Remove an unpublished-from-history DSL strategy owned by ``owner_id``.
+
+        Strategy versions normally are append-only because experiment records are
+        reproducibility evidence.  The narrow exception below is intentionally
+        limited to generated strategies that have never appeared in an
+        experiment (including as a member of a composite candidate).
+        """
+        if not strategy_id.startswith("generated."):
+            raise ApplicationError(
+                "strategy_delete_forbidden",
+                "Only generated strategies can be deleted from the registry",
+                403,
+            )
+
+        with self._connect() as connection:
+            draft = connection.execute(
+                """
+                SELECT draft.owner_id
+                FROM strategy_drafts draft
+                JOIN strategy_draft_revisions revision
+                  ON revision.draft_id=draft.id
+                WHERE draft.status='APPROVED'
+                  AND revision.spec_json->>'strategy_id'=%s
+                ORDER BY revision.revision DESC
+                LIMIT 1
+                """,
+                (strategy_id,),
+            ).fetchone()
+            if draft is None:
+                raise not_found("generated_strategy")
+            if draft["owner_id"] != owner_id:
+                raise ApplicationError(
+                    "strategy_delete_forbidden",
+                    "You can only delete strategies you created",
+                    403,
+                )
+
+            referenced = connection.execute(
+                """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM experiments experiment
+                    JOIN strategy_versions version ON version.id=experiment.strategy_version_id
+                    WHERE version.strategy_id=%s
+                       OR experiment.candidate_definition::text LIKE %s
+                ) AS exists
+                """,
+                (strategy_id, f'%{strategy_id}%'),
+            ).fetchone()
+            if referenced and referenced["exists"]:
+                raise conflict(
+                    "strategy_has_backtest_history",
+                    "This strategy has backtest history and cannot be deleted",
+                )
+
+            version = connection.execute(
+                "SELECT 1 FROM strategy_versions WHERE strategy_id=%s",
+                (strategy_id,),
+            ).fetchone()
+            if version is None:
+                raise not_found("generated_strategy")
+
+            # Migration 014 allows this one audited escape hatch from the
+            # append-only guard.  SET LOCAL scopes it to this transaction.
+            connection.execute("SET LOCAL cryptobot.allow_generated_strategy_delete = 'on'")
+            connection.execute(
+                "DELETE FROM strategy_runtime_specs WHERE strategy_id=%s", (strategy_id,)
+            )
+            connection.execute("DELETE FROM strategy_versions WHERE strategy_id=%s", (strategy_id,))
+            connection.execute("DELETE FROM strategy_definitions WHERE strategy_id=%s", (strategy_id,))
 
     def create_strategy_draft(
         self,

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUrl, type MarketDataset } from "../../../lib/api";
 import { MOCK_DATASETS, MOCK_TRADES } from "../../../lib/backtest-mock";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
+import { messageFromError } from "../../../lib/format";
 import { marketKey } from "../../../lib/market";
 import {
   BACKTEST_HANDOFF_KEY,
@@ -61,6 +62,7 @@ function BacktestContent() {
     savedCompositeStrategies,
     user,
     dataMode,
+    refreshStaticData,
   } = useWorkspace();
   const userId = user?.id;
 
@@ -86,6 +88,12 @@ function BacktestContent() {
     "idle" | "running" | "completed"
   >("idle");
   const [submitPending, setSubmitPending] = useState(false);
+  const [deletingStrategyId, setDeletingStrategyId] = useState<string | null>(
+    null,
+  );
+  const [strategyDeleteMessage, setStrategyDeleteMessage] = useState<
+    string | null
+  >(null);
   const [activityLog, setActivityLog] = useState<string[]>([]);
   const submitLock = useRef(false);
   const submitOriginExperimentId = useRef<string | null>(null);
@@ -105,11 +113,13 @@ function BacktestContent() {
     [availableTimeframes, market, marketPairs],
   );
   const defaultStrategyId = defaultBacktestStrategyId(backtestStrategies);
-  const effectiveStrategyId = backtestStrategies.some(
-    (strategy) => strategy.strategy_id === draft.strategyId,
-  )
-    ? draft.strategyId
-    : defaultStrategyId || draft.strategyId;
+  const effectiveStrategyId = draft.strategyId
+    ? backtestStrategies.some(
+        (strategy) => strategy.strategy_id === draft.strategyId,
+      )
+      ? draft.strategyId
+      : defaultStrategyId
+    : "";
   const effectiveTimeframe = defaultBacktestTimeframe(
     backtestTimeframes,
     draft.timeframe,
@@ -376,6 +386,35 @@ function BacktestContent() {
     setDraft((current) => ({ ...current, ...next }));
   }
 
+  async function deleteStrategy(strategyId: string) {
+    setDeletingStrategyId(strategyId);
+    setStrategyDeleteMessage(null);
+    try {
+      await api.deleteStrategy(strategyId);
+      setDraft((current) => ({
+        ...current,
+        strategyId: current.strategyId === strategyId ? "" : current.strategyId,
+        selectedCompositeId: current.selectedStrategyIds.includes(strategyId)
+          ? undefined
+          : current.selectedCompositeId,
+        selectedStrategyIds: current.selectedStrategyIds.filter(
+          (id) => id !== strategyId,
+        ),
+        selectedStrategyWeights: Object.fromEntries(
+          Object.entries(current.selectedStrategyWeights ?? {}).filter(
+            ([id]) => id !== strategyId,
+          ),
+        ),
+      }));
+      await refreshStaticData();
+      setStrategyDeleteMessage(`Đã xóa ${strategyId} khỏi Strategy Library.`);
+    } catch (error) {
+      setStrategyDeleteMessage(messageFromError(error));
+    } finally {
+      setDeletingStrategyId(null);
+    }
+  }
+
   function submit() {
     if (submitLock.current || noStrategies) return;
     submitLock.current = true;
@@ -508,6 +547,13 @@ function BacktestContent() {
             Hãy chọn strategy hợp lệ để chạy backtest.
           </StatusMessage>
         ) : null}
+        {strategyDeleteMessage ? (
+          <StatusMessage
+            tone={strategyDeleteMessage.startsWith("Đã xóa") ? "live" : "error"}
+          >
+            {strategyDeleteMessage}
+          </StatusMessage>
+        ) : null}
         {dataMode === "mock" && mockRunState === "completed" ? (
           <StatusMessage tone="live">
             Backtest mock đã hoàn tất — kết quả đang hiển thị từ dữ liệu tham
@@ -543,6 +589,9 @@ function BacktestContent() {
           datasetLoadState={datasetLoadState}
           disabled={running}
           onChange={patch}
+          canDeleteStrategies={Boolean(user) && dataMode !== "mock"}
+          deletingStrategyId={deletingStrategyId}
+          onDeleteStrategy={deleteStrategy}
         />
 
         <div className={styles.resultsRow}>

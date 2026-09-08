@@ -535,6 +535,11 @@ export const api = {
   strategies() {
     return request<{ strategies: Strategy[] }>("/api/v1/strategies");
   },
+  deleteStrategy(strategyId: string) {
+    return request<void>(`/api/v1/strategies/${encodeURIComponent(strategyId)}`, {
+      method: "DELETE",
+    });
+  },
   createStrategyDraft(
     source: { type: "text"; text: string } | { type: "approved_url"; url: string },
     nameHint?: string,

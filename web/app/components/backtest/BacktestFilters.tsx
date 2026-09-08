@@ -19,6 +19,9 @@ export function BacktestFilters({
   datasetLoadState,
   disabled,
   onChange,
+  canDeleteStrategies,
+  deletingStrategyId,
+  onDeleteStrategy,
 }: {
   draft: BacktestDraft;
   pairs: MarketPair[];
@@ -29,6 +32,9 @@ export function BacktestFilters({
   datasetLoadState: "loading" | "ready" | "empty" | "error";
   disabled: boolean;
   onChange: (patch: Partial<BacktestDraft>) => void;
+  canDeleteStrategies: boolean;
+  deletingStrategyId: string | null;
+  onDeleteStrategy: (strategyId: string) => Promise<void>;
 }) {
   const pairOptions = pairs.length > 0
     ? pairOptionsByVenue(pairs, draft.market)
@@ -128,14 +134,19 @@ export function BacktestFilters({
 
       {draft.mode === "single" ? (
         <Field label="Strategy">
-          <Select value={draft.strategyId} disabled={disabled || strategies.length === 0} onChange={(event) => onChange({ strategyId: event.target.value })}>
-            {strategies.map((strategy) => (
-              <option key={strategy.strategy_id} value={strategy.strategy_id}>{strategy.display_name}</option>
-            ))}
-          </Select>
+          <StrategyLibraryPicker
+            mode="single"
+            strategies={strategies}
+            selectedStrategyIds={draft.strategyId ? [draft.strategyId] : []}
+            disabled={disabled}
+            canDeleteStrategies={canDeleteStrategies}
+            deletingStrategyId={deletingStrategyId}
+            onChange={(strategyId) => onChange({ strategyId: String(strategyId) })}
+            onDeleteStrategy={onDeleteStrategy}
+          />
         </Field>
-      ) : savedComposites.length > 0 || hasDiscoveryComposite ? (
-        <Field label="Strategy kết hợp" hint="Chọn strategy đã lưu hoặc tự chọn từ registry.">
+      ) : (
+        <Field label="Strategy kết hợp" hint="Chọn strategy đã lưu hoặc tổ hợp được chuyển từ Discovery.">
           <Select
             aria-label="Strategy kết hợp đã lưu"
             value={draft.selectedCompositeId ?? ""}
@@ -148,7 +159,11 @@ export function BacktestFilters({
               });
             }}
           >
-            <option value="">Tự chọn strategy</option>
+            <option value="">
+              Tổ hợp demo · {draft.selectedStrategyIds
+                .map((id) => strategies.find((strategy) => strategy.strategy_id === id)?.display_name ?? id)
+                .join(" + ") || "Đang chuẩn bị strategy"}
+            </option>
             {hasDiscoveryComposite ? (
               <option value={DISCOVERY_BACKTEST_COMPOSITE_ID}>
                 Discovery · {draft.selectedStrategyIds.map((id) => strategies.find((strategy) => strategy.strategy_id === id)?.display_name ?? id).join(" + ")}
@@ -159,7 +174,7 @@ export function BacktestFilters({
             ))}
           </Select>
         </Field>
-      ) : null}
+      )}
 
       <div className={styles.executionField}>
         <span className={styles.executionFieldLabel}>Execution settings</span>
@@ -205,6 +220,89 @@ export function BacktestFilters({
         </details>
       </div>
     </div>
+  );
+}
+
+function StrategyLibraryPicker({
+  mode,
+  strategies,
+  selectedStrategyIds,
+  disabled,
+  canDeleteStrategies,
+  deletingStrategyId,
+  onChange,
+  onDeleteStrategy,
+}: {
+  mode: BacktestMode;
+  strategies: Strategy[];
+  selectedStrategyIds: string[];
+  disabled: boolean;
+  canDeleteStrategies: boolean;
+  deletingStrategyId: string | null;
+  onChange: (value: string | string[]) => void;
+  onDeleteStrategy: (strategyId: string) => Promise<void>;
+}) {
+  const selectedLabels = selectedStrategyIds.map((strategyId) =>
+    strategies.find((strategy) => strategy.strategy_id === strategyId)?.strategy_id ?? strategyId,
+  );
+  const summary = mode === "single"
+    ? selectedLabels[0] ?? "Chọn strategy"
+    : selectedLabels.length > 0
+      ? `${selectedLabels.length} strategy được chọn`
+      : "Chọn strategy";
+
+  return (
+    <details className={styles.strategyPicker}>
+      <summary aria-disabled={disabled || strategies.length === 0}>{summary}</summary>
+      <div className={styles.strategyChecks} aria-label="Danh sách strategy trong registry">
+        {strategies.map((strategy) => {
+          const selected = selectedStrategyIds.includes(strategy.strategy_id);
+          const canDelete = canDeleteStrategies && strategy.strategy_id.startsWith("generated.");
+          const deleting = deletingStrategyId === strategy.strategy_id;
+          return (
+            <div className={styles.strategyOption} key={strategy.strategy_id}>
+              <label className={styles.strategyCheck}>
+                <input
+                  type={mode === "single" ? "radio" : "checkbox"}
+                  name={mode === "single" ? "backtest-strategy" : undefined}
+                  checked={selected}
+                  disabled={disabled || deleting}
+                  onChange={() => {
+                    if (mode === "single") {
+                      onChange(strategy.strategy_id);
+                      return;
+                    }
+                    onChange(selected
+                      ? selectedStrategyIds.filter((id) => id !== strategy.strategy_id)
+                      : [...selectedStrategyIds, strategy.strategy_id]);
+                  }}
+                />
+                <span>
+                  <strong>{strategy.strategy_id}</strong>
+                  <small>{strategy.display_name}</small>
+                </span>
+              </label>
+              {canDelete ? (
+                <button
+                  type="button"
+                  className={styles.deleteStrategyButton}
+                  disabled={disabled || deleting}
+                  aria-label={`Xóa hẳn strategy ${strategy.strategy_id}`}
+                  title="Xóa strategy khỏi registry"
+                  onClick={() => {
+                    if (window.confirm(`Xóa hẳn strategy ${strategy.strategy_id} khỏi registry? Thao tác này không thể hoàn tác.`)) {
+                      void onDeleteStrategy(strategy.strategy_id);
+                    }
+                  }}
+                >
+                  <Icon name="trash" />
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 

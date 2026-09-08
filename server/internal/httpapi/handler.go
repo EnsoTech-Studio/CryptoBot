@@ -174,6 +174,7 @@ func NewRouter(handler *Handler) http.Handler {
 	mux.HandleFunc("/api/v1/markets/status", handler.marketStatus)
 	mux.HandleFunc("/api/v1/markets/stream", handler.marketStream)
 	mux.HandleFunc("/api/v1/strategies", handler.strategies)
+	mux.HandleFunc("/api/v1/strategies/", handler.strategyByID)
 	mux.HandleFunc("/api/v1/strategy-drafts", handler.strategyDrafts)
 	mux.HandleFunc("/api/v1/strategy-drafts/", handler.strategyDraftByID)
 	mux.HandleFunc("/api/v1/experiments", handler.experiments)
@@ -588,6 +589,22 @@ func (h *Handler) strategies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.callResearch(w, r, http.MethodGet, "/api/v1/strategies", nil, nil)
+}
+
+func (h *Handler) strategyByID(w http.ResponseWriter, r *http.Request) {
+	strategyID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/strategies/"), "/")
+	if strategyID == "" || strings.Contains(strategyID, "/") {
+		writeError(w, http.StatusNotFound, "not_found", "Strategy not found")
+		return
+	}
+	if !allowMethod(w, r, http.MethodDelete) {
+		return
+	}
+	principal, ok := h.requireCommandAuth(w, r)
+	if !ok {
+		return
+	}
+	h.callResearch(w, r, http.MethodDelete, "/api/v1/strategies/"+strategyID, nil, &principal)
 }
 
 func (h *Handler) strategyDrafts(w http.ResponseWriter, r *http.Request) {
@@ -1229,7 +1246,7 @@ func (h *Handler) withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, X-Request-ID, X-Correlation-ID, Idempotency-Key")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		}
 		w.Header().Set("Vary", "Origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")

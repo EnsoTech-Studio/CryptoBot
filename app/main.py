@@ -369,6 +369,14 @@ def list_strategies(_auth: Internal, request: Request) -> dict[str, list[dict[st
         return {"strategies": _strategy_payloads}
 
 
+@app.delete("/api/v1/strategies/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_strategy(
+    strategy_id: str, _auth: Internal, owner_id: OwnerID, request: Request
+) -> Response:
+    _store(request).delete_generated_strategy(strategy_id, owner_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/api/v1/markets/chart-overlays")
 def chart_overlays(
     _auth: Internal,
