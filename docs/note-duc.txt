@@ -79,9 +79,6 @@ Command Query Responsibility Segregation (CQRS)
 Mô hình SPA (Single Page Application) ở frontend dùng để xây dựng các ứng dụng web chỉ tải một trang HTML duy nhất và cập nhật nội dung linh hoạt bằng JavaScript mà không cần tải lại (reload) toàn bộ trang khi người dùng chuyển hướng.
 
 
-
-
-
 Demo:
 - 5 web pages thao tác cách hoạt động
 - Kết quả testing và show test scenarios and test running
@@ -208,11 +205,7 @@ System prompt của LLM để vào folder config, không gán cứng trong code
 - Run news crawling and sentiment analysis  
 
 Slide
-Nhựt: 1-6
-Đức: 7-16
-Hưng: 17-19
-Thịnh: 20-26
-Thắng: 27-31
+
 
 Make more:
 - Study more about build AI system that is easy to Fix
@@ -325,13 +318,6 @@ Câu hỏi:
 
 6. Nếu Sentiment Model thay đổi thì Strategy Engine có bị ảnh hưởng không?
 
-
-
-
-
-
-
-
 Run
 
 docker compose `
@@ -342,3 +328,19 @@ docker compose `
   --env-file .runtime\local-docker.env `
   --profile local-db `
   up -d --build --remove-orphans
+
+
+# Summary
+Strategy:
+- WeightedVoteCombiner -> generate signal 
+- 
+
+Improving:
+- Strategy: Lack of version -> hardcode
+- Phương pháp Discovery -> dạng list chọn, có cho nút thêm phương pháp
+- Bỏ phần ký hiệu thông báo
+- Canh chỉnh lại Profit (USD) cho cùng cột, đỡ phải kéo qua
+- Viết script đo những tính năng advanced
+- 
+
+

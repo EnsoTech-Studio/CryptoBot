@@ -1,0 +1,19 @@
+HƯỚNG DẪN SỬ DỤNG TEMPLATE,
+,
+1. Mục tiêu,"Template giúp nhóm sinh viên tự kiểm tra trước khi nộp đồ án. Trọng tâm là chất lượng kiến trúc phần mềm và khả năng mở rộng/thay đổi của hệ thống, không phải chứng minh strategy kiếm tiền tốt."
+2. Cách dùng nhanh,(1) Điền thông tin/link ở sheet 1. (2) Điền đóng góp thành viên ở sheet 2. (3) Chấm từng tiêu chí mức 0–4 và dán minh chứng. (4) Sửa các dòng 'Thiếu minh chứng'. (5) Chạy toàn bộ checklist demo ở sheet 3.
+3. Thang điểm 0,Chưa có chức năng/kiến trúc tương ứng hoặc không chạy được.
+4. Thang điểm 1,"Có prototype nhưng thiếu nhiều yêu cầu, coupling cao, không ổn định hoặc gần như chưa có minh chứng."
+5. Thang điểm 2,Đạt một phần; chạy được nhưng còn thiếu yêu cầu quan trọng hoặc chưa chứng minh rõ thiết kế.
+6. Thang điểm 3,"Đạt yêu cầu cơ bản, demo được end-to-end và có minh chứng đủ để người chấm kiểm tra."
+7. Thang điểm 4,"Đạt tốt/vượt yêu cầu: thiết kế modular, thay đổi ít ảnh hưởng, ổn định, có đo lường/test/minh chứng rõ."
+8. Các chức năng bắt buộc cần rà soát,Binance data; candlestick + realtime + tối đa 4 timeframe; ≥4 strategy; composite; backtest; Return/Win Rate/MDD/Trades; Random Search; Top-K; Buy/Sell + Entry/Exit; news collect/store/sentiment.
+9. Các câu hỏi kiến trúc nên trả lời,Thêm strategy mới sửa gì? Đổi search algorithm có ảnh hưởng backtester không? Thêm provider mới frontend có đổi không? Scale 100→100.000 backtest ra sao? News lỗi chart còn chạy không? Đổi sentiment model ảnh hưởng gì? Binance disconnect phục hồi thế nào? Leaderboard trace strategy version ra sao?
+10. Anti-pattern cần tránh,God Service; hard-coded strategy combinations; frontend chứa business logic/backtest/ranking; Strategy truy cập DB trực tiếp; crawler phụ thuộc chặt vào ML model.
+11. Phần nâng cao,Không tự cộng điểm chỉ vì dùng Redis/Kafka/Microservices/AI/Genetic/LLM. Chỉ chấm cao khi nhóm giải thích công nghệ giải quyết vấn đề kiến trúc nào và có minh chứng độ phức tạp/công sức.
+12. Hồ sơ nộp,"Source code; README (Install/Run/Architecture/Demo); Architecture Document; ADR; demo gồm realtime chart, multi-timeframe, strategy, combination, backtest, leaderboard, trade visualization, news và sentiment."
+Nguồn xây dựng template,Crypto Strategy Lab – Đồ án cuối kỳ(3).pdf và file mẫu 22127480-22127211-Tự đánh giá.xlsx do người dùng cung cấp.
+,
+13. Tự khai chức năng mở rộng / điểm cộng,Dùng sheet 5_DIEM_CONG_NANG_CAO. Chỉ điền các mục nhóm thực sự triển khai vượt các chức năng/yêu cầu bắt buộc của đề bài; không cần điền tất cả.
+14. Minh chứng nâng cao,"Mỗi mục nên có ít nhất: mô tả implementation, module liên quan, link code/commit/ADR, kịch bản demo và kết quả test/measurement."
+15. Quyền quyết định điểm cộng,"Sinh viên không tự cộng vào tổng điểm. Giảng viên xem xét mức độ vượt yêu cầu bắt buộc, chất lượng triển khai và minh chứng ở cột cuối của sheet 5."
