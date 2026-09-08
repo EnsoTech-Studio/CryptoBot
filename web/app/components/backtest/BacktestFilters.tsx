@@ -31,7 +31,7 @@ export function BacktestFilters({
   onChange: (patch: Partial<BacktestDraft>) => void;
 }) {
   const pairOptions = pairs.length > 0
-    ? dedupePairSymbols(pairs, draft.market)
+    ? pairOptionsByVenue(pairs, draft.market)
     : [{ ...draft.market, base_asset: draft.market.symbol, quote_asset: "", timeframes }];
   const hasDiscoveryComposite = draft.selectedCompositeId === DISCOVERY_BACKTEST_COMPOSITE_ID
     && draft.selectedStrategyIds.length > 0;
@@ -51,7 +51,7 @@ export function BacktestFilters({
               }}
             >
               {pairOptions.map((pair) => (
-                <option key={marketKey(pair)} value={marketKey(pair)}>{pair.symbol}</option>
+                <option key={marketKey(pair)} value={marketKey(pair)}>{pair.symbol} · {providerLabel(pair.provider)}</option>
               ))}
             </Select>
           </span>
@@ -208,17 +208,25 @@ export function BacktestFilters({
   );
 }
 
-/* Pair/Coin displays the tradable symbol, not the exchange venue. Keep one
-   option per symbol so Binance/OKX rows do not look like duplicate coins;
-   preserve the currently selected venue when it is already known. */
-function dedupePairSymbols(pairs: MarketPair[], selected: BacktestDraft["market"]) {
-  const bySymbol = new Map<string, MarketPair>();
-  for (const pair of pairs) {
-    const symbol = pair.symbol.toUpperCase();
-    const current = bySymbol.get(symbol);
-    if (!current || marketKey(pair) === marketKey(selected)) bySymbol.set(symbol, pair);
+/* Dataset snapshots are scoped to an exchange as well as a symbol. Showing
+   each venue prevents an incomplete live capture on one venue from hiding a
+   runnable snapshot for the same coin on another. */
+function pairOptionsByVenue(pairs: MarketPair[], selected: BacktestDraft["market"]) {
+  return [...pairs]
+    .sort((left, right) => {
+      const leftSelected = marketKey(left) === marketKey(selected);
+      const rightSelected = marketKey(right) === marketKey(selected);
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      return `${left.symbol}|${left.provider}`.localeCompare(`${right.symbol}|${right.provider}`);
+    });
+}
+
+function providerLabel(provider: string) {
+  switch (provider) {
+    case "binance_usdm": return "Binance USD-M";
+    case "okx_swap": return "OKX Swap";
+    default: return provider;
   }
-  return [...bySymbol.values()];
 }
 
 function DateField({

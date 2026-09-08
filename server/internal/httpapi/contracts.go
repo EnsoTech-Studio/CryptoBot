@@ -54,10 +54,11 @@ type experimentRequest struct {
 }
 
 type searchSpaceInput struct {
-	StrategyIDs   []string                    `json:"strategy_ids"`
-	Cardinality   []int                       `json:"cardinality"`
-	Policies      []string                    `json:"policies"`
-	ParameterGrid map[string]map[string][]any `json:"parameter_grid"`
+	StrategyIDs          []string                    `json:"strategy_ids"`
+	Cardinality          []int                       `json:"cardinality"`
+	Policies             []string                    `json:"policies"`
+	CombinationThreshold *float64                    `json:"combination_threshold,omitempty"`
+	ParameterGrid        map[string]map[string][]any `json:"parameter_grid"`
 }
 
 type searchMarketInput struct {
@@ -193,6 +194,12 @@ func (request *searchRunRequest) validate() error {
 	for _, policy := range request.SearchSpace.Policies {
 		if policy != "weighted_vote" && policy != "majority_vote" {
 			return fmt.Errorf("unknown combination policy")
+		}
+	}
+	if request.SearchSpace.CombinationThreshold != nil {
+		threshold := *request.SearchSpace.CombinationThreshold
+		if threshold < 0 || threshold > 1 || math.IsNaN(threshold) || math.IsInf(threshold, 0) {
+			return fmt.Errorf("combination_threshold must be between 0 and 1")
 		}
 	}
 	for strategyID := range request.SearchSpace.ParameterGrid {

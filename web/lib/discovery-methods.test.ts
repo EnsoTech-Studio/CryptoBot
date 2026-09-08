@@ -6,7 +6,7 @@ import { createDraft, DISCOVERY_METHODS } from "./discovery";
 
 test("all Discovery methods backed by generators remain selectable", () => {
   const enabled = DISCOVERY_METHODS.filter((method) => method.supported).map((method) => method.value);
-  assert.deepEqual(enabled, ["discovery", "random_search", "domain_guided", "genetic"]);
+  assert.deepEqual(enabled, ["grid", "discovery", "random_search", "domain_guided", "genetic"]);
 });
 
 test("new discovery drafts default to the durable discovery loop", () => {

@@ -418,6 +418,22 @@ def test_create_requires_the_configured_isolated_sandbox_before_review():
     assert "isolated_container" in result["report"]["checks"]
 
 
+def test_create_allows_dsl_review_when_docker_sandbox_is_unavailable():
+    class Sandbox:
+        def run_contract(self, _artifact):
+            raise ApplicationError("sandbox_unavailable", "isolated sandbox is unavailable", 503)
+
+    request = StrategyDraftCreateIn(
+        owner_id=uuid4(), source=StrategySourceIn(type="text", text="Use RSI below 30 for long.")
+    )
+    result = StrategyAuthoringService(FakeStore(), FakeDesigner(), sandbox=Sandbox()).create(request)
+
+    assert result["report"]["status"] == "passed"
+    assert result["report"]["sandbox"]["status"] == "skipped"
+    assert result["report"]["sandbox"]["reason"] == "sandbox_unavailable"
+    assert result["workflow_states"][-1] == "REVIEW_REQUIRED"
+
+
 def test_create_repairs_one_invalid_model_spec_with_bounded_feedback():
     class RepairingDesigner:
         def __init__(self):

@@ -42,6 +42,10 @@ services:
       - ./migrations/025_discovery_worker_guard.sql:/docker-entrypoint-initdb.d/25_discovery_worker_guard.sql:ro
       - ./migrations/026_discovery_trial_reservations.sql:/docker-entrypoint-initdb.d/26_discovery_trial_reservations.sql:ro
       - ./migrations/027_realtime_bbo_events.sql:/docker-entrypoint-initdb.d/27_realtime_bbo_events.sql:ro
+      - ./migrations/028_news_provider_registry.sql:/docker-entrypoint-initdb.d/28_news_provider_registry.sql:ro
+      - ./migrations/029_replace_demo_html_news_source.sql:/docker-entrypoint-initdb.d/29_replace_demo_html_news_source.sql:ro
+      - ./migrations/030_seed_visible_html_news_source.sql:/docker-entrypoint-initdb.d/30_seed_visible_html_news_source.sql:ro
+      - ./migrations/031_seed_demo_admin.sql:/docker-entrypoint-initdb.d/31_seed_demo_admin.sql:ro
       - ./scripts/queue-scale-proof.sql:/proof/queue-scale-proof.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cryptobot -d cryptobot"]

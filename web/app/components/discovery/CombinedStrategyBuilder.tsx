@@ -67,13 +67,21 @@ export function BuilderActions({
   canSubmit,
   onBacktest,
   onSave,
+  strategies,
+  selectedStrategyIds,
 }: {
   canSubmit: boolean;
   onBacktest: () => void;
   onSave: () => void;
+  strategies: Strategy[];
+  selectedStrategyIds: string[];
 }) {
+  const scheduled = selectedStrategyIds
+    .map((strategyId) => strategies.find((strategy) => strategy.strategy_id === strategyId))
+    .filter((strategy): strategy is Strategy => Boolean(strategy));
   return (
-    <div className={styles.builderActions}>
+    <div className={styles.builderActionBlock}>
+      <div className={styles.builderActions}>
       <Button variant="primary" disabled={!canSubmit} onClick={onSave}>
         Lưu strategy kết hợp
       </Button>
@@ -81,6 +89,15 @@ export function BuilderActions({
         <Icon name="play" aria-hidden="true" />
         Backtest ngay
       </Button>
+      </div>
+      <div className={styles.scheduledStrategies} aria-label="Scheduled strategies">
+        <strong>Strategies sẽ chạy</strong>
+        {scheduled.length > 0 ? (
+          <ul>
+            {scheduled.map((strategy) => <li key={strategy.strategy_id}>{displayLabel(strategy.strategy_id)} <code>{strategy.version}</code></li>)}
+          </ul>
+        ) : <span>Chưa chọn strategy.</span>}
+      </div>
     </div>
   );
 }

@@ -16,6 +16,7 @@ export type CatalogEntry = {
   description: string;
   icon: "activity" | "chart" | "ma" | "bollinger" | "candles" | "support-resistance" | "wyckoff";
   tone: "violet" | "brand" | "green" | "amber" | "neutral";
+  version?: string;
 };
 
 export const STRATEGIES_MOCK: Strategy[] = [

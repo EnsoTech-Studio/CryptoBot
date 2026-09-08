@@ -56,6 +56,7 @@ def test_grid_generator_builds_composite_candidates_from_cardinality() -> None:
             "strategy_ids": ["ma_cross", "rsi", "macd"],
             "cardinality": [2],
             "policies": ["majority_vote", "weighted_vote"],
+            "combination_threshold": 0.3,
             "parameter_grid": {},
         },
         20,
@@ -67,7 +68,27 @@ def test_grid_generator_builds_composite_candidates_from_cardinality() -> None:
     assert {
         item["candidate_definition"]["policy"]["name"] for item in candidates
     } == {"majority_vote", "weighted_vote"}
+    assert {
+        item["candidate_definition"]["policy"]["threshold"] for item in candidates
+    } == {0.3}
     assert len({item["candidate_hash"] for item in candidates}) == len(candidates)
+
+
+def test_grid_generator_honors_configured_combination_threshold() -> None:
+    candidate = generate_candidates(
+        "grid",
+        {
+            "strategy_ids": ["ma_cross", "rsi"],
+            "cardinality": [2],
+            "policies": ["weighted_vote"],
+            "combination_threshold": 0.2,
+            "parameter_grid": {},
+        },
+        1,
+        0,
+    )[0]
+
+    assert candidate["candidate_definition"]["policy"]["threshold"] == 0.2
 
 
 @pytest.mark.parametrize(
@@ -117,3 +138,22 @@ def test_failure_rate_is_a_valid_standalone_stop_condition() -> None:
         }
     )
     assert request.stop_conditions.max_failure_rate == 0.3
+
+
+def test_search_space_rejects_invalid_combination_threshold() -> None:
+    with pytest.raises(ValidationError):
+        SearchRunCreateIn.model_validate(
+            {
+                "owner_id": str(uuid4()),
+                "generator_id": "grid",
+                "search_space": {
+                    "strategy_ids": ["ma_cross", "rsi"],
+                    "cardinality": [2],
+                    "policies": ["weighted_vote"],
+                    "combination_threshold": 1.1,
+                    "parameter_grid": {},
+                },
+                "stop_conditions": {"max_candidates": 1},
+                "dataset_version": "fixture-v1",
+            }
+        )

@@ -8,7 +8,14 @@ import {
   type MarketSelection,
   type MarketStatus,
 } from "./market";
-import { normalizeWeights, type DiscoveryDraft } from "./discovery";
+import {
+  DISCOVERY_COMBINATION_THRESHOLD,
+  discoveryIterationLimit,
+  discoveryCardinalities,
+  discoveryParameterGrid,
+  normalizeWeights,
+  type DiscoveryDraft,
+} from "./discovery";
 
 export type { Candle, MarketPair, MarketSelection, MarketStatus } from "./market";
 
@@ -152,6 +159,7 @@ export type ExperimentSummary = {
   created_at: string;
   candles_read: number;
   signals_count: number;
+  error_code?: string | null;
   metrics: Metrics | null;
   execution: Record<string, unknown>;
   candidate_definition: Record<string, unknown>;
@@ -303,6 +311,7 @@ export type NewsStrategyAnalysisInput = {
 
 type ErrorPayload = {
   error?: { code?: string; message?: string };
+  message?: string;
   detail?: string;
 };
 
@@ -416,27 +425,6 @@ async function ensureDataset(market: MarketSelection, timeframe: string, request
     ?? api.createDataset(market, timeframe);
 }
 
-/* Discovery needs enough legal, reproducible variants for a real demo run.
-   Defaults-only plus one composite produces one candidate and makes the loop
-   look broken. These bounded values stay inside each built-in plugin's schema;
-   the model still sees this grid and may choose from it using archive/research. */
-const DISCOVERY_PARAMETER_GRID: Record<string, Record<string, number[]>> = {
-  ma_cross: { fast: [5, 10, 20], slow: [30, 50, 80] },
-  ema_cross: { fast: [5, 10, 20], slow: [30, 50, 80] },
-  rsi: { period: [10, 14, 21], oversold: [25, 30], overbought: [70, 75] },
-  support_resistance: { period: [14, 20, 30, 40] },
-  bollinger: { period: [14, 20, 30], deviation: [1.5, 2, 2.5] },
-  macd: { fast: [8, 12], slow: [20, 26, 40], signal: [5, 9] },
-};
-
-function discoveryParameterGrid(strategyIds: string[]): Record<string, Record<string, number[]>> {
-  return Object.fromEntries(
-    strategyIds
-      .filter((strategyId) => DISCOVERY_PARAMETER_GRID[strategyId])
-      .map((strategyId) => [strategyId, DISCOVERY_PARAMETER_GRID[strategyId]]),
-  );
-}
-
 /* Execution assumptions the Backtest screen puts on screen. They used to be
    literals inside createExperiment, which meant the visible fee and slippage
    inputs changed nothing. Bounds mirror app/schemas.py ExperimentCreateIn. */
@@ -520,7 +508,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8_00
   }
   if (!response.ok) {
     const errorPayload = payload as ErrorPayload | undefined;
-    throw new Error(errorPayload?.error?.message ?? errorPayload?.detail ?? "Request failed");
+    throw new Error(errorPayload?.error?.message ?? errorPayload?.message ?? errorPayload?.detail ?? "Request failed");
   }
   return payload as T;
 }
@@ -784,7 +772,7 @@ export const api = {
      posted a fixed 6-strategy domain_guided payload, so the on-screen method,
      weights and limits were decoration. */
   async startSearch(draft: DiscoveryDraft, children?: StrategyExecution[]) {
-    const dataset = await ensureDataset(draft.market, draft.timeframe);
+    const dataset = await ensureDataset(draft.market, draft.timeframe, draft.datasetVersion);
     const weights = normalizeWeights(draft.selectedStrategyIds, draft.weights);
     const executionChildren: StrategyExecution[] = children ?? draft.selectedStrategyIds.map((strategy_id) => ({
       strategy_id,
@@ -799,13 +787,13 @@ export const api = {
           /* Keep individual leaves and smaller composites in the candidate
              pool. The builder's selected combination remains the execution
              default, while discovery can test alternatives. */
-          cardinality: Array.from(new Set([1, 2, draft.selectedStrategyIds.length]))
-            .filter((value) => value <= draft.selectedStrategyIds.length),
+          cardinality: discoveryCardinalities(draft.selectedStrategyIds),
           policies: [draft.policy],
+          combination_threshold: DISCOVERY_COMBINATION_THRESHOLD,
           parameter_grid: discoveryParameterGrid(draft.selectedStrategyIds),
         },
         stop_conditions: {
-          max_candidates: draft.maxCandidates,
+          max_candidates: discoveryIterationLimit(draft),
           max_duration_sec: draft.maxDurationSec,
           max_non_improving: draft.maxNonImproving,
         },

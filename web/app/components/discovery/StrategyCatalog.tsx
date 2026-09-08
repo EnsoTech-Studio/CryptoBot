@@ -4,7 +4,6 @@ import Link from "next/link";
 
 import { CATALOG_MOCK, type CatalogEntry } from "../../../lib/discovery-mock";
 import type { Strategy } from "../../../lib/api";
-import { Icon } from "../ui/Icon";
 import { Panel } from "../ui/Foundation";
 import styles from "./discovery.module.css";
 
@@ -44,7 +43,6 @@ export function StrategyCatalog({
 
       <div className={styles.catalogFooter}>
         <Link href="/strategies" className={styles.createButton}>
-          <Icon name="plus" aria-hidden="true" />
           Tạo strategy đơn mới
         </Link>
       </div>
@@ -69,6 +67,7 @@ function catalogEntryFor(strategy: Strategy): CatalogEntry {
     label: strategy.display_name,
     description: strategy.description || "Chưa có mô tả strategy.",
     icon,
+    version: strategy.version,
     tone,
   };
 }
@@ -84,7 +83,6 @@ function CatalogRow({
   available: boolean;
   onToggle: (strategyId: string) => void;
 }) {
-  const toneClass = styles[`icon${entry.tone[0].toUpperCase()}${entry.tone.slice(1)}`] ?? "";
   return (
     <button
       type="button"
@@ -94,15 +92,10 @@ function CatalogRow({
       title={available ? undefined : `${entry.label} chưa có trong strategy registry`}
       onClick={() => entry.strategyId && onToggle(entry.strategyId)}
     >
-      <span className={`${styles.catalogIcon} ${toneClass}`}>
-        <Icon name={entry.icon} aria-hidden="true" />
-      </span>
       <span className={styles.catalogCopy}>
         <strong>{entry.label}</strong>
+        <small>Version {entry.version ?? "v1"}</small>
         <span>{entry.description}</span>
-      </span>
-      <span className={styles.catalogChevron} aria-hidden="true">
-        <Icon name="chevron-right" />
       </span>
     </button>
   );

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { draftIssues, normalizeWeights, createDraft } from "./discovery";
+import { discoveryIterationLimit, draftIssues, estimateDiscoveryIterations, normalizeWeights, createDraft } from "./discovery";
 import { backtestIssues, buildBacktestChildren, canCancelBacktest, canRunBacktest, createBacktestDraft, defaultBacktestStrategyId, defaultBacktestTimeframe, deriveKpis, draftToExecution, isExecutionMarkerSelected, needsMoreTradesForPage, pickBacktestDataset, resolvedTradeKpis } from "./backtest";
 import { mockExecutionMarkers } from "./backtest-mock";
 import { createMockPanelData } from "./realtime-mock";
@@ -36,6 +36,17 @@ test("draftIssues rejects a draft the API would 422", () => {
 
   const valid = { ...draft, selectedStrategyIds: ["a", "b"], weights: { a: 1, b: 1 } };
   assert.deepEqual(draftIssues(valid), []);
+});
+
+test("discovery iterations are calculated from the generator search space", () => {
+  const draft = {
+    ...createDraft(MARKET, "5m"),
+    selectedStrategyIds: ["ma_cross", "rsi"],
+    weights: { ma_cross: 0.5, rsi: 0.5 },
+  };
+
+  assert.equal(estimateDiscoveryIterations(draft), 129);
+  assert.equal(discoveryIterationLimit(draft), 24);
 });
 
 test("draftToExecution converts a percentage fee into integer basis points", () => {

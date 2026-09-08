@@ -96,6 +96,17 @@ func (s *Store) ListDatasets(
 		        COALESCE(bbo_content_hash,content_hash)
 		 FROM market_datasets
 		 WHERE provider=$1 AND symbol=$2 AND timeframe=$3
+		   /* The replay engine needs an executable quote before the first candle
+		      closes. The last known quote remains valid for subsequent marks and
+		      settlement, so it need not arrive after the final candle. */
+		   AND EXISTS (
+		     SELECT 1 FROM market_dataset_bbo b
+		     WHERE b.market_dataset_id=market_datasets.id
+		       AND b.event_time <= (
+		         SELECT min(c.close_time) FROM market_dataset_candles c
+		         WHERE c.market_dataset_id=market_datasets.id
+		       )
+		   )
 		 ORDER BY created_at DESC,id DESC LIMIT $4`,
 		key.Provider, strings.ToUpper(key.Symbol), string(key.Timeframe), limit,
 	)
@@ -316,6 +327,12 @@ func (s *Store) CreateDataset(
 		}
 		return quotes[i].EventTime.Before(quotes[j].EventTime)
 	})
+	/* The worker marks equity at each closed candle using the latest quote. A
+	   partial live capture used to be accepted here, then deterministically
+	   failed with missing_prior_bbo. Reject it before publishing a snapshot. */
+	if quotes[0].EventTime.After(candles[0].CloseTime) {
+		return domainmarket.Dataset{}, fmt.Errorf("BBO coverage starts after the first candle closes")
+	}
 	candleHash := hashCandles(candles)
 	quoteHash := hashQuotes(quotes)
 	datasetVersion := fmt.Sprintf(

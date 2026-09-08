@@ -6,7 +6,12 @@ import { api, apiUrl, type MarketDataset } from "../../../lib/api";
 import { MOCK_DATASETS, MOCK_TRADES } from "../../../lib/backtest-mock";
 import { STRATEGIES_MOCK } from "../../../lib/discovery-mock";
 import { marketKey } from "../../../lib/market";
-import { BACKTEST_HANDOFF_KEY, readStoredJson, removeStoredJson, writeStoredJson } from "../../../lib/settings-storage";
+import {
+  BACKTEST_HANDOFF_KEY,
+  readStoredJson,
+  removeStoredJson,
+  writeStoredJson,
+} from "../../../lib/settings-storage";
 import {
   backtestIssues,
   buildBacktestChildren,
@@ -20,11 +25,14 @@ import {
   type BacktestDraft,
 } from "../../../lib/backtest";
 import { useWorkspace } from "../../providers/workspace";
-import { StatusMessage } from "../ui/Foundation";
+import { Panel, StatusMessage } from "../ui/Foundation";
 import { BacktestChart } from "./BacktestChart";
 import { BacktestFilters } from "./BacktestFilters";
 import { BacktestMetrics } from "./BacktestMetrics";
-import { ExperimentHistory, type ExperimentHistoryRecord } from "./ExperimentHistory";
+import {
+  ExperimentHistory,
+  type ExperimentHistoryRecord,
+} from "./ExperimentHistory";
 import { TradeLedger } from "./TradeLedger";
 import styles from "./backtest.module.css";
 
@@ -64,45 +72,97 @@ function BacktestContent() {
      that produced the numbers, even while the user edits the strip again. */
   const [submitted, setSubmitted] = useState<BacktestDraft | null>(null);
   const [datasets, setDatasets] = useState<MarketDataset[]>([]);
-  const [datasetLoadState, setDatasetLoadState] = useState<DatasetLoadState>("loading");
-  const [selectedTradeSequence, setSelectedTradeSequence] = useState<number | null>(null);
-  const [history, setHistory] = useState<ExperimentHistoryRecord[]>(() => user ? readExperimentHistory(user.id) : []);
+  const [datasetLoadState, setDatasetLoadState] =
+    useState<DatasetLoadState>("loading");
+  const [selectedTradeSequence, setSelectedTradeSequence] = useState<
+    number | null
+  >(null);
+  const [history, setHistory] = useState<ExperimentHistoryRecord[]>(() =>
+    user ? readExperimentHistory(user.id) : [],
+  );
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [uiCancelled, setUiCancelled] = useState(false);
-  const [mockRunState, setMockRunState] = useState<"idle" | "running" | "completed">("idle");
+  const [mockRunState, setMockRunState] = useState<
+    "idle" | "running" | "completed"
+  >("idle");
   const [submitPending, setSubmitPending] = useState(false);
+  const [activityLog, setActivityLog] = useState<string[]>([]);
   const submitLock = useRef(false);
   const submitOriginExperimentId = useRef<string | null>(null);
   const backtestStrategies = useMemo(
-    () => (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter((strategy) => !strategy.is_composite),
+    () =>
+      (dataMode === "mock" ? STRATEGIES_MOCK : strategies).filter(
+        (strategy) => !strategy.is_composite,
+      ),
     [dataMode, strategies],
   );
   const market = draft.market;
   const backtestTimeframes = useMemo(
-    () => marketPairs.find((pair) => marketKey(pair) === marketKey(market))?.timeframes.filter(Boolean) ?? availableTimeframes,
+    () =>
+      marketPairs
+        .find((pair) => marketKey(pair) === marketKey(market))
+        ?.timeframes.filter(Boolean) ?? availableTimeframes,
     [availableTimeframes, market, marketPairs],
   );
   const defaultStrategyId = defaultBacktestStrategyId(backtestStrategies);
-  const effectiveStrategyId = backtestStrategies.some((strategy) => strategy.strategy_id === draft.strategyId)
+  const effectiveStrategyId = backtestStrategies.some(
+    (strategy) => strategy.strategy_id === draft.strategyId,
+  )
     ? draft.strategyId
     : defaultStrategyId || draft.strategyId;
-  const effectiveTimeframe = defaultBacktestTimeframe(backtestTimeframes, draft.timeframe);
-  const effectiveDraft = effectiveStrategyId === draft.strategyId && effectiveTimeframe === draft.timeframe
-    ? draft
-    : { ...draft, strategyId: effectiveStrategyId, timeframe: effectiveTimeframe };
+  const effectiveTimeframe = defaultBacktestTimeframe(
+    backtestTimeframes,
+    draft.timeframe,
+  );
+  const effectiveDraft =
+    effectiveStrategyId === draft.strategyId &&
+    effectiveTimeframe === draft.timeframe
+      ? draft
+      : {
+          ...draft,
+          strategyId: effectiveStrategyId,
+          timeframe: effectiveTimeframe,
+        };
+
+  useEffect(() => {
+    if (submitPending) {
+      setActivityLog((current) =>
+        current[0] === "Đã gửi yêu cầu Backtest, đang chờ worker nhận job."
+          ? current
+          : [
+              "Đã gửi yêu cầu Backtest, đang chờ worker nhận job.",
+              ...current,
+            ].slice(0, 8),
+      );
+    }
+  }, [submitPending]);
+
+  useEffect(() => {
+    if (!experiment) return;
+    const message =
+      experiment.status === "failed"
+        ? `Backtest thất bại${experiment.error_code ? `: ${experiment.error_code}` : "."}`
+        : `Backtest ${experiment.status}: ${experiment.id.slice(0, 8)}.`;
+    setActivityLog((current) =>
+      current[0] === message ? current : [message, ...current].slice(0, 8),
+    );
+  }, [experiment?.error_code, experiment?.id, experiment?.status]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const handoff = readStoredJson<Partial<BacktestDraft>>(BACKTEST_HANDOFF_KEY);
-      const stored = handoff && isBacktestSettings(handoff)
-        ? handoff
-        : readStoredJson<Partial<BacktestDraft>>(BACKTEST_SETTINGS_KEY);
+      const handoff =
+        readStoredJson<Partial<BacktestDraft>>(BACKTEST_HANDOFF_KEY);
+      const stored =
+        handoff && isBacktestSettings(handoff)
+          ? handoff
+          : readStoredJson<Partial<BacktestDraft>>(BACKTEST_SETTINGS_KEY);
       if (stored && isBacktestSettings(stored)) {
         setDraft((current) => ({
           ...current,
           ...stored,
           market: stored.market ?? current.market,
-          selectedStrategyIds: stored.selectedStrategyIds ?? current.selectedStrategyIds,
+          selectedStrategyIds:
+            stored.selectedStrategyIds ?? current.selectedStrategyIds,
         }));
       }
       if (handoff) removeStoredJson(BACKTEST_HANDOFF_KEY);
@@ -126,11 +186,15 @@ function BacktestContent() {
         setDatasetLoadState("ready");
         setDraft((current) => ({
           ...current,
-          ...(current.datasetVersion === dataset.dataset_version ? {} : {
-            datasetVersion: dataset.dataset_version,
-            rangeFrom: dataset.range_from.slice(0, 10),
-            rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
-          }),
+          ...(current.datasetVersion === dataset.dataset_version
+            ? {}
+            : {
+                datasetVersion: dataset.dataset_version,
+                rangeFrom: dataset.range_from.slice(0, 10),
+                rangeTo: new Date(new Date(dataset.range_to).getTime() - 1)
+                  .toISOString()
+                  .slice(0, 10),
+              }),
         }));
       });
       return () => window.cancelAnimationFrame(frame);
@@ -143,31 +207,46 @@ function BacktestContent() {
       setDatasets([]);
       setDatasetLoadState("loading");
     });
-    void api.datasets(market, effectiveTimeframe, controller.signal).then(({ datasets: availableDatasets }) => {
-      if (cancelled) return;
-      settled = true;
-      setDatasets(availableDatasets);
-      setDatasetLoadState(availableDatasets.length > 0 ? "ready" : "empty");
-      const firstDataset = availableDatasets[0];
-      setDraft((current) => {
-        const dataset = pickBacktestDataset(availableDatasets, current.datasetVersion) ?? firstDataset;
-        if (!dataset) return { ...current, datasetVersion: "", rangeFrom: "", rangeTo: "" };
-        return {
-          ...current,
-          datasetVersion: dataset.dataset_version,
-          ...(current.datasetVersion === dataset.dataset_version ? {} : {
-            rangeFrom: dataset.range_from.slice(0, 10),
-            rangeTo: new Date(new Date(dataset.range_to).getTime() - 1).toISOString().slice(0, 10),
-          }),
-        };
-      });
-    }).catch(() => {
-      if (!cancelled) {
+    void api
+      .datasets(market, effectiveTimeframe, controller.signal)
+      .then(({ datasets: availableDatasets }) => {
+        if (cancelled) return;
         settled = true;
-        setDatasets([]);
-        setDatasetLoadState("error");
-      }
-    });
+        setDatasets(availableDatasets);
+        setDatasetLoadState(availableDatasets.length > 0 ? "ready" : "empty");
+        const firstDataset = availableDatasets[0];
+        setDraft((current) => {
+          const dataset =
+            pickBacktestDataset(availableDatasets, current.datasetVersion) ??
+            firstDataset;
+          if (!dataset)
+            return {
+              ...current,
+              datasetVersion: "",
+              rangeFrom: "",
+              rangeTo: "",
+            };
+          return {
+            ...current,
+            datasetVersion: dataset.dataset_version,
+            ...(current.datasetVersion === dataset.dataset_version
+              ? {}
+              : {
+                  rangeFrom: dataset.range_from.slice(0, 10),
+                  rangeTo: new Date(new Date(dataset.range_to).getTime() - 1)
+                    .toISOString()
+                    .slice(0, 10),
+                }),
+          };
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          settled = true;
+          setDatasets([]);
+          setDatasetLoadState("error");
+        }
+      });
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(loadingFrame);
@@ -176,31 +255,50 @@ function BacktestContent() {
   }, [dataMode, draftRestored, effectiveTimeframe, market]);
 
   const issues = backtestIssues(effectiveDraft);
-  const running = !uiCancelled && (submitPending || experiment?.status === "queued" || experiment?.status === "running" || dataMode === "mock" && mockRunState === "running");
-  const completed = !uiCancelled && experiment?.status === "completed" && result !== null;
-  const visibleExperimentStatus = uiCancelled ? "cancelled" : experiment?.status;
+  const running =
+    !uiCancelled &&
+    (submitPending ||
+      experiment?.status === "queued" ||
+      experiment?.status === "running" ||
+      (dataMode === "mock" && mockRunState === "running"));
+  const completed =
+    !uiCancelled && experiment?.status === "completed" && result !== null;
+  const visibleExperimentStatus = uiCancelled
+    ? "cancelled"
+    : experiment?.status;
   const isMock = dataMode === "mock" && !completed;
-  const selectedChildren = useMemo(
-    () => {
-      const saved = savedCompositeStrategies.find((item) => item.id === effectiveDraft.selectedCompositeId);
-      if (effectiveDraft.mode === "composite" && saved) {
-        return saved.children.filter((child) => backtestStrategies.some((strategy) => strategy.strategy_id === child.strategy_id));
-      }
-      return buildBacktestChildren(
-        effectiveDraft.mode,
-        effectiveDraft.strategyId,
-        effectiveDraft.selectedStrategyIds,
-        backtestStrategies,
-        effectiveDraft.selectedStrategyWeights,
+  const selectedChildren = useMemo(() => {
+    const saved = savedCompositeStrategies.find(
+      (item) => item.id === effectiveDraft.selectedCompositeId,
+    );
+    if (effectiveDraft.mode === "composite" && saved) {
+      return saved.children.filter((child) =>
+        backtestStrategies.some(
+          (strategy) => strategy.strategy_id === child.strategy_id,
+        ),
       );
-    },
-    [backtestStrategies, effectiveDraft.mode, effectiveDraft.selectedCompositeId, effectiveDraft.selectedStrategyIds, effectiveDraft.selectedStrategyWeights, effectiveDraft.strategyId, savedCompositeStrategies],
-  );
+    }
+    return buildBacktestChildren(
+      effectiveDraft.mode,
+      effectiveDraft.strategyId,
+      effectiveDraft.selectedStrategyIds,
+      backtestStrategies,
+      effectiveDraft.selectedStrategyWeights,
+    );
+  }, [
+    backtestStrategies,
+    effectiveDraft.mode,
+    effectiveDraft.selectedCompositeId,
+    effectiveDraft.selectedStrategyIds,
+    effectiveDraft.selectedStrategyWeights,
+    effectiveDraft.strategyId,
+    savedCompositeStrategies,
+  ]);
   const noRegistry = backtestStrategies.length === 0;
   const noStrategies = selectedChildren.length === 0;
 
   const trades = useMemo(
-    () => completed && result ? result.trades : isMock ? MOCK_TRADES : [],
+    () => (completed && result ? result.trades : isMock ? MOCK_TRADES : []),
     [completed, isMock, result],
   );
   const kpis = useMemo(() => deriveKpis(trades), [trades]);
@@ -211,7 +309,12 @@ function BacktestContent() {
      before the disabled prop re-renders. Release once the newly accepted run
      replaces the previous experiment, or immediately when submission fails. */
   useEffect(() => {
-    if (!submitPending || !experiment || experiment.id === submitOriginExperimentId.current) return;
+    if (
+      !submitPending ||
+      !experiment ||
+      experiment.id === submitOriginExperimentId.current
+    )
+      return;
     submitLock.current = false;
     submitOriginExperimentId.current = null;
     setSubmitPending(false);
@@ -223,7 +326,10 @@ function BacktestContent() {
   useEffect(() => {
     if (!user) return;
     try {
-      window.localStorage.setItem(experimentHistoryStorageKey(user.id), JSON.stringify(history));
+      window.localStorage.setItem(
+        experimentHistoryStorageKey(user.id),
+        JSON.stringify(history),
+      );
     } catch {
       // Private-mode storage failures must not block a backtest.
     }
@@ -233,9 +339,12 @@ function BacktestContent() {
     if (!userId || dataMode === "mock") return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void api.experiments().then(({ experiments }) => {
-        if (!cancelled) setHistory(experiments.map(summaryToHistory));
-      }).catch(() => undefined);
+      void api
+        .experiments()
+        .then(({ experiments }) => {
+          if (!cancelled) setHistory(experiments.map(summaryToHistory));
+        })
+        .catch(() => undefined);
     }, 0);
     return () => {
       cancelled = true;
@@ -247,8 +356,17 @@ function BacktestContent() {
     if (!experiment) return;
     const frame = window.requestAnimationFrame(() => {
       setHistory((current) => {
-        const next = { ...summaryToHistory(experiment), ...(uiCancelled ? { status: "cancelled" } : {}) };
-        return [next, ...current.filter((record) => record.id !== experiment.id && !record.id.startsWith("draft-"))];
+        const next = {
+          ...summaryToHistory(experiment),
+          ...(uiCancelled ? { status: "cancelled" } : {}),
+        };
+        return [
+          next,
+          ...current.filter(
+            (record) =>
+              record.id !== experiment.id && !record.id.startsWith("draft-"),
+          ),
+        ];
       });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -265,33 +383,48 @@ function BacktestContent() {
     setSubmitPending(true);
     setUiCancelled(false);
     setSubmitted(effectiveDraft);
-    const selectedNames = selectedChildren.map((child) => backtestStrategies.find((strategy) => strategy.strategy_id === child.strategy_id)?.display_name ?? child.strategy_id);
-    const saved = savedCompositeStrategies.find((item) => item.id === effectiveDraft.selectedCompositeId);
+    const selectedNames = selectedChildren.map(
+      (child) =>
+        backtestStrategies.find(
+          (strategy) => strategy.strategy_id === child.strategy_id,
+        )?.display_name ?? child.strategy_id,
+    );
+    const saved = savedCompositeStrategies.find(
+      (item) => item.id === effectiveDraft.selectedCompositeId,
+    );
     const execution = {
       ...draftToExecution(effectiveDraft),
       ...(saved ? { policy: saved.policy, threshold: saved.threshold } : {}),
     };
-    const candidateDefinition = buildCandidateDefinition(selectedChildren, execution);
+    const candidateDefinition = buildCandidateDefinition(
+      selectedChildren,
+      execution,
+    );
     if (dataMode === "mock") {
       setMockRunState("running");
       window.setTimeout(() => {
         const now = new Date().toISOString();
         setMockRunState("completed");
-        setHistory((current) => [{
-          id: `mock-${Date.now()}`,
-          status: "completed",
-          createdAt: now,
-          symbol: effectiveDraft.market.symbol,
-          timeframe: effectiveDraft.timeframe,
-          strategy: selectedNames.join(" + "),
-          strategyVersion: selectedChildren.map((child) => child.strategy_version ?? "v1").join(" + "),
-          datasetVersion: effectiveDraft.datasetVersion,
-          rangeFrom: effectiveDraft.rangeFrom,
-          rangeTo: effectiveDraft.rangeTo,
-          parameters: candidateDefinition,
-          execution: execution as unknown as Record<string, unknown>,
-          metrics: null,
-        }, ...current]);
+        setHistory((current) => [
+          {
+            id: `mock-${Date.now()}`,
+            status: "completed",
+            createdAt: now,
+            symbol: effectiveDraft.market.symbol,
+            timeframe: effectiveDraft.timeframe,
+            strategy: selectedNames.join(" + "),
+            strategyVersion: selectedChildren
+              .map((child) => child.strategy_version ?? "v1")
+              .join(" + "),
+            datasetVersion: effectiveDraft.datasetVersion,
+            rangeFrom: effectiveDraft.rangeFrom,
+            rangeTo: effectiveDraft.rangeTo,
+            parameters: candidateDefinition,
+            execution: execution as unknown as Record<string, unknown>,
+            metrics: null,
+          },
+          ...current,
+        ]);
         submitLock.current = false;
         submitOriginExperimentId.current = null;
         setSubmitPending(false);
@@ -299,21 +432,26 @@ function BacktestContent() {
       return;
     }
     const draftId = `draft-${Date.now()}`;
-    setHistory((current) => [{
-      id: draftId,
-      status: "queued",
-      createdAt: new Date().toISOString(),
-      symbol: effectiveDraft.market.symbol,
-      timeframe: effectiveDraft.timeframe,
-      strategy: selectedNames.join(" + "),
-      strategyVersion: selectedChildren.map((child) => child.strategy_version ?? "v1").join(" + "),
-      datasetVersion: effectiveDraft.datasetVersion,
-      rangeFrom: effectiveDraft.rangeFrom,
-      rangeTo: effectiveDraft.rangeTo,
-      parameters: candidateDefinition,
-      execution: execution as unknown as Record<string, unknown>,
-      metrics: null,
-    }, ...current]);
+    setHistory((current) => [
+      {
+        id: draftId,
+        status: "queued",
+        createdAt: new Date().toISOString(),
+        symbol: effectiveDraft.market.symbol,
+        timeframe: effectiveDraft.timeframe,
+        strategy: selectedNames.join(" + "),
+        strategyVersion: selectedChildren
+          .map((child) => child.strategy_version ?? "v1")
+          .join(" + "),
+        datasetVersion: effectiveDraft.datasetVersion,
+        rangeFrom: effectiveDraft.rangeFrom,
+        rangeTo: effectiveDraft.rangeTo,
+        parameters: candidateDefinition,
+        execution: execution as unknown as Record<string, unknown>,
+        metrics: null,
+      },
+      ...current,
+    ]);
     void runBacktest(
       selectedChildren,
       execution,
@@ -326,31 +464,72 @@ function BacktestContent() {
       submitLock.current = false;
       submitOriginExperimentId.current = null;
       setSubmitPending(false);
-      setHistory((current) => current.map((record) => record.id === draftId ? { ...record, status: "failed" } : record));
+      setHistory((current) =>
+        current.map((record) =>
+          record.id === draftId ? { ...record, status: "failed" } : record,
+        ),
+      );
     });
   }
 
   function toggleComparison(id: string) {
-    setComparisonIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    setComparisonIds((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
+    );
   }
 
   function cancelHistory(id: string) {
-    setHistory((current) => current.map((record) => record.id === id ? { ...record, status: "cancelled" } : record));
+    setHistory((current) =>
+      current.map((record) =>
+        record.id === id ? { ...record, status: "cancelled" } : record,
+      ),
+    );
     if (id === experiment?.id || id.startsWith("draft-")) setUiCancelled(true);
   }
 
   return (
-    <section className={styles.screen} aria-label="Không gian backtest và kết quả giao dịch">
+    <section
+      className={styles.screen}
+      aria-label="Không gian backtest và kết quả giao dịch"
+    >
       <div className={styles.stack}>
-        {issues.length > 0 ? <StatusMessage tone="syncing">{issues[0]}</StatusMessage> : null}
-        {noRegistry ? <StatusMessage tone="syncing">Chưa có strategy nào trong registry để chạy backtest.</StatusMessage> : null}
-        {!noRegistry && noStrategies ? <StatusMessage tone="syncing">Hãy chọn strategy hợp lệ để chạy backtest.</StatusMessage> : null}
-        {dataMode === "mock" && mockRunState === "completed" ? <StatusMessage tone="live">Backtest mock đã hoàn tất — kết quả đang hiển thị từ dữ liệu tham chiếu.</StatusMessage> : null}
-        {dataMode === "mock" && mockRunState === "running" ? <StatusMessage tone="syncing">Backtest mock đang chạy trên dataset đã chọn…</StatusMessage> : null}
-        {dataMode !== "mock" && !user ? <StatusMessage tone="syncing">Đăng nhập ở menu tài khoản để bật nút Chạy backtest và xem dữ liệu kết quả.</StatusMessage> : null}
+        {issues.length > 0 ? (
+          <StatusMessage tone="syncing">{issues[0]}</StatusMessage>
+        ) : null}
+        {noRegistry ? (
+          <StatusMessage tone="syncing">
+            Chưa có strategy nào trong registry để chạy backtest.
+          </StatusMessage>
+        ) : null}
+        {!noRegistry && noStrategies ? (
+          <StatusMessage tone="syncing">
+            Hãy chọn strategy hợp lệ để chạy backtest.
+          </StatusMessage>
+        ) : null}
+        {dataMode === "mock" && mockRunState === "completed" ? (
+          <StatusMessage tone="live">
+            Backtest mock đã hoàn tất — kết quả đang hiển thị từ dữ liệu tham
+            chiếu.
+          </StatusMessage>
+        ) : null}
+        {dataMode === "mock" && mockRunState === "running" ? (
+          <StatusMessage tone="syncing">
+            Backtest mock đang chạy trên dataset đã chọn…
+          </StatusMessage>
+        ) : null}
+        {dataMode !== "mock" && !user ? (
+          <StatusMessage tone="syncing">
+            Đăng nhập ở menu tài khoản để bật nút Chạy backtest và xem dữ liệu
+            kết quả.
+          </StatusMessage>
+        ) : null}
         {experiment && !completed ? (
-          <StatusMessage tone={visibleExperimentStatus === "failed" ? "error" : "syncing"}>
-            {statusText(visibleExperimentStatus ?? "")}
+          <StatusMessage
+            tone={visibleExperimentStatus === "failed" ? "error" : "syncing"}
+          >
+            {statusText(visibleExperimentStatus ?? "", experiment.error_code)}
           </StatusMessage>
         ) : null}
 
@@ -377,20 +556,44 @@ function BacktestContent() {
             isMock={isMock}
             empty={!completed && !isMock}
             onRun={submit}
-            runDisabled={!canRunBacktest(dataMode === "mock" || Boolean(user), running, noStrategies, issues)}
-            runLabel={running ? "Đang chạy backtest…" : completed || (dataMode === "mock" && mockRunState === "completed") ? "Chạy lại backtest" : "Chạy backtest"}
+            runDisabled={
+              !canRunBacktest(
+                dataMode === "mock" || Boolean(user),
+                running,
+                noStrategies,
+                issues,
+              )
+            }
+            runLabel={
+              running
+                ? "Đang chạy backtest…"
+                : completed ||
+                    (dataMode === "mock" && mockRunState === "completed")
+                  ? "Chạy lại backtest"
+                  : "Chạy backtest"
+            }
             selectedTradeSequence={selectedTradeSequence}
           />
           <TradeLedger
-            key={completed && experiment ? experiment.id : `${dataMode}-pending`}
+            key={
+              completed && experiment ? experiment.id : `${dataMode}-pending`
+            }
             trades={trades}
             symbol={shownDraft.market.symbol}
-            csvExportUrl={completed && experiment ? `${apiUrl}/api/v1/experiments/${experiment.id}/trades?format=csv` : undefined}
+            csvExportUrl={
+              completed && experiment
+                ? `${apiUrl}/api/v1/experiments/${experiment.id}/trades?format=csv`
+                : undefined
+            }
             selectedTradeSequence={selectedTradeSequence}
             onSelectTrade={setSelectedTradeSequence}
             experimentId={completed ? experiment?.id : undefined}
-            nextTradeCursor={completed && result ? result.nextTradeCursor : null}
-            totalTrades={completed ? experiment?.metrics?.trade_count : undefined}
+            nextTradeCursor={
+              completed && result ? result.nextTradeCursor : null
+            }
+            totalTrades={
+              completed ? experiment?.metrics?.trade_count : undefined
+            }
           />
         </div>
 
@@ -400,6 +603,11 @@ function BacktestContent() {
           equity={completed ? result.equity : []}
           isMock={isMock}
         />
+        {/* <Panel title="Nhật ký Backtest" info="Trạng thái yêu cầu và worker hiện tại.">
+          <ol className={styles.activityLog} aria-live="polite">
+            {activityLog.length > 0 ? activityLog.map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>) : <li>Chưa có hoạt động Backtest.</li>}
+          </ol>
+        </Panel> */}
         <ExperimentHistory
           records={history}
           selectedIds={comparisonIds}
@@ -412,7 +620,9 @@ function BacktestContent() {
   );
 }
 
-function summaryToHistory(summary: NonNullable<ReturnType<typeof useWorkspace>["experiment"]>): ExperimentHistoryRecord {
+function summaryToHistory(
+  summary: NonNullable<ReturnType<typeof useWorkspace>["experiment"]>,
+): ExperimentHistoryRecord {
   return {
     id: summary.id,
     status: summary.status,
@@ -430,22 +640,29 @@ function summaryToHistory(summary: NonNullable<ReturnType<typeof useWorkspace>["
   };
 }
 
-function isBacktestSettings(value: Partial<BacktestDraft>): value is Partial<BacktestDraft> & {
+function isBacktestSettings(
+  value: Partial<BacktestDraft>,
+): value is Partial<BacktestDraft> & {
   market?: BacktestDraft["market"];
   selectedStrategyIds?: string[];
 } {
-  return (value.market === undefined || (
-    typeof value.market === "object" && value.market !== null
-    && typeof value.market.provider === "string"
-    && typeof value.market.symbol === "string"
-  ))
-    && (value.selectedStrategyIds === undefined || value.selectedStrategyIds.every((id) => typeof id === "string"))
-    && (value.selectedStrategyWeights === undefined || (
-      typeof value.selectedStrategyWeights === "object"
-      && value.selectedStrategyWeights !== null
-      && Object.values(value.selectedStrategyWeights).every((weight) => typeof weight === "number" && Number.isFinite(weight))
-    ))
-    && (value.selectedCompositeId === undefined || typeof value.selectedCompositeId === "string");
+  return (
+    (value.market === undefined ||
+      (typeof value.market === "object" &&
+        value.market !== null &&
+        typeof value.market.provider === "string" &&
+        typeof value.market.symbol === "string")) &&
+    (value.selectedStrategyIds === undefined ||
+      value.selectedStrategyIds.every((id) => typeof id === "string")) &&
+    (value.selectedStrategyWeights === undefined ||
+      (typeof value.selectedStrategyWeights === "object" &&
+        value.selectedStrategyWeights !== null &&
+        Object.values(value.selectedStrategyWeights).every(
+          (weight) => typeof weight === "number" && Number.isFinite(weight),
+        ))) &&
+    (value.selectedCompositeId === undefined ||
+      typeof value.selectedCompositeId === "string")
+  );
 }
 
 function buildCandidateDefinition(
@@ -483,13 +700,19 @@ function buildCandidateDefinition(
   };
 }
 
-function statusText(status: string) {
+function statusText(status: string, errorCode?: string | null) {
   switch (status) {
     case "queued":
       return "Backtest đã vào hàng đợi. Worker sẽ thực thi snapshot bất biến này.";
     case "running":
       return "Backtest đang chạy trên dataset đã khoá.";
     case "failed":
+      if (
+        errorCode === "missing_prior_bbo" ||
+        errorCode === "missing_final_bbo"
+      ) {
+        return "Dataset này thiếu BBO phủ toàn bộ khoảng backtest. Hãy chọn một snapshot lịch sử khác.";
+      }
       return "Backtest thất bại. Kiểm tra lại cấu hình và chạy lại.";
     case "cancelled":
       return "Backtest đã bị huỷ.";
@@ -504,7 +727,9 @@ function experimentHistoryStorageKey(ownerId: string) {
 
 function readExperimentHistory(ownerId: string): ExperimentHistoryRecord[] {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(experimentHistoryStorageKey(ownerId)) ?? "[]");
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(experimentHistoryStorageKey(ownerId)) ?? "[]",
+    );
     if (!Array.isArray(value)) return [];
     return value.filter(isExperimentHistoryRecord);
   } catch {
@@ -512,21 +737,25 @@ function readExperimentHistory(ownerId: string): ExperimentHistoryRecord[] {
   }
 }
 
-function isExperimentHistoryRecord(value: unknown): value is ExperimentHistoryRecord {
+function isExperimentHistoryRecord(
+  value: unknown,
+): value is ExperimentHistoryRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as Partial<ExperimentHistoryRecord>;
-  return typeof record.id === "string"
-    && typeof record.status === "string"
-    && typeof record.createdAt === "string"
-    && typeof record.symbol === "string"
-    && typeof record.timeframe === "string"
-    && typeof record.strategy === "string"
-    && typeof record.strategyVersion === "string"
-    && typeof record.datasetVersion === "string"
-    && typeof record.rangeFrom === "string"
-    && typeof record.rangeTo === "string"
-    && typeof record.parameters === "object"
-    && record.parameters !== null
-    && typeof record.execution === "object"
-    && record.execution !== null;
+  return (
+    typeof record.id === "string" &&
+    typeof record.status === "string" &&
+    typeof record.createdAt === "string" &&
+    typeof record.symbol === "string" &&
+    typeof record.timeframe === "string" &&
+    typeof record.strategy === "string" &&
+    typeof record.strategyVersion === "string" &&
+    typeof record.datasetVersion === "string" &&
+    typeof record.rangeFrom === "string" &&
+    typeof record.rangeTo === "string" &&
+    typeof record.parameters === "object" &&
+    record.parameters !== null &&
+    typeof record.execution === "object" &&
+    record.execution !== null
+  );
 }

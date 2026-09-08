@@ -24,7 +24,10 @@ export function AuthoringInputs({
 }) {
   return (
     <>
-      <Panel title="Nhập mô tả strategy" info="Mô tả chiến lược bằng ngôn ngữ tự nhiên.">
+      <Panel
+        title="Nhập mô tả strategy"
+        info="Mô tả chiến lược bằng ngôn ngữ tự nhiên."
+      >
         <textarea
           className={styles.promptArea}
           value={prompt}
@@ -32,7 +35,9 @@ export function AuthoringInputs({
           aria-label="Mô tả strategy"
           onChange={(event) => onPrompt(event.target.value)}
         />
-        <span className={styles.promptCount}>{prompt.length}/{PROMPT_LIMIT}</span>
+        <span className={styles.promptCount}>
+          {prompt.length}/{PROMPT_LIMIT}
+        </span>
         <div className={styles.promptActions}>
           <Button
             variant="primary"
@@ -50,7 +55,7 @@ export function AuthoringInputs({
         </div>
       </Panel>
 
-      <Panel title="Nhập URL chiến lược" info="Trích xuất định nghĩa strategy từ một trang web công khai.">
+      {/* <Panel title="Nhập URL chiến lược" info="Trích xuất định nghĩa strategy từ một trang web công khai.">
         <span className={styles.urlField}>
           <Icon name="link" aria-hidden="true" />
           <TextInput
@@ -70,7 +75,7 @@ export function AuthoringInputs({
           <Icon name="globe" aria-hidden="true" />
           {busy ? "Đang trích xuất…" : "Trích xuất từ website"}
         </button>
-      </Panel>
+      </Panel> */}
     </>
   );
 }

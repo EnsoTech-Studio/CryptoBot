@@ -14,6 +14,9 @@
   gap: 19px;
 }
 
+.activityLog { display: grid; gap: 5px; max-height: 148px; overflow: auto; margin: 0; padding-left: 19px; color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; line-height: var(--leading-normal); }
+.activityLog li::marker { color: var(--brand); }
+
 /* --- filter strip --------------------------------------------------------- */
 
 .filterStrip {
@@ -267,6 +270,10 @@
 .ledger th:nth-child(7), .ledger td:nth-child(7),
 .ledger th:nth-child(8), .ledger td:nth-child(8) { width: 11%; }
 .ledger th:nth-child(9), .ledger td:nth-child(9) { width: 16%; }
+.ledger th:last-child { position: sticky; right: 0; z-index: 2; background: var(--surface-1); text-align: right; }
+.ledger td:last-child { position: sticky; right: 0; z-index: 1; background: var(--surface-1); }
+.ledger tbody tr:hover td:last-child { background: var(--surface-2); }
+.ledger tbody tr.ledgerSelected td:last-child { background: var(--tint-blue-bg); }
 
 .ledger th {
   border-bottom: 1px solid var(--line-1);

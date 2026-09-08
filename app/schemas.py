@@ -312,6 +312,7 @@ class SearchSpaceInput(ContractModel):
     policies: list[Literal["weighted_vote", "majority_vote"]] = Field(
         default_factory=lambda: ["weighted_vote"], min_length=1, max_length=2
     )
+    combination_threshold: float = Field(default=0.3, ge=0, le=1)
     parameter_grid: dict[str, dict[str, list[Any]]] = Field(default_factory=dict)
 
     @field_validator("cardinality")

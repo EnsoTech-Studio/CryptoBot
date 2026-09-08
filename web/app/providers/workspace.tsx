@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 
 import { messageFromError } from "../../lib/format";
 import { readStoredJson, writeStoredJson } from "../../lib/settings-storage";
@@ -242,6 +243,8 @@ function createPanels(timeframes = requiredTimeframes, realtimeEnabled = true, s
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const realtimeRoute = pathname === "/";
   const [user, setUser] = useState<User | null>(null);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [strategyDrafts, setStrategyDrafts] = useState<StrategyDraft[]>([]);
@@ -812,7 +815,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [chartCount, focusIndex, panelSettingsSignature, realtimeEnabled, realtimeSettingsRestored, selectedMarket]);
 
   useEffect(() => {
-    if (!realtimeSettingsRestored) return;
+    if (!realtimeSettingsRestored || !realtimeRoute) return;
     const resetFrame = window.requestAnimationFrame(() => {
       const configuredPanels = panelsRef.current;
       const nextPanels = createPanels(availableTimeframes, realtimeEnabled, dataModeRef.current === "mock").map((panel, index) => {
@@ -849,13 +852,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => window.cancelAnimationFrame(resetFrame);
     // Pair or supported timeframe changes require a clean, guarded reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataMode, marketSignature, realtimeSettingsRestored, timeframeSignature]);
+  }, [dataMode, marketSignature, realtimeRoute, realtimeSettingsRestored, timeframeSignature]);
 
   const currentPrimaryTimeframe = panels[0]?.timeframe;
   const primaryTimeframe = currentPrimaryTimeframe && availableTimeframes.includes(currentPrimaryTimeframe)
     ? currentPrimaryTimeframe
     : availableTimeframes[0] ?? requiredTimeframes[0];
   useEffect(() => {
+    if (!realtimeRoute) return;
     if (dataMode === "mock") return;
     let stopped = false;
     let timer: number | undefined;
@@ -879,16 +883,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       stopped = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [dataMode, marketSignature, primaryTimeframe]);
+  }, [dataMode, marketSignature, primaryTimeframe, realtimeRoute]);
 
-  const subscriptionSignature = panels.map((panel) => `${panel.timeframe}:${panel.strategy}`).join("|");
+  /* Only visible charts own sockets. Hidden panels used to keep streaming BBO
+     frames, multiplying React work immediately before a route transition. */
+  const subscriptionSignature = panels.slice(0, chartCount).map((panel) => `${panel.timeframe}:${panel.strategy}`).join("|");
   useEffect(() => {
+    if (!realtimeRoute) return;
     if (!realtimeEnabled || dataMode === "mock" || marketPairsState !== "ready") return;
 
     let stopped = false;
     const sockets = new Set<WebSocket>();
     const reconnectTimers = new Set<number>();
-    panelsRef.current.forEach((panel, index) => {
+    panelsRef.current.slice(0, chartCount).forEach((panel, index) => {
       const key = buildSubscriptionKey(selectedMarket, panel.timeframe, panel.strategy);
       let lastSequence = 0;
       let reconnectAttempt = 0;
@@ -948,11 +955,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             ? Date.parse(frame.serverTime)
             : Number.NaN;
           const nextLatency = Number.isFinite(frameLatency) ? Math.max(0, Date.now() - frameLatency) : null;
-          if (nextLatency != null) setLatencyMs(nextLatency);
+          if (nextLatency != null && index === 0) setLatencyMs(nextLatency);
           if (frameTimestamp) {
             const receivedAt = new Date().toISOString();
-            setLastFrameAt(receivedAt);
-            setPanel(index, { lastFrameAt: receivedAt, ...(nextLatency != null ? { latencyMs: nextLatency } : {}) });
+            if (index === 0) {
+              setLastFrameAt(receivedAt);
+              setPanel(index, { lastFrameAt: receivedAt, ...(nextLatency != null ? { latencyMs: nextLatency } : {}) });
+            }
           }
 
           if (frame.type === "kline" && frame.kline) {
@@ -980,19 +989,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               : currentPanel));
           }
           if (frame.type === "bbo" && frame.bbo) {
-            setRecentMarketEvents((current) => appendMarketEvent(current, frame.bbo!));
-            setRecentTicks((current) => [
-              displayTickFromBbo(
-                frame.bbo!.id,
-                frame.bbo!.occurredAt,
-                frame.bbo!.bid,
-                frame.bbo!.ask,
-                frame.bbo!.bidQty,
-                frame.bbo!.askQty,
-              ),
-              ...current.filter((item) => item.id !== frame.bbo!.id),
-            ].slice(0, 50));
-            setPanel(index, { liveState: "live" });
+            /* BBO is broadcast once for every chart subscription. The first
+               chart is the canonical market tape, so retain one copy instead
+               of scheduling identical global state updates per socket. */
+            if (index === 0) {
+              setRecentMarketEvents((current) => appendMarketEvent(current, frame.bbo!));
+              setRecentTicks((current) => [
+                displayTickFromBbo(
+                  frame.bbo!.id,
+                  frame.bbo!.occurredAt,
+                  frame.bbo!.bid,
+                  frame.bbo!.ask,
+                  frame.bbo!.bidQty,
+                  frame.bbo!.askQty,
+                ),
+                ...current.filter((item) => item.id !== frame.bbo!.id),
+              ].slice(0, 50));
+            }
+            if (panelsRef.current[index]?.liveState !== "live") setPanel(index, { liveState: "live" });
           }
           if (frame.type === "overlay_delta" && frame.overlay) {
             setPanels((current) => current.map((currentPanel, panelIndex) => {
@@ -1048,9 +1062,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
     // Socket lifecycle is keyed by the exact market subscription signature.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataMode, marketPairsState, marketSignature, realtimeEnabled, subscriptionSignature]);
+  }, [chartCount, dataMode, marketPairsState, marketSignature, realtimeEnabled, realtimeRoute, subscriptionSignature]);
 
   useEffect(() => {
+    if (!realtimeRoute) return;
     if (dataMode !== "mock") return;
     if (!realtimeEnabled) return;
 
@@ -1086,7 +1101,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setLatencyMs(nextLatency);
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [dataMode, marketSignature, realtimeEnabled, selectedMarket.symbol]);
+  }, [dataMode, marketSignature, realtimeEnabled, realtimeRoute, selectedMarket.symbol]);
 
   useEffect(() => {
     if (!activeExperimentId) return;
@@ -1129,10 +1144,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         // The next polling tick retries a transient progress failure.
       }
     };
-    const timer = window.setInterval(() => {
-      void refresh();
-      void refreshStaticData();
-    }, 1800);
+    const timer = window.setInterval(() => void refresh(), 1800);
     void refresh();
     return () => {
       stopped = true;
